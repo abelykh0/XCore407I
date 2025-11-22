@@ -163,6 +163,7 @@ extern "C" {
 #define VIDEO_OUT_TERMINAL_DESC_SIZE                  0x09U
 #define VIDEO_VS_IF_IN_HEADER_DESC_SIZE               0x0EU
 
+#define USBD_UVC_FORMAT_UNCOMPRESSED
 #define VS_FORMAT_UNCOMPRESSED_DESC_SIZE              0x1BU
 #define VS_FORMAT_MJPEG_DESC_SIZE                     0x0BU
 #define VS_FRAME_DESC_SIZE                            0x1EU

@@ -57,12 +57,6 @@
 #include "screen/canvas.h"
 
 #define CHUNK_SIZE (sizeof(canvas) / 5)
-static uint8_t outbytes0[UVC_WIDTH * UVC_HEIGHT];
-static uint8_t outbytes1[UVC_WIDTH * UVC_HEIGHT];
-static uint8_t* write_pointer = outbytes0;
-static uint8_t* read_pointer = outbytes0;
-static uint32_t jpgLength = 0;
-static bool jpeg_encode_done = true;
 
 /* VIDEO Device library callbacks */
 static uint8_t USBD_VIDEO_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx);
@@ -361,21 +355,6 @@ static USBD_VideoControlTypeDef video_Probe_Control =
   .bMaxVersion = 0x00U,
 };
 
-void switch_buffers(void)
-{
-	if (write_pointer == outbytes0)
-	{
-		write_pointer = outbytes1;
-		read_pointer = outbytes0;
-	}
-	else
-	{
-		write_pointer = outbytes0;
-		read_pointer = outbytes1;
-	}
-}
-
-
 /**
   * @}
   */
@@ -632,87 +611,69 @@ static uint8_t USBD_VIDEO_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *
   * @param  epnum: endpoint index
   * @retval status
   */
-static uint8_t USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum) {
-	USBD_VIDEO_HandleTypeDef* hVIDEO = (USBD_VIDEO_HandleTypeDef*)pdev->pClassData;
+static uint8_t USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
+{
+    USBD_VIDEO_HandleTypeDef* hVIDEO = (USBD_VIDEO_HandleTypeDef*)pdev->pClassData;
 
-	static uint16_t packets_cnt = 0xffff;
-	static uint8_t header[2] = { 2, 0 }; //length + data
-	static uint32_t picture_pos;
-	static uint16_t packets_in_frame = 1;
-	static uint16_t last_packet_size = 0;
-	static uint8_t tx_enable_flag = 0;
+    static uint8_t streaming_started = 0;
+    static uint32_t video_frame_offset = 0;
+    static uint8_t frame_id = 0;
+    static uint8_t buffer[UVC_ISO_HS_MPS];       // header + payload
+    static uint8_t buffer_initialized = 0;
 
-	USBD_LL_FlushEP(pdev, UVC_IN_EP); //very important
+    uint32_t remaining;
+    uint32_t packet_size;
 
-	if (tx_enable_flag)
-	{
-		packets_cnt++;
-	}
+    // Only stream when host requests
+    if (hVIDEO->uvc_state != UVC_PLAY_STATUS_STREAMING)
+    {
+        streaming_started = 0;
+        return USBD_OK;
+    }
 
-	if (tx_enable_flag == 0 && jpeg_encode_done)
-	{
-		jpeg_encode_done = false;
-		switch_buffers();
+    // Start of streaming: flush FIFO, reset offset
+    if (!streaming_started)
+    {
+        USBD_LL_FlushEP(pdev, UVC_IN_EP);
+        video_frame_offset = 0;
+        streaming_started = 1;
+    }
 
-		// start of new frame
-		packets_cnt = 0;
-		header[1] ^= 1; // toggle bit0 every new frame
-		picture_pos = 0;
+    // Initialize static buffer header once
+    if (!buffer_initialized)
+    {
+        buffer[0] = UVC_HS_HEADER_SIZE;                // header length
+        memset(buffer + 2, 0, UVC_HS_HEADER_SIZE - 2); // reserved / padding
+        buffer_initialized = 1;
+    }
 
-		packets_in_frame = (jpgLength / ((uint16_t)PACKET_SIZE_NO_HEADER)) + 1;
-		last_packet_size = (jpgLength - ((packets_in_frame - 1) * ((uint16_t)PACKET_SIZE_NO_HEADER)) + 2);
+    // Remaining bytes in frame
+    remaining = UVC_FRAME_SIZE - video_frame_offset;
+    if (remaining == 0)
+    {
+        video_frame_offset = 0;
+        remaining = UVC_FRAME_SIZE;
+        frame_id ^= 1; // toggle frame ID per frame
+    }
 
-		// start encoding using DMA, when done HAL_JPEG_DataReadyCallback is called
-		/*
-		SCB_InvalidateICache();
+    // Determine payload size for this packet
+    packet_size = (remaining >= (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE))
+                  ? (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE)
+                  : remaining;
 
-		mdmaInput = canvas;
-		mdmaOutput = write_pointer + sizeof(header);
-		HAL_JPEG_Encode_DMA(&hjpeg,
-				mdmaInput, CHUNK_SIZE,
-				mdmaOutput, sizeof(outbytes0) - sizeof(header));
+    // Update dynamic flags in header (Frame ID, End-of-Frame)
+    buffer[1] = frame_id | ((remaining <= (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE)) ? 0x02 : 0x00);
 
-		HAL_JPEG_Encode(&hjpeg, canvas, sizeof(canvas),
-				write_pointer + sizeof(header),
-				sizeof(outbytes0) - sizeof(header), HAL_MAX_DELAY);
-		*/
+    // Copy payload immediately after header
+    memcpy(buffer + UVC_HS_HEADER_SIZE, canvas_buffer + video_frame_offset, packet_size);
 
-		tx_enable_flag = 1;
-	}
+    // Transmit header + payload as single packet
+    USBD_LL_Transmit(pdev, UVC_IN_EP, buffer, UVC_HS_HEADER_SIZE + packet_size);
 
-	if (hVIDEO->uvc_state == UVC_PLAY_STATUS_STREAMING)
-	{
-		read_pointer[picture_pos + 0] = header[0];
-		read_pointer[picture_pos + 1] = header[1];
+    // Advance offset
+    video_frame_offset += packet_size;
 
-		if (packets_cnt < (packets_in_frame - 1))
-		{
-			USBD_LL_Transmit(pdev, (uint8_t) (epnum | UVC_REQ_READ_MASK),
-					(uint8_t*)&read_pointer[picture_pos],
-					(uint32_t)UVC_ISO_FS_MPS);
-			picture_pos += PACKET_SIZE_NO_HEADER;
-		}
-		else if (tx_enable_flag == 1)
-		{
-			USBD_LL_Transmit(pdev, (uint8_t) (epnum | UVC_REQ_READ_MASK),
-					(uint8_t*)&read_pointer[picture_pos],
-					(uint32_t)last_packet_size);
-			tx_enable_flag = 0;
-			picture_pos = 0;
-		}
-		else
-		{
-			// Only while very first frame is still encoding
-			USBD_LL_Transmit(pdev, (uint8_t)(epnum | UVC_REQ_READ_MASK),
-					(uint8_t*)header, 2);
-			picture_pos = 0; //protection from overflow
-		}
-	} else
-	{
-		packets_cnt = 0xffff;
-	}
-
-	return USBD_OK;
+    return USBD_OK;
 }
 
 /**

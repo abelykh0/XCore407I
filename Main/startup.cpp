@@ -31,10 +31,10 @@ void USB_DEVICE_Init()
 	    Error_Handler();
 	  }
 
-	  // Defaults are 128, 64, 128 (320 total)
-	  HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_HS,    48);
-	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0, 16);
-	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, 256);
+	  // Defaults are 512, 128, 372 (1,012 total)
+	  HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_HS,   128);
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0, 96);
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, 788);
 
 	  if (USBD_RegisterClass(&hUsbDeviceHS, &USBD_VIDEO) != USBD_OK)
 	  {

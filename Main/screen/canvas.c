@@ -1,8 +1,27 @@
 #include "string.h"
 #include "screen/canvas.h"
 
-uint8_t canvas[] /*__attribute__(( section(".sram2") ))*/;
-static Mcu* canvasMcu = (Mcu*)canvas;
+#define PHYS_WIDTH  (UVC_WIDTH * 2)
+#define PHYS_HEIGHT (UVC_HEIGHT * 2)
+
+#define Y_SIZE      (PHYS_WIDTH * PHYS_HEIGHT)
+#define UV_SIZE     (UVC_WIDTH * UVC_HEIGHT * 2)
+#define NV12_SIZE   (Y_SIZE + UV_SIZE)
+
+// 2 bytes per UV pair
+typedef struct __attribute__((packed)) {
+    uint8_t U;
+    uint8_t V;
+} UVPair;
+
+// NV12 frame
+typedef struct __attribute__((packed)) {
+    uint8_t Y[Y_SIZE];                      // luma
+    UVPair UV[UVC_WIDTH * UVC_HEIGHT];      // UV
+} CanvasNV12;
+
+uint8_t canvas_buffer[UVC_FRAME_SIZE] /*__attribute__(( section(".sram2") ))*/;
+static CanvasNV12* canvas = (CanvasNV12*)canvas_buffer;
 
 // Y-Cb-Cr 64 color palette (indexed by BBGGRR)
 uint8_t Colors[][3] =
@@ -75,32 +94,63 @@ uint8_t Colors[][3] =
 
 void Clear(uint8_t color)
 {
-	uint8_t colorIndex = color & 0x3F;
-	uint8_t yValue =  Colors[colorIndex][0];
-	uint8_t cbValue = Colors[colorIndex][1];
-	uint8_t crValue = Colors[colorIndex][2];
-	for (int i = 0; i < MCU_WIDTH * MCU_HEIGHT; i++)
-	{
-		Mcu* mcu = &canvasMcu[i];
-		memset(mcu->y,  yValue,  8 * 8);
-		memset(mcu->cb, cbValue, 8 * 8);
-		memset(mcu->cr, crValue, 8 * 8);
-	}
+	uint8_t* yCbCr = Colors[color];
+    uint8_t Yc = yCbCr[0];
+    uint8_t Uc = yCbCr[1];
+    uint8_t Vc = yCbCr[2];
+
+    memset(canvas->Y, Yc, Y_SIZE);
+
+    // Fill UV plane: each pixel is 2 bytes (U+V)
+    for (int i = 0; i < UVC_WIDTH * UVC_HEIGHT; i++)
+    {
+        canvas->UV[i].U = Uc;
+        canvas->UV[i].V = Vc;
+    }
 }
 
-// UVC_WIDTH x UVC_HEIGHT pixels
 void SetPixel(uint16_t x, uint16_t y, uint8_t color)
 {
-	if (x >= UVC_WIDTH || y >= UVC_HEIGHT)
-	{
-		return;
-	}
+    if (x >= UVC_WIDTH || y >= UVC_HEIGHT)
+    {
+        return; // out of canvas
+    }
 
-	uint8_t colorIndex = color & 0x3F;
-	Mcu* mcu = &canvasMcu[x / 8 + (y / 8 * MCU_WIDTH)];
-	uint8_t xOffset = x % 8;
-	uint8_t yOffset = y % 8;
-	mcu->y[yOffset][xOffset]  = Colors[colorIndex][0];
-	mcu->cb[yOffset][xOffset] = Colors[colorIndex][1];
-	mcu->cr[yOffset][xOffset] = Colors[colorIndex][2];
+	uint8_t* yCbCr = Colors[color];
+    uint8_t Yc = yCbCr[0];
+    uint8_t Uc = yCbCr[1];
+    uint8_t Vc = yCbCr[2];
+
+    int px = x * 2; // physical coordinates
+    int py = y * 2;
+
+    // Set 2x2 block in Y plane
+    for (int dy = 0; dy < 2; dy++)
+    {
+        for (int dx = 0; dx < 2; dx++)
+        {
+            canvas->Y[(py + dy) * PHYS_WIDTH + (px + dx)] = Yc;
+        }
+    }
+
+    // Set UV for this logical pixel
+    canvas->UV[y * UVC_WIDTH + x].U = Uc;
+    canvas->UV[y * UVC_WIDTH + x].V = Vc;
 }
+
+/*
+uint8_t GetPixel(uint16_t x, uint16_t y)
+{
+    if (x >= UVC_WIDTH || y >= UVC_HEIGHT)
+    {
+        return 0; // out of canvas
+    }
+
+    uint8_t Yc = canvas.Y[(y*2) * PHYS_WIDTH + (x*2)]; // pick top-left of 2x2 block
+    uint8_t Uc = canvas.UV[y * UVC_WIDTH + x].U;
+    uint8_t Vc = canvas.UV[y * UVC_WIDTH + x].V;
+
+    // TODO - convert to RGB
+    return Yc | Uc  | Vc;
+}
+*/
