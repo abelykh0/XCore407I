@@ -639,7 +639,7 @@ static uint8_t USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
         streaming_started = 1;
     }
 
-    // Initialize static buffer header once
+    // Initialize header in static buffer
     if (!buffer_initialized)
     {
         buffer[0] = UVC_HS_HEADER_SIZE;                // header length
