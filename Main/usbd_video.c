@@ -281,7 +281,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
 };
 
 #ifndef USE_USBD_COMPOSITE
-/* USB Standard Device Descriptor */
+// --------- Device Qualifier Descriptor (for Full-Speed) --------
 __ALIGN_BEGIN static uint8_t USBD_VIDEO_DeviceQualifierDesc[USB_LEN_DEV_QUALIFIER_DESC] __ALIGN_END =
 {
   USB_LEN_DEV_QUALIFIER_DESC,

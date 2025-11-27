@@ -43,11 +43,7 @@ extern "C" {
   */
 
 /* USB Video device class specification version 1.10 */
-#ifdef UVC_1_0
-#define UVC_VERSION                                   0x0100U      /* UVC 1.0 */
-#else
 #define UVC_VERSION                                   0x0110U      /* UVC 1.1 */
-#endif /* UVC_1_0 */
 
 /* bEndpointAddress in Endpoint Descriptor */
 #ifndef UVC_IN_EP
@@ -91,21 +87,26 @@ extern "C" {
 #define UVC_MATRIX_COEFFICIENTS                       0x04U
 #endif /* UVC_MATRIX_COEFFICIENTS */
 
-#ifndef UVC_BITS_PER_PIXEL
-#define UVC_BITS_PER_PIXEL                            12U
-#endif /* UVC_BITS_PER_PIXEL */
-
-#define UVC_GUID_YUY2                                 0x32595559U
 #define UVC_GUID_NV12                                 0x3231564EU
+#define UVC_GUID_YUY2                                 0x32595559U
+#define UVC_GUID_Y800                                 0x30303859U
 
 #ifndef UVC_UNCOMPRESSED_GUID
 #define UVC_UNCOMPRESSED_GUID                         UVC_GUID_NV12
 #endif /* UVC_UNCOMPRESSED_GUID */
 
+#if (UVC_UNCOMPRESSED_GUID == UVC_GUID_NV12)
+#define UVC_BITS_PER_PIXEL                            12U
+#elif (UVC_UNCOMPRESSED_GUID == UVC_GUID_YUY2)
+#define UVC_BITS_PER_PIXEL                            16U
+#elif (UVC_UNCOMPRESSED_GUID == UVC_GUID_Y800)
+#define UVC_BITS_PER_PIXEL                            8U
+#endif
+
 #define UVC_INTERVAL(n)                               (10000000U/(n))
 
-#define UVC_MIN_BIT_RATE(n)                           (UVC_WIDTH * UVC_HEIGHT * 16U * (n)) /* 16 bit */
-#define UVC_MAX_BIT_RATE(n)                           (UVC_WIDTH * UVC_HEIGHT * 16U * (n)) /* 16 bit */
+#define UVC_MIN_BIT_RATE(n)                           (UVC_WIDTH * UVC_HEIGHT * UVC_BITS_PER_PIXEL * (n))
+#define UVC_MAX_BIT_RATE(n)                           (UVC_WIDTH * UVC_HEIGHT * UVC_BITS_PER_PIXEL * (n))
 
 #define UVC_PACKETS_IN_FRAME(n)                       (UVC_MAX_FRAME_SIZE / (n))
 
@@ -171,11 +172,6 @@ extern "C" {
                         VS_FRAME_DESC_SIZE + \
                         VS_COLOR_MATCHING_DESC_SIZE)
 
-/*
-#define VC_HEADER_SIZE (VIDEO_VS_IF_IN_HEADER_DESC_SIZE + \
-                        VS_FORMAT_UNCOMPRESSED_DESC_SIZE + \
-                        VS_FRAME_DESC_SIZE )
-*/
 /*
  * Video Class specification release 1.1
  * Appendix A. Video Device Class Codes defines
