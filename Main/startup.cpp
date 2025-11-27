@@ -14,10 +14,10 @@ extern USBD_HandleTypeDef hUsbDeviceHS;
 extern PCD_HandleTypeDef hpcd_USB_OTG_HS;
 
 // Using Ethernet PHY to toggle LEDs
-#define PHY_ADDR    0x01
-#define PHY_SMR     0x1F
-static void PHY_ToggleLEDs();
+#define PHY_ADDR  0x01
+#define PHY_LEDCR 0x18
 static void PHY_EnableManualLEDMode();
+static void PHY_ToggleLEDs();
 
 extern "C" void initialize()
 {
@@ -46,8 +46,8 @@ static void USB_DEVICE_Init()
 	  }
 
 	  // Defaults are 512, 128, 372 (1,012 total)
-	  HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_HS,   128);
-	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0, 96);
+	  HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_HS,    128);
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0,  96);
 	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, 788);
 
 	  if (USBD_RegisterClass(&hUsbDeviceHS, &USBD_VIDEO) != USBD_OK)
@@ -66,38 +66,30 @@ static void USB_DEVICE_Init()
 
 static void PHY_EnableManualLEDMode()
 {
-	uint32_t smr;
-
-	// Read SMR
-	HAL_ETH_ReadPHYRegister(&heth, PHY_ADDR, PHY_SMR, &smr);
-
 	// Enter manual mode
-	smr &= ~(0b11 << 2);
-	smr |=  (0b10 << 2);
-
-	HAL_ETH_WritePHYRegister(&heth, PHY_ADDR, PHY_SMR, smr);
+	uint32_t phycr = 0x38;
+	HAL_ETH_WritePHYRegister(&heth, PHY_ADDR, PHY_LEDCR, phycr);
 }
 
 static void PHY_ToggleLEDs()
 {
-    uint32_t smr;
+	static bool isOn = false;
+    uint32_t phycr;
 
-    // Read LED mode
-    HAL_ETH_ReadPHYRegister(&heth, PHY_ADDR, PHY_SMR, &smr);
+    // Read current PHY control register
+    HAL_ETH_ReadPHYRegister(&heth, PHY_ADDR, PHY_LEDCR, &phycr);
 
-    uint32_t mode = (smr >> 2) & 0x3;
-    if (mode == 0b11)
+    if (isOn)
     {
-        // Currently ON → force OFF
-        smr &= ~(0b11 << 2);
-        smr |=  (0b10 << 2);
+    	phycr &= ~0x03;
     }
     else
     {
-        // Currently OFF → force ON
-        smr &= ~(0b11 << 2);
-        smr |=  (0b11 << 2);
+    	phycr |= 0x03;
     }
 
-    HAL_ETH_WritePHYRegister(&heth, PHY_ADDR, PHY_SMR, smr);
+    isOn = !isOn;
+
+    // Write back the updated value
+    HAL_ETH_WritePHYRegister(&heth, PHY_ADDR, PHY_LEDCR, phycr);
 }

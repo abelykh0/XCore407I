@@ -77,12 +77,13 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
 
     __HAL_RCC_GPIOI_CLK_ENABLE();
     __HAL_RCC_GPIOC_CLK_ENABLE();
+    __HAL_RCC_GPIOH_CLK_ENABLE();
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
     /**USB_OTG_HS GPIO Configuration
     PI11     ------> USB_OTG_HS_ULPI_DIR
     PC0     ------> USB_OTG_HS_ULPI_STP
-    PC3     ------> USB_OTG_HS_ULPI_NXT
+    PH4     ------> USB_OTG_HS_ULPI_NXT
     PA3     ------> USB_OTG_HS_ULPI_D0
     PA5     ------> USB_OTG_HS_ULPI_CK
     PB0     ------> USB_OTG_HS_ULPI_D1
@@ -100,12 +101,19 @@ void HAL_PCD_MspInit(PCD_HandleTypeDef* pcdHandle)
     GPIO_InitStruct.Alternate = GPIO_AF10_OTG_HS;
     HAL_GPIO_Init(GPIOI, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_3;
+    GPIO_InitStruct.Pin = GPIO_PIN_0;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     GPIO_InitStruct.Alternate = GPIO_AF10_OTG_HS;
     HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = GPIO_PIN_4;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF10_OTG_HS;
+    HAL_GPIO_Init(GPIOH, &GPIO_InitStruct);
 
     GPIO_InitStruct.Pin = GPIO_PIN_3|GPIO_PIN_5;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -149,7 +157,7 @@ void HAL_PCD_MspDeInit(PCD_HandleTypeDef* pcdHandle)
     /**USB_OTG_HS GPIO Configuration
     PI11     ------> USB_OTG_HS_ULPI_DIR
     PC0     ------> USB_OTG_HS_ULPI_STP
-    PC3     ------> USB_OTG_HS_ULPI_NXT
+    PH4     ------> USB_OTG_HS_ULPI_NXT
     PA3     ------> USB_OTG_HS_ULPI_D0
     PA5     ------> USB_OTG_HS_ULPI_CK
     PB0     ------> USB_OTG_HS_ULPI_D1
@@ -162,7 +170,9 @@ void HAL_PCD_MspDeInit(PCD_HandleTypeDef* pcdHandle)
     */
     HAL_GPIO_DeInit(GPIOI, GPIO_PIN_11);
 
-    HAL_GPIO_DeInit(GPIOC, GPIO_PIN_0|GPIO_PIN_3);
+    HAL_GPIO_DeInit(GPIOC, GPIO_PIN_0);
+
+    HAL_GPIO_DeInit(GPIOH, GPIO_PIN_4);
 
     HAL_GPIO_DeInit(GPIOA, GPIO_PIN_3|GPIO_PIN_5);
 
