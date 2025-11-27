@@ -120,15 +120,14 @@ USBD_ClassTypeDef  USBD_VIDEO =
 /* USB VIDEO device Configuration Descriptor (same for all speeds thanks to user defines) */
 __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
 {
-  /* Configuration 1 */
+  // ------------------ Configuration Descriptor -------------------
   USB_CONF_DESC_SIZE,                            /* bLength: Configuration Descriptor size */
   USB_DESC_TYPE_CONFIGURATION,                   /* bDescriptorType: Configuration */
   LOBYTE(UVC_CONFIG_DESC_SIZ),                   /* wTotalLength: no of returned bytes */
   HIBYTE(UVC_CONFIG_DESC_SIZ),
   0x02,                                          /* bNumInterfaces: 2 interfaces */
   0x01,                                          /* bConfigurationValue: Configuration value */
-  0x00,                                          /* iConfiguration: Index of string descriptor
-                                                  describing the configuration */
+  0x00,                                          /* iConfiguration: Index of string descriptor describing the configuration */
 #if (USBD_SELF_POWERED == 1U)
   0xC0,                                          /* bmAttributes: Bus Powered according to user configuration */
 #else
@@ -136,7 +135,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
 #endif /* USBD_SELF_POWERED */
   USBD_MAX_POWER,                                /* bMaxPower in mA according to user configuration */
 
-  /* Interface Association Descriptor */
+  // ------------------- IAD Descriptor --------------------
   USB_IAD_DESC_SIZE,                             /* bLength: Interface Association Descriptor size */
   USB_DESC_TYPE_IAD,                             /* bDescriptorType: interface association */
   0x00,                                          /* bFirstInterface */
@@ -146,7 +145,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   PC_PROTOCOL_UNDEFINED,                         /* bInterfaceProtocol: protocol undefined */
   0x00,                                          /* iFunction */
 
-  /* Standard VC (Video Control) Interface Descriptor  = interface 0 */
+  // ---------------- Interface Descriptor -----------------
   USB_IF_DESC_SIZE,                              /* bLength: interface descriptor size */
   USB_DESC_TYPE_INTERFACE,                       /* bDescriptorType: interface */
   UVC_VC_IF_NUM,                                 /* bInterfaceNumber: interface number */
@@ -157,7 +156,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   PC_PROTOCOL_UNDEFINED,                         /* bInterfaceProtocol: protocol is undefined */
   0x00,                                          /* iFunction: index of string descriptor relative to this item */
 
-  /* Class-specific VC Interface Descriptor */
+  // ------- Video Control Interface Header Descriptor -----
   VIDEO_VC_IF_HEADER_DESC_SIZE,                  /* bLength */
   CS_INTERFACE,                                  /* bDescriptorType */
   VC_HEADER,                                     /* bDescriptorSubtype */
@@ -172,7 +171,8 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   0x01,                                          /* bInCollection: number of streaming interfaces */
   0x01,                                          /* baInterfaceNr(1): VideoStreaming interface 1 is part
                                                     of VC interface */
-  /* Input Terminal Descriptor */
+
+  // -------- Video Control Input Terminal Descriptor ------
   VIDEO_IN_TERMINAL_DESC_SIZE,                   /* bLength: Input terminal descriptor size */
   CS_INTERFACE,                                  /* bDescriptorType: INTERFACE */
   VC_INPUT_TERMINAL,                             /* bDescriptorSubtype: INPUT_TERMINAL */
@@ -182,7 +182,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   0x00,                                          /* bAssocTerminal: no Terminal is associated */
   0x00,                                          /* iTerminal: index of string descriptor relative to this item */
 
-  /* Output Terminal Descriptor */
+  // ------- Video Control Output Terminal Descriptor ------
   VIDEO_OUT_TERMINAL_DESC_SIZE,                  /* bLength: output terminal descriptor size */
   CS_INTERFACE,                                  /* bDescriptorType */
   VC_OUTPUT_TERMINAL,                            /* bDescriptorSubtype */
@@ -193,8 +193,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   0x01,                                          /* bSourceID: input is connected to output unit ID 1 */
   0x00,                                          /* iTerminal: index of string descriptor relative to this item */
 
-  /* Standard VS (Video Streaming) Interface Descriptor = interface 1, alternate setting 0 = Zero Bandwidth
-    (when no data are sent from the device) */
+  // ---------------- Interface Descriptor -----------------
   USB_IF_DESC_SIZE,                              /* bLength: interface descriptor size */
   USB_DESC_TYPE_INTERFACE,                       /* bDescriptorType */
   UVC_VS_IF_NUM,                                 /* bInterfaceNumber */
@@ -205,7 +204,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   PC_PROTOCOL_UNDEFINED,                         /* bInterfaceProtocol */
   0x00,                                          /* iInterface: index of string descriptor relative to this item */
 
-  /* Class-specific VS Header Descriptor (Input) */
+  // ---- VC-Specific VS Video Input Header Descriptor -----
   VIDEO_VS_IF_IN_HEADER_DESC_SIZE,               /* bLength */
   CS_INTERFACE,                                  /* bDescriptorType */
   VS_INPUT_HEADER,                               /* bDescriptorSubtype */
@@ -221,49 +220,37 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   0x01,                                          /* bControlSize: 1 byte field size */
   0x00,                                          /* bmaControls: No specific controls used */
 
-  /* Payload Format Descriptor */
+  // ------- VS Uncompressed Format Type Descriptor --------
   VS_FORMAT_DESC_SIZE,                           /* blength */
   CS_INTERFACE,                                  /* bDescriptorType */
   VS_FORMAT_SUBTYPE,                             /* bDescriptorSubType */
   0x01,                                          /* bFormatIndex */
   0x01,                                          /* bNumFrameDescriptor */
-#ifdef USBD_UVC_FORMAT_UNCOMPRESSED
   DBVAL(UVC_UNCOMPRESSED_GUID),                  /* Giud Format: YUY2 {32595559-0000-0010-8000-00AA00389B71} */
-  0x00, 0x00,
-  0x10, 0x00,
-  0x80, 0x00,
+  0x00, 0x00, 0x10, 0x00, 0x80, 0x00,
   0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
   UVC_BITS_PER_PIXEL,                            /* bBitsPerPixel : Number of bits per pixel */
-#else
-  0x01,                                          /* bmFlags: FixedSizeSamples */
-#endif /* USBD_UVC_FORMAT_UNCOMPRESSED */
-  0x01,                                          /* bDefaultFrameIndex: default frame used is frame 1
-                                                    (only one frame used) */
+  0x01,                                          /* bDefaultFrameIndex: default frame used is frame 1 (only one frame used) */
   0x00,                                          /* bAspectRatioX: not required by specification */
   0x00,                                          /* bAspectRatioY: not required by specification */
   0x00,                                          /* bInterlaceFlags: non interlaced stream */
   0x00,                                          /* bCopyProtect: no protection restrictions */
 
-  /* Class-specific VS (Video Streaming) Frame Descriptor */
+  // -------- VS Uncompressed Frame Type Descriptor --------
   VS_FRAME_DESC_SIZE,                            /* bLength */
   CS_INTERFACE,                                  /* bDescriptorType */
   VS_FRAME_SUBTYPE,                              /* bDescriptorSubType */
   0x01,                                          /* bFrameIndex */
-#ifdef USBD_UVC_FORMAT_UNCOMPRESSED
-  0x00,                                          /* bmCapabilities: no till image capture */
-#else
-  0x02,                                          /* bmCapabilities: fixed frame rate supported */
-#endif /* USBD_UVC_FORMAT_UNCOMPRESSED */
+  0x00,                                          /* bmCapabilities: no still image capture */
   WBVAL(UVC_WIDTH),                              /* wWidth: Image Frame Width */
   WBVAL(UVC_HEIGHT),                             /* wHeight: Image Frame Height */
-  DBVAL(UVC_MIN_BIT_RATE(UVC_CAM_FPS_FS)),       /* dwMinBitRate: Minimum supported bit rate in bits/s  */
-  DBVAL(UVC_MAX_BIT_RATE(UVC_CAM_FPS_FS)),       /* dwMaxBitRate: Maximum supported bit rate in bits/s  */
+  DBVAL(UVC_MIN_BIT_RATE(UVC_CAM_FPS_HS)),       /* dwMinBitRate: Minimum supported bit rate in bits/s  */
+  DBVAL(UVC_MAX_BIT_RATE(UVC_CAM_FPS_HS)),       /* dwMaxBitRate: Maximum supported bit rate in bits/s  */
   DBVAL(UVC_MAX_FRAME_SIZE),                     /* dwMaxVideoFrameBufSize: Maximum video frame size, in bytes */
-  DBVAL(UVC_INTERVAL(UVC_CAM_FPS_FS)),           /* dwDefaultFrameInterval: following number of FPS */
+  DBVAL(UVC_INTERVAL(UVC_CAM_FPS_HS)),           /* dwDefaultFrameInterval: following number of FPS */
   0x01,                                          /* bFrameIntervalType: Discrete frame interval type */
-  DBVAL(UVC_INTERVAL(UVC_CAM_FPS_FS)),           /* dwMinFrameInterval: One supported value of interval (FPS) */
+  DBVAL(UVC_INTERVAL(UVC_CAM_FPS_HS)),           /* dwMinFrameInterval: One supported value of interval (FPS) */
 
-#ifdef USBD_UVC_FORMAT_UNCOMPRESSED
   /* Color Matching Descriptor */
   VS_COLOR_MATCHING_DESC_SIZE,                   /* bLength */
   CS_INTERFACE,                                  /* bDescriptorType: CS_INTERFACE */
@@ -271,7 +258,6 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   UVC_COLOR_PRIMARIE,                            /* bColorPrimarie: 1: BT.709, sRGB (default) */
   UVC_TFR_CHARACTERISTICS,                       /* bTransferCharacteristics: 1: BT.709 (default) */
   UVC_MATRIX_COEFFICIENTS,                       /* bMatrixCoefficients: 4: BT.601, (default) */
-#endif /* USBD_UVC_FORMAT_UNCOMPRESSED */
 
   /* Standard VS Interface Descriptor  = interface 1, alternate setting 1 = data transfer mode  */
   USB_IF_DESC_SIZE,                              /* bLength */
@@ -289,8 +275,8 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   USB_DESC_TYPE_ENDPOINT,                        /* bDescriptorType */
   UVC_IN_EP,                                     /* bEndpointAddress */
   0x05,                                          /* bmAttributes: ISO transfer */
-  LOBYTE(UVC_ISO_FS_MPS),                        /* wMaxPacketSize */
-  LOBYTE(UVC_ISO_FS_MPS),
+  LOBYTE(UVC_ISO_HS_MPS),                        /* wMaxPacketSize */
+  LOBYTE(UVC_ISO_HS_MPS),
   0x01,                                          /* bInterval: 1 frame interval */
 };
 
