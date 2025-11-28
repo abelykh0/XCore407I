@@ -276,7 +276,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   UVC_IN_EP,                                     /* bEndpointAddress */
   0x05,                                          /* bmAttributes: ISO transfer */
   LOBYTE(UVC_ISO_HS_MPS),                        /* wMaxPacketSize */
-  LOBYTE(UVC_ISO_HS_MPS),
+  HIBYTE(UVC_ISO_HS_MPS),
   0x01,                                          /* bInterval: 1 frame interval */
 };
 
@@ -634,11 +634,11 @@ static uint8_t USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
     }
 
     // Remaining bytes in frame
-    remaining = UVC_FRAME_SIZE - video_frame_offset;
+    remaining = UVC_MAX_FRAME_SIZE - video_frame_offset;
     if (remaining == 0)
     {
         video_frame_offset = 0;
-        remaining = UVC_FRAME_SIZE;
+        remaining = UVC_MAX_FRAME_SIZE;
         frame_id ^= 1; // toggle frame ID per frame
     }
 
@@ -651,7 +651,8 @@ static uint8_t USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
     buffer[1] = frame_id | ((remaining <= (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE)) ? 0x02 : 0x00);
 
     // Copy payload immediately after header
-    memcpy(buffer + UVC_HS_HEADER_SIZE, canvas_buffer + video_frame_offset, packet_size);
+    //memcpy(buffer + UVC_HS_HEADER_SIZE, canvas_buffer + video_frame_offset, packet_size);
+    memset(buffer + UVC_HS_HEADER_SIZE, 0xaa, packet_size);
 
     // Transmit header + payload as single packet
     USBD_LL_Transmit(pdev, UVC_IN_EP, buffer, UVC_HS_HEADER_SIZE + packet_size);
