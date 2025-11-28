@@ -71,10 +71,6 @@ extern "C" {
 #define UVC_PACKET_SIZE                               512U
 #endif /* UVC_PACKET_SIZE */
 
-#ifndef UVC_MAX_FRAME_SIZE
-#define UVC_MAX_FRAME_SIZE                            (UVC_WIDTH * UVC_HEIGHT * 16U / 2U)
-#endif /* UVC_MAX_FRAME_SIZE */
-
 #ifndef UVC_COLOR_PRIMARIE
 #define UVC_COLOR_PRIMARIE                            0x01U
 #endif /* UVC_COLOR_PRIMARIE */
@@ -92,7 +88,7 @@ extern "C" {
 #define UVC_GUID_Y800                                 0x30303859U
 
 #ifndef UVC_UNCOMPRESSED_GUID
-#define UVC_UNCOMPRESSED_GUID                         UVC_GUID_NV12
+#define UVC_UNCOMPRESSED_GUID                         UVC_GUID_YUY2
 #endif /* UVC_UNCOMPRESSED_GUID */
 
 #if (UVC_UNCOMPRESSED_GUID == UVC_GUID_NV12)
@@ -102,6 +98,8 @@ extern "C" {
 #elif (UVC_UNCOMPRESSED_GUID == UVC_GUID_Y800)
 #define UVC_BITS_PER_PIXEL                            8U
 #endif
+
+#define UVC_MAX_FRAME_SIZE                            (UVC_WIDTH * UVC_HEIGHT * UVC_BITS_PER_PIXEL / 8U)
 
 #define UVC_INTERVAL(n)                               (10000000U/(n))
 

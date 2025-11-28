@@ -145,7 +145,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   PC_PROTOCOL_UNDEFINED,                         /* bInterfaceProtocol: protocol undefined */
   0x00,                                          /* iFunction */
 
-  // ---------------- Interface Descriptor -----------------
+  // ---------------- Interface Descriptor (Video Control) -----------------
   USB_IF_DESC_SIZE,                              /* bLength: interface descriptor size */
   USB_DESC_TYPE_INTERFACE,                       /* bDescriptorType: interface */
   UVC_VC_IF_NUM,                                 /* bInterfaceNumber: interface number */
@@ -251,7 +251,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   0x01,                                          /* bFrameIntervalType: Discrete frame interval type */
   DBVAL(UVC_INTERVAL(UVC_CAM_FPS_HS)),           /* dwMinFrameInterval: One supported value of interval (FPS) */
 
-  /* Color Matching Descriptor */
+  // ------- VS Color Matching Descriptor Descriptor -------
   VS_COLOR_MATCHING_DESC_SIZE,                   /* bLength */
   CS_INTERFACE,                                  /* bDescriptorType: CS_INTERFACE */
   VS_COLORFORMAT,                                /* bDescriptorSubType: VS_COLORFORMAT */
@@ -259,7 +259,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   UVC_TFR_CHARACTERISTICS,                       /* bTransferCharacteristics: 1: BT.709 (default) */
   UVC_MATRIX_COEFFICIENTS,                       /* bMatrixCoefficients: 4: BT.601, (default) */
 
-  /* Standard VS Interface Descriptor  = interface 1, alternate setting 1 = data transfer mode  */
+  // ---------------- Interface Descriptor (Endpoint) -----------------
   USB_IF_DESC_SIZE,                              /* bLength */
   USB_DESC_TYPE_INTERFACE,                       /* bDescriptorType */
   UVC_VS_IF_NUM,                                 /* bInterfaceNumber */
@@ -270,7 +270,7 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   PC_PROTOCOL_UNDEFINED,                         /* bInterfaceProtocol */
   0x00,                                          /* iInterface: index of string descriptor relative to this item */
 
-  /* Standard VS (Video Streaming) data Endpoint */
+  // ----------------- Endpoint Descriptor -----------------
   USB_EP_DESC_SIZE,                              /* bLength */
   USB_DESC_TYPE_ENDPOINT,                        /* bDescriptorType */
   UVC_IN_EP,                                     /* bEndpointAddress */
