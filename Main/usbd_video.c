@@ -769,7 +769,7 @@ static void VIDEO_REQ_GetCurrent(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef 
       if (pdev->dev_speed == USBD_SPEED_HIGH)
       {
         video_Probe_Control.dwFrameInterval = (UVC_INTERVAL(UVC_CAM_FPS_HS));
-        video_Probe_Control.dwMaxPayloadTransferSize = UVC_ISO_HS_MPS;
+        video_Probe_Control.dwMaxPayloadTransferSize = UVC_PAYLOAD_TRANSFER_SIZE;
       }
       else
       {
@@ -786,7 +786,7 @@ static void VIDEO_REQ_GetCurrent(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef 
       if (pdev->dev_speed == USBD_SPEED_HIGH)
       {
         video_Commit_Control.dwFrameInterval = (UVC_INTERVAL(UVC_CAM_FPS_HS));
-        video_Commit_Control.dwMaxPayloadTransferSize = UVC_ISO_HS_MPS;
+        video_Commit_Control.dwMaxPayloadTransferSize = UVC_PAYLOAD_TRANSFER_SIZE;
       }
       else
       {
@@ -882,7 +882,7 @@ static uint8_t  *USBD_VIDEO_GetHSCfgDesc(uint16_t *length)
 
   if (pEpDesc != NULL)
   {
-    pEpDesc->wMaxPacketSize = UVC_ISO_HS_MPS;
+    pEpDesc->wMaxPacketSize = UVC_ISO_HS_MPS | 0x1000 /* 2 additional transactions per microframe */;
   }
 
   if (pVSFrameDesc != NULL)

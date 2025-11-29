@@ -5,7 +5,8 @@
 #define UVC_HEIGHT                  192U
 #define UVC_CAM_FPS_HS              30U
 #define UVC_HS_HEADER_SIZE          12U
-#define UVC_ISO_HS_MPS              1024 //3072U
+#define UVC_ISO_HS_MPS              1024
+#define UVC_PAYLOAD_TRANSFER_SIZE   (UVC_ISO_HS_MPS * 3)
 #define PACKET_SIZE_NO_HEADER       ((unsigned int)(UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE))
 
 #define UVC_FRAME_SIZE              (UVC_WIDTH * UVC_HEIGHT * 2U) // TODO remove it
