@@ -15,12 +15,10 @@
 #include "usbd_video_conf.h"
 
 #define USE_USBD_COMPOSITE
-#define USBD_CMPSIT_ACTIVATE_CDC	  1U
-//#define USBD_CMPSIT_ACTIVATE_VIDEO  1U
+#define USBD_CMPSIT_ACTIVATE_CDC	 1U
+#define USBD_CMPSIT_ACTIVATE_VIDEO   1U
 
-
-
-
+#define USBD_COMPOSITE_USE_IAD       1U
 
 /*---------- -----------*/
 #define USBD_MAX_NUM_INTERFACES     4U

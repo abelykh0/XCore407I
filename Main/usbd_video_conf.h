@@ -12,4 +12,6 @@
 #define UVC_FRAME_SIZE              (UVC_WIDTH * UVC_HEIGHT * 2U) // TODO remove it
 #define PACKETS_IN_FRAME            (UVC_FRAME_SIZE / PACKET_SIZE_NO_HEADER)
 
+#define USBD_UVC_FORMAT_UNCOMPRESSED
+
 #endif

@@ -47,6 +47,7 @@ extern "C" void loop()
 
 static void USB_DEVICE_Init()
 {
+	/*
 	if (USBD_Init(&hUsbDeviceHS, &HS_Desc, DEVICE_HS) != USBD_OK)
 	{
 		Error_Handler();
@@ -61,21 +62,20 @@ static void USB_DEVICE_Init()
 		Error_Handler();
 	}
 
-	/*
-	if (USBD_AUDIO_RegisterInterface(&hUsbDeviceHS, &audio_class_interface) != USBD_OK)
+	if (USBD_VIDEO_RegisterInterface(&hUsbDeviceHS, &USBD_VIDEO_fops_FS) != USBD_OK)
 	{
 		Error_Handler();
 	}
-	if (USBD_RegisterClassComposite(&hUsbDeviceHS, &USBD_AUDIO,CLASS_TYPE_AUDIO,audio_ep) != USBD_OK)
+	if (USBD_RegisterClassComposite(&hUsbDeviceHS, &USBD_VIDEO, CLASS_TYPE_VIDEO, video_ep) != USBD_OK)
 	{
 		Error_Handler();
 	}
-	*/
 
 	if (USBD_Start(&hUsbDeviceHS) != USBD_OK)
 	{
 		Error_Handler();
 	}
+	*/
 }
 
 static void PHY_EnableManualLEDMode()
