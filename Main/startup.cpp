@@ -54,7 +54,8 @@ static void USB_DEVICE_Init()
 	{
 		Error_Handler();
 	}
-
+/*
+	// CDC
 	if (USBD_CDC_RegisterInterface(&hUsbDeviceHS, &USBD_Interface_fops_HS) != USBD_OK)
 	{
 		Error_Handler();
@@ -63,7 +64,8 @@ static void USB_DEVICE_Init()
 	{
 		Error_Handler();
 	}
-
+*/
+	// UVC
 	if (USBD_VIDEO_RegisterInterface(&hUsbDeviceHS, &USBD_VIDEO_fops_FS) != USBD_OK)
 	{
 		Error_Handler();

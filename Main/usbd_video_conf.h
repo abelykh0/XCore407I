@@ -13,5 +13,7 @@
 #define PACKETS_IN_FRAME            (UVC_FRAME_SIZE / PACKET_SIZE_NO_HEADER)
 
 #define USBD_UVC_FORMAT_UNCOMPRESSED
+#define UVC_UNCOMPRESSED_GUID       UVC_GUID_YUY2
 
+#define UVC_IN_EP                   0x83U
 #endif
