@@ -54,23 +54,23 @@ static void USB_DEVICE_Init()
 	{
 		Error_Handler();
 	}
-/*
-	// CDC
-	if (USBD_CDC_RegisterInterface(&hUsbDeviceHS, &USBD_Interface_fops_HS) != USBD_OK)
-	{
-		Error_Handler();
-	}
-	if (USBD_RegisterClassComposite(&hUsbDeviceHS, &USBD_CDC, CLASS_TYPE_CDC, cdc_ep) != USBD_OK)
-	{
-		Error_Handler();
-	}
-*/
+
 	// UVC
 	if (USBD_VIDEO_RegisterInterface(&hUsbDeviceHS, &USBD_VIDEO_fops_FS) != USBD_OK)
 	{
 		Error_Handler();
 	}
 	if (USBD_RegisterClassComposite(&hUsbDeviceHS, &USBD_VIDEO, CLASS_TYPE_VIDEO, video_ep) != USBD_OK)
+	{
+		Error_Handler();
+	}
+
+	// CDC
+	if (USBD_CDC_RegisterInterface(&hUsbDeviceHS, &USBD_Interface_fops_HS) != USBD_OK)
+	{
+		Error_Handler();
+	}
+	if (USBD_RegisterClassComposite(&hUsbDeviceHS, &USBD_CDC, CLASS_TYPE_CDC, cdc_ep) != USBD_OK)
 	{
 		Error_Handler();
 	}

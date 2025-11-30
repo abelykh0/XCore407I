@@ -14,6 +14,8 @@
 
 #define USBD_UVC_FORMAT_UNCOMPRESSED
 #define UVC_UNCOMPRESSED_GUID       UVC_GUID_YUY2
+#define UVC_BITS_PER_PIXEL          16U
 
 #define UVC_IN_EP                   0x83U
+#define UVC_PACKET_SIZE             1024U
 #endif

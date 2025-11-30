@@ -122,8 +122,8 @@ extern "C" {
 
 
 #define UVC_REQ_READ_MASK                             0x80U
-#define UVC_VC_IF_NUM                                 0x00U
-#define UVC_VS_IF_NUM                                 0x01U
+#define UVC_VC_IF_NUM                                 0x02U
+#define UVC_VS_IF_NUM                                 0x03U
 #define UVC_TOTAL_IF_NUM                              0x02U
 
 #ifdef USBD_UVC_FORMAT_UNCOMPRESSED
