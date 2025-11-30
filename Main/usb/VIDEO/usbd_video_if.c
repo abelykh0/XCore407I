@@ -6,19 +6,18 @@
   ******************************************************************************
   * @attention
   *
-  * <h2><center>&copy; Copyright (c) 2020 STMicroelectronics.
-  * All rights reserved.</center></h2>
+  * Copyright (c) 2020 STMicroelectronics.
+  * All rights reserved.
   *
-  * This software component is licensed by ST under Ultimate Liberty license
-  * SLA0044, the "License"; You may not use this file except in compliance with
-  * the License. You may obtain a copy of the License at:
-  *                      www.st.com/SLA0044
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
   *
   ******************************************************************************
   */
 
 /* Includes ------------------------------------------------------------------*/
-#include "usbd_video_if.h"
+#include <usbd_video_if.h>
 
 /* Include you image binary file here
     Binary image template shall provide:
@@ -41,7 +40,7 @@
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
-
+uint8_t img_count;
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -72,7 +71,7 @@
   */
 
 /* USER CODE BEGIN PRIVATE_DEFINES */
-#define NO_HEADER_PACKET_SIZE (UVC_PACKET_SIZE - (UVC_HEADER_PACKET_CNT * 2U))
+
 /* USER CODE END PRIVATE_DEFINES */
 
 /**
@@ -189,6 +188,9 @@ static int8_t VIDEO_Itf_DeInit(void)
   */
 static int8_t VIDEO_Itf_Control(uint8_t cmd, uint8_t *pbuf, uint16_t length)
 {
+  UNUSED(cmd);
+  UNUSED(pbuf);
+  UNUSED(length);
 
   return (0);
 }
@@ -197,13 +199,14 @@ static int8_t VIDEO_Itf_Control(uint8_t cmd, uint8_t *pbuf, uint16_t length)
   * @brief  TEMPLATE_Data
   *         Manage the UVC data packets
   * @param  pbuf: pointer to the buffer data to be filled
-  * @param  psize: pointer to the current packet size to be filled
+  * @param  psize: pointer tot he current packet size to be filled
   * @param  pcktidx: pointer to the current packet index in the current image
   * @retval Result of the operation: USBD_OK if all operations are OK else USBD_FAIL
   */
 static int8_t VIDEO_Itf_Data(uint8_t **pbuf, uint16_t *psize, uint16_t *pcktidx)
 {
-	return USBD_OK;
+
+  return (0);
 }
 
 /* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
@@ -217,5 +220,3 @@ static int8_t VIDEO_Itf_Data(uint8_t **pbuf, uint16_t *psize, uint16_t *pcktidx)
 /**
   * @}
   */
-
-/************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
