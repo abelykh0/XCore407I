@@ -19,7 +19,6 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "rtc.h"
-#include "usb_otg.h"
 #include "gpio.h"
 #include "fsmc.h"
 
@@ -94,7 +93,6 @@ int main(void)
   MX_GPIO_Init();
   MX_FSMC_Init();
   MX_RTC_Init();
-  MX_USB_OTG_HS_PCD_Init();
   /* USER CODE BEGIN 2 */
   setup();
   /* USER CODE END 2 */

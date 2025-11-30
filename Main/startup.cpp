@@ -56,7 +56,7 @@ static void USB_DEVICE_Init()
 	{
 		Error_Handler();
 	}
-	if (USBD_RegisterClassComposite(&hUsbDeviceHS, &USBD_CDC,CLASS_TYPE_CDC, cdc_ep) != USBD_OK)
+	if (USBD_RegisterClassComposite(&hUsbDeviceHS, &USBD_CDC, CLASS_TYPE_CDC, cdc_ep) != USBD_OK)
 	{
 		Error_Handler();
 	}
