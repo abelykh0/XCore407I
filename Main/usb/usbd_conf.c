@@ -11,12 +11,6 @@ void Error_Handler(void);
 /* External functions --------------------------------------------------------*/
 void SystemClock_Config(void);
 
-/* USER CODE BEGIN 0 */
-
-/* USER CODE END 0 */
-
-/* USER CODE BEGIN PFP */
-/* Private function prototypes -----------------------------------------------*/
 USBD_StatusTypeDef USBD_Get_USB_Status(HAL_StatusTypeDef hal_status);
 
 /*******************************************************************************

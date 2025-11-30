@@ -5,6 +5,8 @@
 extern "C" {
 #endif
 
+#include "main.h"
+
 void initialize();
 void setup();
 void loop();
