@@ -1,6 +1,6 @@
 # XCore407I
 
-![Development Board](XCore407I.jpg)
+![Development Board](doc/XCore407I.jpg)
 
 [Hardware](https://www.waveshare.com/xcore407i.htm)
 
