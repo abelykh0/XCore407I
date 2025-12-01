@@ -243,9 +243,12 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
 	  HAL_PCD_RegisterIsoOutIncpltCallback(&hpcd_USB_OTG_HS, PCD_ISOOUTIncompleteCallback);
 	  HAL_PCD_RegisterIsoInIncpltCallback(&hpcd_USB_OTG_HS, PCD_ISOINIncompleteCallback);
 #endif /* USE_HAL_PCD_REGISTER_CALLBACKS */
-	  HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_HS, 0x200);
-	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0, 0x80);
-	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, 0x174);
+
+	  HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_HS, 0x80);      // RX
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0, 0x40);   // EP0
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, 0x10);   // CDC Interrupt
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 2, 0x40);   // CDC Bulk: 64 bytes
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 3, 0x400);  // UVC ISO
 
 	  HAL_NVIC_SetPriority(OTG_HS_IRQn, 5, 0);
 	  HAL_NVIC_EnableIRQ(OTG_HS_IRQn);

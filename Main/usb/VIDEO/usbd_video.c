@@ -284,12 +284,12 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
 #endif /* USBD_UVC_FORMAT_UNCOMPRESSED */
   WBVAL(UVC_WIDTH),                              /* wWidth: Image Frame Width */
   WBVAL(UVC_HEIGHT),                             /* wHeight: Image Frame Height */
-  DBVAL(UVC_MIN_BIT_RATE(UVC_CAM_FPS_FS)),       /* dwMinBitRate: Minimum supported bit rate in bits/s  */
-  DBVAL(UVC_MAX_BIT_RATE(UVC_CAM_FPS_FS)),       /* dwMaxBitRate: Maximum supported bit rate in bits/s  */
+  DBVAL(UVC_MIN_BIT_RATE(UVC_CAM_FPS_HS)),       /* dwMinBitRate: Minimum supported bit rate in bits/s  */
+  DBVAL(UVC_MAX_BIT_RATE(UVC_CAM_FPS_HS)),       /* dwMaxBitRate: Maximum supported bit rate in bits/s  */
   DBVAL(UVC_MAX_FRAME_SIZE),                     /* dwMaxVideoFrameBufSize: Maximum video frame size, in bytes */
-  DBVAL(UVC_INTERVAL(UVC_CAM_FPS_FS)),           /* dwDefaultFrameInterval: following number of FPS */
+  DBVAL(UVC_INTERVAL(UVC_CAM_FPS_HS)),           /* dwDefaultFrameInterval: following number of FPS */
   0x01,                                          /* bFrameIntervalType: Discrete frame interval type */
-  DBVAL(UVC_INTERVAL(UVC_CAM_FPS_FS)),           /* dwMinFrameInterval: One supported value of interval (FPS) */
+  DBVAL(UVC_INTERVAL(UVC_CAM_FPS_HS)),           /* dwMinFrameInterval: One supported value of interval (FPS) */
 
 #ifdef USBD_UVC_FORMAT_UNCOMPRESSED
   /* Color Matching Descriptor */
@@ -317,8 +317,8 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_CfgDesc[] __ALIGN_END =
   USB_DESC_TYPE_ENDPOINT,                        /* bDescriptorType */
   UVC_IN_EP,                                     /* bEndpointAddress */
   0x05,                                          /* bmAttributes: ISO transfer */
-  LOBYTE(UVC_ISO_FS_MPS),                        /* wMaxPacketSize */
-  LOBYTE(UVC_ISO_FS_MPS),
+  LOBYTE(UVC_ISO_HS_MPS),                        /* wMaxPacketSize */
+  HIBYTE(UVC_ISO_HS_MPS),
   0x01,                                          /* bInterval: 1 frame interval */
 };
 

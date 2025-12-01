@@ -20,7 +20,7 @@ typedef struct __attribute__((packed)) {
     UVPair UV[UVC_WIDTH * UVC_HEIGHT];      // UV
 } CanvasNV12;
 
-uint8_t canvas_buffer[UVC_FRAME_SIZE] /*__attribute__(( section(".sram2") ))*/;
+uint8_t canvas_buffer[UVC_MAX_FRAME_SIZE] /*__attribute__(( section(".sram2") ))*/;
 static CanvasNV12* canvas = (CanvasNV12*)canvas_buffer;
 
 // Y-Cb-Cr 64 color palette (indexed by BBGGRR)
