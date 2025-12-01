@@ -1,11 +1,13 @@
 # XCore407I
 
+Trying to implement something on USB HS
+
 ![Development Board](doc/XCore407I.jpg)
 
 1. **STM32F407IGT6**, 168MHz, 192+4kB SRAM, 1024kB Flash
 2. MIC2075-2, onboard USB FS power management device
 3. AMS1117-3.3, 3.3V voltage regulator
-4. K9F1G08U0E, 1G Bit NandFlash
+4. **K9F1G08U0E**, 1G Bit NandFlash
 5. DP83848, Ethernet PHY
 6. MIC2075-1, onboard USB HS power management device
 7. **USB3300**, USB HS PHY
@@ -32,4 +34,3 @@
 
 [Hardware](https://www.waveshare.com/xcore407i.htm)
 
-Trying to implement something on USB HS
