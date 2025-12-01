@@ -56,7 +56,7 @@ static void USB_DEVICE_Init()
 	}
 
 	// UVC
-	if (USBD_VIDEO_RegisterInterface(&hUsbDeviceHS, &USBD_VIDEO_fops_FS) != USBD_OK)
+	if (USBD_VIDEO_RegisterInterface(&hUsbDeviceHS, &USBD_VIDEO_fops_HS) != USBD_OK)
 	{
 		Error_Handler();
 	}

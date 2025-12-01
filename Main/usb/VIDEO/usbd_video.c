@@ -392,6 +392,84 @@ static USBD_VideoControlTypeDef video_Probe_Control =
   */
 
 /**
+  * @brief  USBD_VIDEO_DataIn
+  *         handle data IN Stage
+  * @param  pdev: device instance
+  * @param  epnum: endpoint index
+  * @retval status
+  */
+static uint8_t  USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
+{
+  USBD_VIDEO_HandleTypeDef *hVIDEO = (USBD_VIDEO_HandleTypeDef *) pdev->pClassDataCmsit[pdev->classId];
+
+#ifdef USE_USBD_COMPOSITE
+  /* Get the Endpoints addresses allocated for this class instance */
+  //VIDEOinEpAdd = USBD_CoreGetEPAdd(pdev, USBD_EP_IN, USBD_EP_TYPE_ISOC, (uint8_t)pdev->classId);
+#endif /* USE_USBD_COMPOSITE */
+
+  static uint8_t streaming_started = 0;
+  static uint32_t video_frame_offset = 0;
+  static uint8_t frame_id = 0;
+  static uint8_t buffer[UVC_ISO_HS_MPS];       // header + payload
+  static uint8_t buffer_initialized = 0;
+
+  uint32_t remaining;
+  uint32_t packet_size;
+
+  // Only stream when host requests
+  if (hVIDEO->uvc_state != UVC_PLAY_STATUS_STREAMING)
+  {
+      streaming_started = 0;
+      return USBD_OK;
+  }
+
+  // Start of streaming: flush FIFO, reset offset
+  if (!streaming_started)
+  {
+      USBD_LL_FlushEP(pdev, UVC_IN_EP);
+      video_frame_offset = 0;
+      streaming_started = 1;
+  }
+
+  // Initialize header in static buffer
+  if (!buffer_initialized)
+  {
+      buffer[0] = UVC_HS_HEADER_SIZE;                // header length
+      memset(buffer + 2, 0, UVC_HS_HEADER_SIZE - 2); // reserved / padding
+      buffer_initialized = 1;
+  }
+
+  // Remaining bytes in frame
+  remaining = UVC_MAX_FRAME_SIZE - video_frame_offset;
+  if (remaining == 0)
+  {
+      video_frame_offset = 0;
+      remaining = UVC_MAX_FRAME_SIZE;
+      frame_id ^= 1; // toggle frame ID per frame
+  }
+
+  // Determine payload size for this packet
+  packet_size = (remaining >= (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE))
+                ? (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE)
+                : remaining;
+
+  // Update dynamic flags in header (Frame ID, End-of-Frame)
+  buffer[1] = frame_id | ((remaining <= (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE)) ? 0x02 : 0x00);
+
+  // Copy payload immediately after header
+  //memcpy(buffer + UVC_HS_HEADER_SIZE, canvas_buffer + video_frame_offset, packet_size);
+  memset(buffer + UVC_HS_HEADER_SIZE, 0xaa, packet_size);
+
+  // Transmit header + payload as single packet
+  USBD_LL_Transmit(pdev, UVC_IN_EP, buffer, UVC_HS_HEADER_SIZE + packet_size);
+
+  // Advance offset
+  video_frame_offset += packet_size;
+
+  return USBD_OK;
+}
+
+/**
   * @brief  USBD_VIDEO_Init
   *         Initialize the VIDEO interface
   * @param  pdev: device instance
@@ -633,91 +711,6 @@ static uint8_t USBD_VIDEO_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *
 }
 
 /**
-  * @brief  USBD_VIDEO_DataIn
-  *         handle data IN Stage
-  * @param  pdev: device instance
-  * @param  epnum: endpoint index
-  * @retval status
-  */
-static uint8_t  USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
-{
-  USBD_VIDEO_HandleTypeDef *hVIDEO = (USBD_VIDEO_HandleTypeDef *) pdev->pClassDataCmsit[pdev->classId];
-  static uint8_t  packet[UVC_PACKET_SIZE + (UVC_HEADER_PACKET_CNT * 2U)] = {0x00U};
-  static uint8_t *Pcktdata = packet;
-  static uint16_t PcktIdx = 0U;
-  static uint16_t PcktSze = UVC_PACKET_SIZE;
-  static uint8_t  payload_header[2] = {0x02U, 0x00U};
-  uint8_t i = 0U;
-  uint32_t RemainData = 0U;
-  uint32_t DataOffset = 0U;
-
-#ifdef USE_USBD_COMPOSITE
-  /* Get the Endpoints addresses allocated for this class instance */
-  VIDEOinEpAdd = USBD_CoreGetEPAdd(pdev, USBD_EP_IN, USBD_EP_TYPE_ISOC, (uint8_t)pdev->classId);
-#endif /* USE_USBD_COMPOSITE */
-
-  /* Check if the Streaming has already been started */
-  if (hVIDEO->uvc_state == UVC_PLAY_STATUS_STREAMING)
-  {
-    /* Get the current packet buffer, index and size from the application layer */
-    ((USBD_VIDEO_ItfTypeDef *)pdev->pUserData[pdev->classId])->Data(&Pcktdata, &PcktSze, &PcktIdx);
-
-    /* Check if end of current image has been reached */
-    if (PcktSze > 2U)
-    {
-      /* Check if this is the first packet in current image */
-      if (PcktIdx == 0U)
-      {
-        /* Set the packet start index */
-        payload_header[1] ^= 0x01U;
-      }
-
-      RemainData = PcktSze;
-
-      /* fill the Transmit buffer */
-      while (RemainData > 0U)
-      {
-        packet[((DataOffset + 0U) * i)] = payload_header[0];
-        packet[((DataOffset + 0U) * i) + 1U] = payload_header[1];
-
-        if (RemainData > pdev->ep_in[VIDEOinEpAdd & 0xFU].maxpacket)
-        {
-          DataOffset = pdev->ep_in[VIDEOinEpAdd & 0xFU].maxpacket;
-          (void)USBD_memcpy((packet + ((DataOffset + 0U) * i) + 2U),
-                            Pcktdata + ((DataOffset - 2U) * i), (DataOffset - 2U));
-
-          RemainData -= DataOffset;
-          i++;
-        }
-        else
-        {
-          (void)USBD_memcpy((packet + ((DataOffset + 0U) * i) + 2U),
-                            Pcktdata + ((DataOffset - 2U) * i), (RemainData - 2U));
-
-          RemainData = 0U;
-        }
-      }
-    }
-    else
-    {
-      /* Add the packet header */
-      packet[0] = payload_header[0];
-      packet[1] = payload_header[1];
-    }
-
-    hVIDEO->uvc_buffer = (uint8_t *)&packet;
-    hVIDEO->uvc_size = (uint32_t)PcktSze;
-
-    /* Transmit the packet on Endpoint */
-    (void)USBD_LL_Transmit(pdev, (uint8_t)(epnum | 0x80U),
-                           hVIDEO->uvc_buffer, hVIDEO->uvc_size);
-  }
-
-  /* Exit with no error code */
-  return (uint8_t) USBD_OK;
-}
-
-/**
   * @brief  USBD_VIDEO_SOF
   *         handle SOF event
   * @param  pdev: device instance
@@ -730,7 +723,7 @@ static uint8_t  USBD_VIDEO_SOF(USBD_HandleTypeDef *pdev)
 
 #ifdef USE_USBD_COMPOSITE
   /* Get the Endpoints addresses allocated for this class instance */
-  VIDEOinEpAdd = USBD_CoreGetEPAdd(pdev, USBD_EP_IN, USBD_EP_TYPE_ISOC, (uint8_t)pdev->classId);
+  //VIDEOinEpAdd = USBD_CoreGetEPAdd(pdev, USBD_EP_IN, USBD_EP_TYPE_ISOC, (uint8_t)pdev->classId);
 #endif /* USE_USBD_COMPOSITE */
 
   /* Check if the Streaming has already been started by SetInterface AltSetting 1 */

@@ -1,144 +1,11 @@
-/**
-  ******************************************************************************
-  * @file    usbd_video_if_template.c
-  * @author  MCD Application Team
-  * @brief   Template file for Video Interface application layer functions
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2020 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
-
-/* Includes ------------------------------------------------------------------*/
 #include <usbd_video_if.h>
-
-/* Include you image binary file here
-    Binary image template shall provide:
-     - tImagesList: table containing pointers to all images
-     - tImagesSizes: table containing sizes of each image respectively
-     - img_count: global image counter variable
-     - IMG_NBR: Total image number
-
-     To generate such file, it is possible to use tools converting video to MJPEG then to JPEG images.
- */
-/* #include "img_bin.h" */
-
-/* USER CODE BEGIN INCLUDE */
-
-/* USER CODE END INCLUDE */
-
-/* Private typedef -----------------------------------------------------------*/
-/* Private define ------------------------------------------------------------*/
-/* Private macro -------------------------------------------------------------*/
-
-/* USER CODE BEGIN PV */
-/* Private variables ---------------------------------------------------------*/
-uint8_t img_count;
-/* USER CODE END PV */
-
-/** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
-  * @brief Usb device library.
-  * @{
-  */
-
-/** @addtogroup USBD_VIDEO_IF
-  * @{
-  */
-
-/** @defgroup USBD_VIDEO_IF_Private_TypesDefinitions
-  * @brief Private types.
-  * @{
-  */
-
-/* USER CODE BEGIN PRIVATE_TYPES */
-
-/* USER CODE END PRIVATE_TYPES */
-
-/**
-  * @}
-  */
-
-/** @defgroup USBD_VIDEO_IF_Private_Defines
-  * @brief Private defines.
-  * @{
-  */
-
-/* USER CODE BEGIN PRIVATE_DEFINES */
-
-/* USER CODE END PRIVATE_DEFINES */
-
-/**
-  * @}
-  */
-
-/** @defgroup USBD_VIDEO_IF_Private_Macros
-  * @brief Private macros.
-  * @{
-  */
-
-/* USER CODE BEGIN PRIVATE_MACRO */
-
-/* USER CODE END PRIVATE_MACRO */
-
-/**
-  * @}
-  */
-
-/** @defgroup USBD_VIDEO_IF_Private_Variables
-  * @brief Private variables.
-  * @{
-  */
-
-/* USER CODE BEGIN PRIVATE_VARIABLES */
-
-/* USER CODE END PRIVATE_VARIABLES */
-
-/**
-  * @}
-  */
-
-/** @defgroup USBD_VIDEO_IF_Exported_Variables
-  * @brief Public variables.
-  * @{
-  */
-
-
-
-/* USER CODE BEGIN EXPORTED_VARIABLES */
-
-/* USER CODE END EXPORTED_VARIABLES */
-
-/**
-  * @}
-  */
-
-/** @defgroup USBD_VIDEO_IF_Private_FunctionPrototypes
-  * @brief Private functions declaration.
-  * @{
-  */
 
 static int8_t VIDEO_Itf_Init(void);
 static int8_t VIDEO_Itf_DeInit(void);
 static int8_t VIDEO_Itf_Control(uint8_t cmd, uint8_t *pbuf, uint16_t length);
 static int8_t VIDEO_Itf_Data(uint8_t **pbuf, uint16_t *psize, uint16_t *pcktidx);
 
-
-/* USER CODE BEGIN PRIVATE_FUNCTIONS_DECLARATION */
-
-/* USER CODE END PRIVATE_FUNCTIONS_DECLARATION */
-
-/**
-  * @}
-  */
-
-USBD_VIDEO_ItfTypeDef USBD_VIDEO_fops_FS =
+USBD_VIDEO_ItfTypeDef USBD_VIDEO_fops_HS =
 {
   VIDEO_Itf_Init,
   VIDEO_Itf_DeInit,
@@ -160,7 +27,7 @@ static int8_t VIDEO_Itf_Init(void)
      Add your initialization code here
   */
 
-  return (0);
+  return USBD_OK;
 }
 
 /**
@@ -174,7 +41,7 @@ static int8_t VIDEO_Itf_DeInit(void)
   /*
      Add your deinitialization code here
   */
-  return (0);
+  return USBD_OK;
 }
 
 
@@ -192,7 +59,7 @@ static int8_t VIDEO_Itf_Control(uint8_t cmd, uint8_t *pbuf, uint16_t length)
   UNUSED(pbuf);
   UNUSED(length);
 
-  return (0);
+  return USBD_OK;
 }
 
 /**
@@ -205,18 +72,5 @@ static int8_t VIDEO_Itf_Control(uint8_t cmd, uint8_t *pbuf, uint16_t length)
   */
 static int8_t VIDEO_Itf_Data(uint8_t **pbuf, uint16_t *psize, uint16_t *pcktidx)
 {
-
-  return (0);
+  return USBD_OK;
 }
-
-/* USER CODE BEGIN PRIVATE_FUNCTIONS_IMPLEMENTATION */
-
-/* USER CODE END PRIVATE_FUNCTIONS_IMPLEMENTATION */
-
-/**
-  * @}
-  */
-
-/**
-  * @}
-  */
