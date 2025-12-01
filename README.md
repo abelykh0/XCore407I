@@ -9,7 +9,7 @@ Trying to implement something on USB HS
 3. AMS1117-3.3, 3.3V voltage regulator
 4. **K9F1G08U0E**, 1G Bit NandFlash
 5. DP83848, Ethernet PHY
-6. MIC2075-1, onboard USB HS power management device
+6. **MIC2075-1**, onboard USB HS power management device
 7. **USB3300**, USB HS PHY
 8. Power supply switch, powered from 5Vin or USB connection
 9. Boot mode switch, for configuring BOOT0 pin
@@ -20,7 +20,7 @@ Trying to implement something on USB HS
 14. **8M crystal**, MCU clock, enables the MCU run at higher speed by frequency multiplication
 15. **24M crystal**, USB3300 clock
 16. 50M crystal, DP83848 clock
-17. 32.768K crystal, for internal RTC with calibration
+17. **32.768K crystal**, for internal RTC with calibration
 18. Ethernet connector
 19. USB FS mini connector
 20. **USB HS mini connector**
