@@ -17,7 +17,7 @@ extern "C" {
 // - repeat row 2x
 // - maybe also support 4x (1024x768)
 
-extern uint8_t canvas_buffer[UVC_MAX_FRAME_SIZE];
+extern uint8_t canvas_buffer[12];
 
 #define TEXT_COLUMNS (UVC_WIDTH / 8)
 #define TEXT_ROWS (UVC_HEIGHT / 8)
