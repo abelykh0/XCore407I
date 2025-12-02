@@ -2,6 +2,8 @@
 #include "screen/canvas.h"
 
 #define BUFFER_SIZE (CANVAS_WIDTH * CANVAS_HEIGHT)
+#define Y_PLANE_SIZE (BUFFER_SIZE * 4)
+#define PLANE_WIDTH (CANVAS_WIDTH * 2)
 uint8_t canvas_buffer[BUFFER_SIZE] /*__attribute__(( section(".sram2") ))*/;
 
 // Y-Cb-Cr 64 color palette (indexed by BBGGRR)
@@ -78,48 +80,51 @@ uint8_t Colors[][3] =
 // one packet is either fully in Y PLANE or UV PLANE
 void FillBuffer(uint32_t offset, uint8_t* out)
 {
-    if (offset < BUFFER_SIZE)
+
+    if (offset < Y_PLANE_SIZE)
     {
+    	 //memset(out, 0xAA, PACKET_SIZE_NO_HEADER);
+    	 //return;
+
         //-------------------------
         //        Y PLANE
         //-------------------------
-        uint32_t yRow = offset / CANVAS_WIDTH;
-        uint32_t yCol = offset % CANVAS_WIDTH;
+        uint32_t bufferOffset = (offset / PLANE_WIDTH / 2) * CANVAS_WIDTH;
+        uint32_t yCol = offset % PLANE_WIDTH;
 
-        for (uint32_t i = 0; i < PACKET_SIZE_NO_HEADER; i++)
+        for (uint32_t i = 0; i < 310; i += 2)
         {
-            uint32_t x = yCol + i;
-            if (x >= CANVAS_WIDTH) break;   // end of row
+            uint32_t x = (yCol + i) >> 1;
+            //if (x >= CANVAS_WIDTH) break;   // end of row
 
-            uint32_t srcX = x >> 1;
-            uint32_t srcY = yRow >> 1;
-
-            uint8_t index = canvas_buffer[srcY * CANVAS_WIDTH + srcX];
+            uint8_t index = canvas_buffer[bufferOffset + x];
             out[i] = Colors[index][0];    // Y component
+            out[i + 1] = out[i];
         }
     }
     else
     {
-        //-------------------------
+		 //memset(out, 0xAA, PACKET_SIZE_NO_HEADER);
+		 //return;
+
+    	//-------------------------
         //        UV PLANE
         //-------------------------
-        uint32_t uvOffset = offset - BUFFER_SIZE;
+        uint32_t uvOffset = offset - Y_PLANE_SIZE;
 
-        uint32_t uvRow = uvOffset / CANVAS_WIDTH;      // 0..HEIGHT/2-1
-        uint32_t uvCol = uvOffset % CANVAS_WIDTH;      // column in UV row
+        uint32_t bufferOffset = (uvOffset / PLANE_WIDTH) * CANVAS_WIDTH;
+        uint32_t uvCol = uvOffset % PLANE_WIDTH;
 
-        for (uint32_t i = 0; i < PACKET_SIZE_NO_HEADER; i += 2)
+        for (uint32_t i = 0; i < 310; i += 2)
         {
-            uint32_t x = uvCol + i;
-            if (x >= CANVAS_WIDTH) break;
+            uint32_t x = (uvCol + i) >> 1; //) >> 1;
+            //if (x >= CANVAS_WIDTH) break;
 
-            uint32_t srcX = x >> 1;     // every pair shares same index
-            uint32_t srcY = uvRow;
+            uint8_t index = canvas_buffer[bufferOffset + x];
 
-            uint8_t index = canvas_buffer[srcY * CANVAS_WIDTH + srcX];
-
-            out[i + 0] = Colors[index][1];  // U
-            out[i + 1] = Colors[index][2];  // V
+            uint8_t* color = Colors[index];
+            out[i + 0] = color[1];  // U
+            out[i + 1] = color[2];  // V
         }
     }
 }

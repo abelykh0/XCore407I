@@ -45,8 +45,8 @@ extern "C" void loop()
 	loop_demo_colors();
 
 	PHY_ToggleLEDs();
-	uint8_t test_msg[] = "STM32 CDC Test\n";
-	CDC_Transmit_HS(test_msg, sizeof(test_msg) - 1);
+	//uint8_t test_msg[] = "STM32 CDC Test\n";
+	//CDC_Transmit_HS(test_msg, sizeof(test_msg) - 1);
 
 	HAL_Delay(1000);
 }

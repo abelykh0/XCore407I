@@ -31,14 +31,14 @@ void init_demo_colors()
 
     // 64 colors
 	char buf[20];
-    for (int i = 0; i < 64; i++)
+    for (int i = 0; i < 4; i++)
     {
     	screen.SetAttribute((i << 8) | 0x10);
-    	screen.PrintAt(3 + (i % 5) * 7, 3 + (i / 5) * 2, "\xDF\xDF\xDF\xDF\xDF\xDF"); // ▀▀▀▀▀▀
+    	screen.PrintAt(3 + (i % 4) * 7, 3 + (i / 4) * 2, "\xDF\xDF\xDF\xDF\xDF\xDF"); // ▀▀▀▀▀▀
 
     	screen.SetAttribute(0x2A10);
     	sprintf(buf, BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(i));
-    	screen.PrintAt(3 + (i % 5) * 7, 2 + (i / 5) * 2, buf);
+    	screen.PrintAt(3 + (i % 4) * 7, 2 + (i / 4) * 2, buf);
     }
 
 	screen.SetAttribute(0x3F10);
@@ -47,9 +47,6 @@ void init_demo_colors()
 int32_t loop_demo_colors()
 {
 	char showTime[20];
-
-	HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1);
-	HAL_Delay(1000);
 
 	RTC_DateTypeDef dateStruct;
 	RTC_TimeTypeDef timeStruct;
