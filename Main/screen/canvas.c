@@ -1,27 +1,8 @@
 #include "string.h"
 #include "screen/canvas.h"
 
-#define PHYS_WIDTH  (UVC_WIDTH * 2)
-#define PHYS_HEIGHT (UVC_HEIGHT * 2)
-
-#define Y_SIZE      (PHYS_WIDTH * PHYS_HEIGHT)
-#define UV_SIZE     (UVC_WIDTH * UVC_HEIGHT * 2)
-#define NV12_SIZE   (Y_SIZE + UV_SIZE)
-
-// 2 bytes per UV pair
-typedef struct __attribute__((packed)) {
-    uint8_t U;
-    uint8_t V;
-} UVPair;
-
-// NV12 frame
-typedef struct __attribute__((packed)) {
-    uint8_t Y[Y_SIZE];                      // luma
-    UVPair UV[UVC_WIDTH * UVC_HEIGHT];      // UV
-} CanvasNV12;
-
-uint8_t canvas_buffer[12] /*__attribute__(( section(".sram2") ))*/;
-static CanvasNV12* canvas = (CanvasNV12*)canvas_buffer;
+#define BUFFER_SIZE (CANVAS_WIDTH * CANVAS_HEIGHT)
+uint8_t canvas_buffer[BUFFER_SIZE] /*__attribute__(( section(".sram2") ))*/;
 
 // Y-Cb-Cr 64 color palette (indexed by BBGGRR)
 uint8_t Colors[][3] =
@@ -92,65 +73,78 @@ uint8_t Colors[][3] =
 		/*111111*/ {235, 128, 128}
 };
 
+// returns true, if it is a Y plane
+// PACKET_SIZE_NO_HEADER is chosen so
+// one packet is either fully in Y PLANE or UV PLANE
+void FillBuffer(uint32_t offset, uint8_t* out)
+{
+    if (offset < BUFFER_SIZE)
+    {
+        //-------------------------
+        //        Y PLANE
+        //-------------------------
+        uint32_t yRow = offset / CANVAS_WIDTH;
+        uint32_t yCol = offset % CANVAS_WIDTH;
+
+        for (uint32_t i = 0; i < PACKET_SIZE_NO_HEADER; i++)
+        {
+            uint32_t x = yCol + i;
+            if (x >= CANVAS_WIDTH) break;   // end of row
+
+            uint32_t srcX = x >> 1;
+            uint32_t srcY = yRow >> 1;
+
+            uint8_t index = canvas_buffer[srcY * CANVAS_WIDTH + srcX];
+            out[i] = Colors[index][0];    // Y component
+        }
+    }
+    else
+    {
+        //-------------------------
+        //        UV PLANE
+        //-------------------------
+        uint32_t uvOffset = offset - BUFFER_SIZE;
+
+        uint32_t uvRow = uvOffset / CANVAS_WIDTH;      // 0..HEIGHT/2-1
+        uint32_t uvCol = uvOffset % CANVAS_WIDTH;      // column in UV row
+
+        for (uint32_t i = 0; i < PACKET_SIZE_NO_HEADER; i += 2)
+        {
+            uint32_t x = uvCol + i;
+            if (x >= CANVAS_WIDTH) break;
+
+            uint32_t srcX = x >> 1;     // every pair shares same index
+            uint32_t srcY = uvRow;
+
+            uint8_t index = canvas_buffer[srcY * CANVAS_WIDTH + srcX];
+
+            out[i + 0] = Colors[index][1];  // U
+            out[i + 1] = Colors[index][2];  // V
+        }
+    }
+}
+
 void Clear(uint8_t color)
 {
-	uint8_t* yCbCr = Colors[color];
-    uint8_t Yc = yCbCr[0];
-    uint8_t Uc = yCbCr[1];
-    uint8_t Vc = yCbCr[2];
-
-    memset(canvas->Y, Yc, Y_SIZE);
-
-    // Fill UV plane: each pixel is 2 bytes (U+V)
-    for (int i = 0; i < UVC_WIDTH * UVC_HEIGHT; i++)
-    {
-        canvas->UV[i].U = Uc;
-        canvas->UV[i].V = Vc;
-    }
+	memset(canvas_buffer, color & 0x3f, BUFFER_SIZE);
 }
 
 void SetPixel(uint16_t x, uint16_t y, uint8_t color)
 {
-    if (x >= UVC_WIDTH || y >= UVC_HEIGHT)
+    if (x >= CANVAS_WIDTH || y >= CANVAS_HEIGHT)
     {
         return; // out of canvas
     }
 
-	uint8_t* yCbCr = Colors[color];
-    uint8_t Yc = yCbCr[0];
-    uint8_t Uc = yCbCr[1];
-    uint8_t Vc = yCbCr[2];
-
-    int px = x * 2; // physical coordinates
-    int py = y * 2;
-
-    // Set 2x2 block in Y plane
-    for (int dy = 0; dy < 2; dy++)
-    {
-        for (int dx = 0; dx < 2; dx++)
-        {
-            canvas->Y[(py + dy) * PHYS_WIDTH + (px + dx)] = Yc;
-        }
-    }
-
-    // Set UV for this logical pixel
-    canvas->UV[y * UVC_WIDTH + x].U = Uc;
-    canvas->UV[y * UVC_WIDTH + x].V = Vc;
+    canvas_buffer[y * CANVAS_WIDTH + x] = (color & 0x3f); // we only use 64 colors
 }
 
-/*
 uint8_t GetPixel(uint16_t x, uint16_t y)
 {
-    if (x >= UVC_WIDTH || y >= UVC_HEIGHT)
+    if (x >= CANVAS_WIDTH || y >= CANVAS_HEIGHT)
     {
         return 0; // out of canvas
     }
 
-    uint8_t Yc = canvas.Y[(y*2) * PHYS_WIDTH + (x*2)]; // pick top-left of 2x2 block
-    uint8_t Uc = canvas.UV[y * UVC_WIDTH + x].U;
-    uint8_t Vc = canvas.UV[y * UVC_WIDTH + x].V;
-
-    // TODO - convert to RGB
-    return Yc | Uc  | Vc;
+    return canvas_buffer[y * CANVAS_WIDTH + x];
 }
-*/

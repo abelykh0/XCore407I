@@ -9,6 +9,7 @@
 #include "usbd_video_if.h"
 
 #include "screen/screen.h"
+#include "demo_colors/demo_colors.h"
 
 // USB HS Device
 extern USBD_ClassTypeDef USBD_CMPSIT;
@@ -35,15 +36,19 @@ extern "C" void setup()
 	// Using Ethernet PHY to toggle LEDs
 	MX_ETH_Init();
 	PHY_EnableManualLEDMode();
+
+	init_demo_colors();
 }
 
 extern "C" void loop()
 {
+	loop_demo_colors();
+
 	PHY_ToggleLEDs();
 	uint8_t test_msg[] = "STM32 CDC Test\n";
 	CDC_Transmit_HS(test_msg, sizeof(test_msg) - 1);
 
-	HAL_Delay(2000);
+	HAL_Delay(1000);
 }
 
 static void USB_DEVICE_Init()

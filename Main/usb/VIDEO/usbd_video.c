@@ -1,87 +1,7 @@
-/**
-  ******************************************************************************
-  * @file    usbd_video.c
-  * @author  MCD Application Team
-  * @brief   This file provides the Video core functions.
-  *
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2020 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  * @verbatim
-  *
-  *          ===================================================================
-  *                                VIDEO Class  Description
-  *          ===================================================================
-  *           This driver manages the Video Class 1.1 following the "USB Device Class Definition for
-  *           Video Devices V1.0 Mar 18, 98".
-  *           This driver implements the following aspects of the specification:
-  *             - Device descriptor management
-  *             - Configuration descriptor management
-  *             - Interface Association Descriptor
-  *             -Standard VC Interface Descriptor  = interface 0
-  *             -Standard Vs Interface Descriptor  = interface 1
-  *             - 1 Video Streaming Interface
-  *             - 1 Video Streaming Endpoint
-  *             - 1 Video Terminal Input (camera)
-  *             - Video Class-Specific AC Interfaces
-  *             - Video Class-Specific AS Interfaces
-  *             - VideoControl Requests
-  *             - Video Synchronization type: Asynchronous
-  *          The current  Video class version supports the following Video features:
-  *             - image JPEG format
-  *             - Asynchronous Endpoints
-  *
-  * @note     In HS mode and when the USB DMA is used, all variables and data structures
-  *           dealing with the DMA during the transaction process should be 32-bit aligned.
-  *
-  *
-  *  @endverbatim
-  *
-  ******************************************************************************
-  */
-
-/* Includes ------------------------------------------------------------------*/
 #include "usbd_video.h"
 #include "usbd_ctlreq.h"
 #include "usbd_core.h"
-/** @addtogroup STM32_USB_DEVICE_LIBRARY
-  * @{
-  */
-
-
-/** @defgroup USBD_VIDEO
-  * @brief USB Device Video Class core module
-  * @{
-  */
-
-/** @defgroup USBD_VIDEO_Private_TypesDefinitions
-  * @{
-  */
-
-/**
-  * @}
-  */
-
-/** @defgroup USBD_VIDEO_Private_Defines
-  * @{
-  */
-
-/**
-  * @}
-  */
-
-
-/** @defgroup USBD_VIDEO_Private_Macros
-  * @{
-  */
+#include "screen/canvas.h"
 
 /* VIDEO Device library callbacks */
 static uint8_t USBD_VIDEO_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx);
@@ -108,14 +28,6 @@ static void *USBD_VIDEO_GetVSFrameDesc(uint8_t *pConfDesc);
 #endif /* USE_USBD_COMPOSITE */
 
 static void *USBD_VIDEO_GetVideoHeaderDesc(uint8_t *pConfDesc);
-
-/**
-  * @}
-  */
-
-/** @defgroup USBD_VIDEO_Private_Variables
-  * @{
-  */
 
 USBD_ClassTypeDef  USBD_VIDEO =
 {
@@ -384,14 +296,6 @@ static USBD_VideoControlTypeDef video_Probe_Control =
 };
 
 /**
-  * @}
-  */
-
-/** @defgroup USBD_VIDEO_Private_Functions
-  * @{
-  */
-
-/**
   * @brief  USBD_VIDEO_DataIn
   *         handle data IN Stage
   * @param  pdev: device instance
@@ -434,8 +338,7 @@ static uint8_t  USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
   // Initialize header in static buffer
   if (!buffer_initialized)
   {
-      buffer[0] = UVC_HS_HEADER_SIZE;                // header length
-      memset(buffer + 2, 0, UVC_HS_HEADER_SIZE - 2); // reserved / padding
+      buffer[0] = UVC_HS_HEADER_SIZE;  // header length
       buffer_initialized = 1;
   }
 
@@ -457,8 +360,8 @@ static uint8_t  USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
   buffer[1] = frame_id | ((remaining <= (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE)) ? 0x02 : 0x00);
 
   // Copy payload immediately after header
-  //memcpy(buffer + UVC_HS_HEADER_SIZE, canvas_buffer + video_frame_offset, packet_size);
-  memset(buffer + UVC_HS_HEADER_SIZE, 0xaa, packet_size);
+  FillBuffer(video_frame_offset, buffer + UVC_HS_HEADER_SIZE);
+  //memset(buffer + UVC_HS_HEADER_SIZE, 0xaa, packet_size);
 
   // Transmit header + payload as single packet
   USBD_LL_Transmit(pdev, UVC_IN_EP, buffer, UVC_HS_HEADER_SIZE + packet_size);
