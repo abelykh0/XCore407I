@@ -31,7 +31,7 @@ void init_demo_colors()
 
     // 64 colors
 	char buf[20];
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 40; i++)
     {
     	screen.SetAttribute((i << 8) | 0x10);
     	screen.PrintAt(3 + (i % 4) * 7, 3 + (i / 4) * 2, "\xDF\xDF\xDF\xDF\xDF\xDF"); // ▀▀▀▀▀▀

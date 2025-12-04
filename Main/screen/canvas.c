@@ -27,11 +27,23 @@ void FillBuffer(uint32_t offset, uint8_t* out)
     	//memset(out, 0xAA, PACKET_SIZE_NO_HEADER);
     	//return;
 
+    	static bool a = 1;
+
+    	a = !a;
+
+    	uint16_t start = 0;
+    	if (a)
+    	{
+    		start = PACKET_SIZE_NO_HEADER / 2;
+    	}
+
+    	uint16_t end = start + (PACKET_SIZE_NO_HEADER / 2);
+
     	uint32_t bufferOffset = (offset / PLANE_WIDTH / 2) * CANVAS_WIDTH;
         uint32_t yCol = offset % PLANE_WIDTH;
-        uint16_t* out_buffer = (uint16_t*)out;
+        uint16_t* out_buffer = (uint16_t*)(out + start);
 
-        for (uint32_t i = 0; i < 250; i += 2)
+        for (uint32_t i = start; i < end; i += 2)
         {
             uint32_t x = (yCol + i) >> 1;
 
@@ -40,20 +52,14 @@ void FillBuffer(uint32_t offset, uint8_t* out)
             uint16_t y_values = y_table[hash];
             *out_buffer = y_values;
             out_buffer++;
-
-
-            //if (x >= CANVAS_WIDTH) break;   // end of row
-
-            //uint8_t index = canvas_buffer[bufferOffset + x];
-            //out[i] = Colors[index][0];    // Y component
-            //out[i + 1] = out[i];
         }
     }
     else
     {
     	// UV plane as stored as is
+
         uint32_t uvOffset = offset - Y_PLANE_SIZE;
-        uint32_t bufferOffset = (uvOffset / PLANE_WIDTH) * CANVAS_WIDTH;
+        uint32_t bufferOffset = (uvOffset / CANVAS_WIDTH) * CANVAS_WIDTH;
         bufferOffset += (uvOffset % PLANE_WIDTH) >> 1;
 
     	memcpy(out, canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER);
