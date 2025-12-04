@@ -10,8 +10,8 @@ extern "C" {
 #include "usbd_video_conf.h"
 
 // NV12 format (4:2:0)
-// Y plane, size CANVAS_WIDTH x CANVAS_HEIGHT bytes
-// UV plane, interleaved (UV UV UV ...), size CANVAS_WIDTH x CANVAS_HEIGHT / 2 bytes
+// Y plane, size UVC_WIDTH x UVC_HEIGHT bytes
+// UV plane, interleaved (UV UV UV ...), size UVC_WIDTH x CANVAS_HEIGHT
 
 // each pixel translate to 2x2 in UVC
 // that way we don't lose color when using NV12 format
@@ -22,8 +22,17 @@ extern "C" {
 #define TEXT_COLUMNS (CANVAS_WIDTH / 8)
 #define TEXT_ROWS (CANVAS_HEIGHT / 8)
 
-// store as 6 bits per pixel (64 indexed colors), 256x192 will need 48 KB if each pixel is stored as one byte
-extern uint8_t canvas_buffer[CANVAS_WIDTH * CANVAS_HEIGHT];
+typedef union {
+    struct {
+        uint8_t Cb;
+        uint8_t Cr;
+    };
+    uint16_t value;
+} NV12_UV_t;
+
+// Store only UV plane,
+// since we only support 64 specific colors, Y plane can be derived
+extern uint8_t canvas_buffer[];
 
 void Clear(uint8_t color);
 void SetPixel(uint16_t x, uint16_t y, uint8_t color);
