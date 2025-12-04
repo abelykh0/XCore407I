@@ -64,8 +64,8 @@ void FillBuffer(uint32_t offset, uint8_t* out)
         bufferOffset += (uvOffset % PLANE_WIDTH) >> 1;
 
         // TODO ensure aligned
-        //copy_words((const uint32_t*)out, (uint32_t*)canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER / 2);
-    	memcpy(out, canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER);
+        copy_words((const uint32_t*)(canvas_buffer + bufferOffset), (uint32_t*)out, PACKET_SIZE_NO_HEADER / sizeof(uint32_t));
+    	//memcpy(out, canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER);
     }
 }
 
