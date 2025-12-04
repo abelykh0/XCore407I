@@ -1,5 +1,6 @@
 #include "string.h"
 #include "screen/canvas.h"
+#include "screen/copy_words.h"
 
 extern NV12_UV_t uv_table[];
 extern uint16_t y_table[];
@@ -62,6 +63,8 @@ void FillBuffer(uint32_t offset, uint8_t* out)
         uint32_t bufferOffset = (uvOffset / CANVAS_WIDTH) * CANVAS_WIDTH;
         bufferOffset += (uvOffset % PLANE_WIDTH) >> 1;
 
+        // TODO ensure aligned
+        //copy_words((const uint32_t*)out, (uint32_t*)canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER / 2);
     	memcpy(out, canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER);
     }
 }
