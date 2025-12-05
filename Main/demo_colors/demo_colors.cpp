@@ -31,14 +31,14 @@ void init_demo_colors()
 
     // 64 colors
 	char buf[20];
-    for (int i = 0; i < 40; i++)
+    for (int i = 0; i < 64; i++)
     {
     	screen.SetAttribute((i << 8) | 0x10);
-    	screen.PrintAt(3 + (i % 4) * 7, 3 + (i / 4) * 2, "\xDF\xDF\xDF\xDF\xDF\xDF"); // ▀▀▀▀▀▀
+    	screen.PrintAt(2 + (i % 7) * 4, 3 + (i / 7) * 2, "\xDF\xDF\xDF"); // ▀▀▀
 
     	screen.SetAttribute(0x2A10);
-    	sprintf(buf, BYTE_TO_BINARY_PATTERN, BYTE_TO_BINARY(i));
-    	screen.PrintAt(3 + (i % 4) * 7, 2 + (i / 4) * 2, buf);
+    	sprintf(buf, "%03u", CONVERT_6BIT_TO_DDD(i));
+    	screen.PrintAt(2 + (i % 7) * 4, 2 + (i / 7) * 2, buf);
     }
 
 	screen.SetAttribute(0x3F10);
