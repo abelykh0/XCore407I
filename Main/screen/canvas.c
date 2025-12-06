@@ -17,7 +17,7 @@ static uint8_t buffer[2][PACKET_SIZE_NO_HEADER];
 static uint8_t* currentBuffer = buffer[0];
 static uint8_t* nextBuffer = buffer[1];
 static uint32_t bufferOffset = PACKET_SIZE_NO_HEADER / 2;
-static NV12_UV_t* nextSourceOffset = (NV12_UV_t*)canvas_buffer;
+static uint32_t nextSourceOffset = 0;
 
 // Returns remaining bytes
 static inline uint32_t ProcessYPlane(uint32_t offset, uint8_t* out)
@@ -49,7 +49,11 @@ static inline uint32_t ProcessYPlane(uint32_t offset, uint8_t* out)
 	//memcpy(out, currentBuffer + bufferOffset, bytesToCopy);
 
     bufferOffset = bufferOffset == 0 ? (PACKET_SIZE_NO_HEADER / 2) : 0;
-	nextSourceOffset += (PACKET_SIZE_NO_HEADER / 2);
+
+    uint32_t nextOffset = offset + bufferOffset;
+	uint32_t y = nextOffset / PLANE_WIDTH / 2; // every 2 rows are repeating
+	uint32_t x = nextOffset % PLANE_WIDTH / 2;
+	nextSourceOffset = (y * CANVAS_WIDTH) + x;
 
 	// Only non-zero if same packet crosses plane boundary
 	return PACKET_SIZE_NO_HEADER - bytesToCopy;
@@ -63,7 +67,7 @@ static inline bool ProcessUVPlane(uint32_t offset, uint8_t* out, uint32_t size)
 	if (size == 0)
 	{
 		// Not on UV plane
-		return true;
+		return false;
 	}
 
 	int32_t canvasOffset = offset - Y_PLANE_SIZE;
@@ -76,13 +80,13 @@ static inline bool ProcessUVPlane(uint32_t offset, uint8_t* out, uint32_t size)
     copy_words((const uint32_t*)(canvas_buffer + canvasOffset), (uint32_t*)out, size / sizeof(uint32_t));
 	//memcpy(out, canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER);
 
-    if (canvasOffset < BUFFER_SIZE - size)
+    if (canvasOffset + size >= BUFFER_SIZE - 1)
     {
     	return true;
     }
 
     // If last packet, need to prepare next buffer
-    nextSourceOffset = uv_plane;
+    nextSourceOffset = 0;
     bufferOffset = 0;
 	return false;
 }
@@ -100,12 +104,11 @@ void FillBuffer(uint32_t offset, uint8_t* out)
 
 	// Fill half of the next buffer
 
-	memset(nextBuffer + bufferOffset, 0x77, PACKET_SIZE_NO_HEADER / 2);
-/*
+	//memset(nextBuffer + bufferOffset, 0x77, PACKET_SIZE_NO_HEADER / 2);
+
 	uint16_t* out_buffer = (uint16_t*)(nextBuffer + bufferOffset);
 	uint16_t* out_buffer_end = out_buffer + (PACKET_SIZE_NO_HEADER / 4) - 1;
-    uint32_t yCol = offset % PLANE_WIDTH + (bufferOffset / 2);
-    NV12_UV_t* source = uv_plane + ((row / 2) * CANVAS_WIDTH) + yCol;
+    NV12_UV_t* source = (NV12_UV_t*)canvas_buffer +  nextSourceOffset;
 
 	for (; out_buffer <= out_buffer_end; out_buffer++)
     {
@@ -116,7 +119,7 @@ void FillBuffer(uint32_t offset, uint8_t* out)
 
         source++;
     }
-*/
+
     if (bufferOffset > 0)
     {
         // Switch buffers
