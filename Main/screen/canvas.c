@@ -18,6 +18,7 @@ static uint8_t* currentBuffer = buffer[0];
 static uint8_t* nextBuffer = buffer[1];
 static uint32_t bufferOffset = PACKET_SIZE_NO_HEADER / 2;
 static uint32_t nextSourceOffset = 0;
+static bool isEvenRow = false;
 
 // Returns remaining bytes
 static inline uint32_t ProcessYPlane(uint32_t offset, uint8_t* out)
@@ -50,8 +51,10 @@ static inline uint32_t ProcessYPlane(uint32_t offset, uint8_t* out)
 
     bufferOffset = bufferOffset == 0 ? (PACKET_SIZE_NO_HEADER / 2) : 0;
 
-    uint32_t nextOffset = offset + bufferOffset;
-	uint32_t y = nextOffset / PLANE_WIDTH / 2; // every 2 rows are repeating
+    uint32_t nextOffset = offset + PACKET_SIZE_NO_HEADER + bufferOffset;
+	uint32_t y = nextOffset / PLANE_WIDTH;
+	isEvenRow = (y % 2) == 0;
+	y /= 2; // every 2 rows are repeating
 	uint32_t x = nextOffset % PLANE_WIDTH / 2;
 	nextSourceOffset = (y * CANVAS_WIDTH) + x;
 
@@ -88,6 +91,7 @@ static inline bool ProcessUVPlane(uint32_t offset, uint8_t* out, uint32_t size)
     // If last packet, need to prepare next buffer
     nextSourceOffset = 0;
     bufferOffset = 0;
+    isEvenRow = false;
 	return false;
 }
 
@@ -108,16 +112,19 @@ void FillBuffer(uint32_t offset, uint8_t* out)
 
 	uint16_t* out_buffer = (uint16_t*)(nextBuffer + bufferOffset);
 	uint16_t* out_buffer_end = out_buffer + (PACKET_SIZE_NO_HEADER / 4) - 1;
-    NV12_UV_t* source = (NV12_UV_t*)canvas_buffer +  nextSourceOffset;
 
 	for (; out_buffer <= out_buffer_end; out_buffer++)
     {
-        NV12_UV_t uv_value = *source;
+        NV12_UV_t uv_value = *((NV12_UV_t*)canvas_buffer + nextSourceOffset);
         uint8_t hash = uv_value.Cb ^ uv_value.Cr;
         uint16_t y_values = y_table[hash];
         *out_buffer = y_values;
 
-        source++;
+        nextSourceOffset++;
+        if (nextSourceOffset % CANVAS_WIDTH == 0 && isEvenRow)
+        {
+        	nextSourceOffset -= CANVAS_WIDTH;
+        }
     }
 
     if (bufferOffset > 0)
