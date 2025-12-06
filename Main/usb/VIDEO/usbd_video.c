@@ -314,9 +314,10 @@ static uint8_t  USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
   static uint8_t streaming_started = 0;
   static uint32_t video_frame_offset = 0;
   static uint8_t frame_id = 0;
-  static uint8_t buffer[UVC_ISO_HS_MPS];       // header + payload
+  static uint8_t buffer_bytes[UVC_ISO_HS_MPS + ALIGN_OFFSET] __attribute__((aligned(4))); // header + payload
   static uint8_t buffer_initialized = 0;
 
+  uint8_t* buffer = buffer_bytes + ALIGN_OFFSET;
   uint32_t remaining;
   uint32_t packet_size;
 

@@ -13,7 +13,8 @@
 #define UVC_UNCOMPRESSED_GUID       UVC_GUID_NV12
 #define UVC_BITS_PER_PIXEL          12U
 
-#define UVC_HS_HEADER_SIZE          4U // could be up to 12
+#define UVC_HS_HEADER_SIZE          2U // could be up to 12
+#define ALIGN_OFFSET                2
 
 // this is chosen so when filling USB buffers, each packet is either on Y or UV plane
 #define PACKET_SIZE_NO_HEADER       512
