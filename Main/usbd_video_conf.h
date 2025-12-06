@@ -1,23 +1,19 @@
 #ifndef __USBD_VIDEO_CONF__H__
 #define __USBD_VIDEO_CONF__H__
 
-// 512x384 NV12 @ 20 fps
-
+// 512x384 NV12 @ 24 fps
 #define UVC_WIDTH                   512
 #define UVC_HEIGHT                  384
-#define UVC_CAM_FPS_HS              20U
+#define UVC_CAM_FPS_HS              24U
 
 #define USBD_UVC_FORMAT_UNCOMPRESSED
-//#define UVC_UNCOMPRESSED_GUID       UVC_GUID_YUY2
-//#define UVC_BITS_PER_PIXEL          16U
 #define UVC_UNCOMPRESSED_GUID       UVC_GUID_NV12
 #define UVC_BITS_PER_PIXEL          12U
 
 #define UVC_HS_HEADER_SIZE          2U // could be up to 12
-#define ALIGN_OFFSET                2
+#define ALIGN_OFFSET                (UVC_HS_HEADER_SIZE % sizeof(uint32_t))
 
-// this is chosen so when filling USB buffers, each packet is either on Y or UV plane
-#define PACKET_SIZE_NO_HEADER       512
+#define PACKET_SIZE_NO_HEADER       1016 // must be divisible by sizeof(uint32_t)
 
 #define UVC_ISO_HS_MPS              (UVC_HS_HEADER_SIZE + PACKET_SIZE_NO_HEADER)
 #define UVC_ISO_FS_MPS              UVC_ISO_HS_MPS // do not remove, bug in composite builder?

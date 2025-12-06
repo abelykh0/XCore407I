@@ -353,12 +353,12 @@ static uint8_t  USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
   }
 
   // Determine payload size for this packet
-  packet_size = (remaining >= (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE))
-                ? (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE)
+  packet_size = (remaining >= PACKET_SIZE_NO_HEADER)
+                ? PACKET_SIZE_NO_HEADER
                 : remaining;
 
   // Update dynamic flags in header (Frame ID, End-of-Frame)
-  buffer[1] = frame_id | ((remaining <= (UVC_ISO_HS_MPS - UVC_HS_HEADER_SIZE)) ? 0x02 : 0x00);
+  buffer[1] = frame_id | ((remaining <= PACKET_SIZE_NO_HEADER) ? 0x02 : 0x00);
 
   // Copy payload immediately after header
   FillBuffer(video_frame_offset, buffer + UVC_HS_HEADER_SIZE);
