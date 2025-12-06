@@ -66,13 +66,11 @@ static inline bool ProcessUVPlane(uint32_t offset, uint8_t* out, uint32_t size)
 		return true;
 	}
 
-	int32_t uvOffset = offset - Y_PLANE_SIZE;
-	if (uvOffset < 0)
+	int32_t canvasOffset = offset - Y_PLANE_SIZE;
+	if (canvasOffset < 0)
 	{
-		uvOffset = 0;
+		canvasOffset = 0;
 	}
-    uint32_t canvasOffset = (uvOffset / CANVAS_WIDTH) * CANVAS_WIDTH;
-    canvasOffset += (uvOffset % PLANE_WIDTH) >> 1;
 
     // Ensure aligned
     copy_words((const uint32_t*)(canvas_buffer + canvasOffset), (uint32_t*)out, size / sizeof(uint32_t));
