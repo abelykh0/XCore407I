@@ -18,7 +18,7 @@
 #define UVC_HS_HEADER_SIZE          2U // could be up to 12
 #define ALIGN_OFFSET                (UVC_HS_HEADER_SIZE % sizeof(uint32_t))
 
-#define PACKET_SIZE_NO_HEADER       UVC_WIDTH // must be same (for now)
+#define PACKET_SIZE_NO_HEADER       (UVC_WIDTH * 3 / 2)
 
 #define UVC_ISO_HS_MPS              (UVC_HS_HEADER_SIZE + PACKET_SIZE_NO_HEADER)
 #define UVC_ISO_FS_MPS              UVC_ISO_HS_MPS // do not remove, bug in composite builder?

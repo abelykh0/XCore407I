@@ -13,27 +13,118 @@ extern uint8_t rgb_table[];
 uint8_t canvas_buffer[BUFFER_SIZE] __attribute__((aligned(4)));
 NV12_UV_t* uv_plane = (NV12_UV_t*)canvas_buffer;
 
-static uint8_t buffer[2][PLANE_WIDTH];
+static uint8_t buffer[2][PLANE_WIDTH * 3 / 2];
 static uint8_t* currentRow = buffer[0];
 static uint8_t* nextRow = buffer[1];
-static uint32_t bufferOffset = PACKET_SIZE_NO_HEADER / 2;
+static uint32_t uvRow = 0;
+
+// PACKET_SIZE_NO_HEADER is 1.5 * UVC_WIDTH
+// Every packet we fill next 2/3 of PLANE_WIDTH
+// One packet is either on one or two UV rows
+
+// ╔════════╦════════════╦═════════╦═════════════════════════════════════════════════════════════════════╦═══════════════════════╗
+// ║ Packet ║   Y Row    ║  UV Row ║                      Action Sequence                                ║ Modified buffers      ║
+// ╠════════╬════════════╬═════════╬═════════════════════════════════════════════════════════════════════╬═══════════════════════╣
+// ║  N/A   ║            ║    0    ║ while we are processing the UV plane, prepare currentRow (0)        ║ currentRow (0) ██████ ║
+// ╠════════╬════════════╬═════════╬═════════════════════════════════════════════════════════════════════╬═══════════════════════╣
+// ║    0   ║ 0  ██████  ║    0    ║ 1. use currentRow (0) to fill "out"                                 ║                       ║
+// ║        ║ 1  ███░░░  ║         ║ 2. prepare nextRow (1)                                              ║ nextRow    (1) ██████ ║
+// ╠════════╬════════════╬═════════╬═════════════════════════════════════════════════════════════════════╬═══════════════════════╣
+// ║    1   ║ 1  ░░░███  ║    0    ║ 1. use second half of currentRow (0) and nextRow (1) to fill "out"  ║                       ║
+// ║        ║ 2  ██████  ║    1    ║ 2. === swap buffers === currentRow (1), nextRow (2)                 ║                       ║
+// ║        ║            ║         ║ 3. prepare nextRow (2)                                              ║ nextRow    (2) ██████ ║
+// ╠════════╬════════════╬═════════╬═════════════════════════════════════════════════════════════════════╬═══════════════════════╣
+// ║    2   ║ 3  ██████  ║    1    ║ 1. use currentRow (1) and first half of nextRow (2) to fill "out"   ║                       ║
+// ║        ║ 4  ███░░░  ║    2    ║ 2. === swap buffers === currentRow (2), nextRow (3)                 ║                       ║
+// ║        ║            ║         ║ 3. prepare nextRow (3)                                              ║ nextRow    (3) ██████ ║
+// ╠════════╬════════════╬═════════╬═════════════════════════════════════════════════════════════════════╬═══════════════════════╣
+// ║    3   ║ 4  ░░░███  ║    2    ║ 1. use currentRow (2) to fill "out"                                 ║                       ║
+// ║        ║ 5  ██████  ║         ║ 2. === swap buffers === currentRow (3), nextRow (4)                 ║ nextRow    (4) ░░░░░░ ║
+// ╠════════╬════════════╬═════════╬═════════════════════════════════════════════════════════════════════╬═══════════════════════╣
+// ║    4   ║ 6  ██████  ║    3    ║ Same as packet 0                                                    ║                       ║
+// ║        ║ 7  ███░░░  ║         ║                                                                     ║ nextRow    (4) ██████ ║
+// ╚════════╩════════════╩═════════╩═════════════════════════════════════════════════════════════════════╩═══════════════════════╝
+
+static inline void PrepareNextRow()
+{
+	if (uvRow >= UVC_HEIGHT / 2)
+	{
+		// Should never happen
+		return;
+	}
+
+	uint16_t* out_buffer = (uint16_t*)nextRow;
+	uint16_t* out_buffer_end = out_buffer + CANVAS_WIDTH - 1;
+    NV12_UV_t* source = uv_plane + (uvRow * CANVAS_WIDTH);
+
+	for (; out_buffer <= out_buffer_end; out_buffer++)
+    {
+        NV12_UV_t uv_value = *source;
+        uint8_t hash = uv_value.Cb ^ uv_value.Cr;
+        uint16_t y_values = y_table[hash];
+        *out_buffer = y_values;
+
+        source++;
+    }
+}
+
+static inline void SwapBuffers()
+{
+	uint8_t* temp = currentRow;
+	currentRow = nextRow;
+	nextRow = temp;
+}
 
 void FillBuffer(uint32_t offset, uint8_t* out)
 {
-	uint32_t row;
-
 	if (offset < Y_PLANE_SIZE)
     {
 		// Y plane is derived from the UV plane
     	// since we only support selected 64 colors
 
-    	// copy from current buffer
-        // Ensure aligned
-        copy_words((const uint32_t*)currentRow, (uint32_t*)out, PACKET_SIZE_NO_HEADER / sizeof(uint32_t));
-    	//memcpy(out, currentBuffer + bufferOffset, PACKET_SIZE_NO_HEADER);
+		switch (offset / PACKET_SIZE_NO_HEADER % 4)
+		{
+		case 0:
+			// use currentRow to fill "out"
+			copy_words((const uint32_t*)currentRow, (uint32_t*)out, PLANE_WIDTH / sizeof(uint32_t));
+			copy_words((const uint32_t*)currentRow, (uint32_t*)(out + PLANE_WIDTH), PLANE_WIDTH / 2 / sizeof(uint32_t));
 
-    	row = offset / PLANE_WIDTH + 1;
-    	bufferOffset = bufferOffset == 0 ? (PACKET_SIZE_NO_HEADER / 2) : 0;
+			uvRow++;
+			PrepareNextRow();
+
+			break;
+
+		case 1:
+			// use second half of currentRow and nextRow to fill "out"
+			copy_words((const uint32_t*)(currentRow + CANVAS_WIDTH), (uint32_t*)out, PLANE_WIDTH / 2 / sizeof(uint32_t));
+			copy_words((const uint32_t*)nextRow, (uint32_t*)(out + (PLANE_WIDTH / 2)), PLANE_WIDTH / sizeof(uint32_t));
+
+			SwapBuffers();
+			uvRow++;
+			PrepareNextRow();
+
+			break;
+
+		case 2:
+			// use currentRow and first half of nextRow to fill "out"
+			copy_words((const uint32_t*)currentRow, (uint32_t*)out, PLANE_WIDTH / sizeof(uint32_t));
+			copy_words((const uint32_t*)nextRow, (uint32_t*)(out + PLANE_WIDTH), PLANE_WIDTH / 2 / sizeof(uint32_t));
+
+			SwapBuffers();
+			uvRow++;
+			PrepareNextRow();
+
+			break;
+
+		default:
+			// use currentRow to fill "out"
+			copy_words((const uint32_t*)(currentRow + CANVAS_WIDTH), (uint32_t*)out, PLANE_WIDTH / 2 / sizeof(uint32_t));
+			copy_words((const uint32_t*)currentRow, (uint32_t*)(out + (PLANE_WIDTH / 2)), PLANE_WIDTH / sizeof(uint32_t));
+
+			SwapBuffers();
+
+			break;
+		}
     }
     else
     {
@@ -50,35 +141,9 @@ void FillBuffer(uint32_t offset, uint8_t* out)
         }
 
         // If last packet, need to prepare next buffer
-        row = 0;
-        bufferOffset = 0;
-    }
-
-	// Fill half of the next buffer
-
-	//memset(nextBuffer + bufferOffset, 0xFF, PACKET_SIZE_NO_HEADER / 2);
-
-	uint16_t* out_buffer = (uint16_t*)(nextRow + bufferOffset);
-	uint16_t* out_buffer_end = out_buffer + (PACKET_SIZE_NO_HEADER / 4) - 1;
-    uint32_t yCol = offset % PLANE_WIDTH + (bufferOffset / 2);
-    NV12_UV_t* source = uv_plane + ((row / 2) * CANVAS_WIDTH) + yCol;
-
-	for (; out_buffer <= out_buffer_end; out_buffer++)
-    {
-        NV12_UV_t uv_value = *source;
-        uint8_t hash = uv_value.Cb ^ uv_value.Cr;
-        uint16_t y_values = y_table[hash];
-        *out_buffer = y_values;
-
-        source++;
-    }
-
-    if (bufferOffset > 0)
-    {
-        // Switch buffers
-    	uint8_t* temp = currentRow;
-    	currentRow = nextRow;
-    	nextRow = temp;
+        uvRow = 0;
+		PrepareNextRow();
+		SwapBuffers();
     }
 }
 
