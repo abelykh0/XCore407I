@@ -16,6 +16,9 @@
 #define USBD_CMPSIT_ACTIVATE_CDC	 1U
 #define USBD_CMPSIT_ACTIVATE_VIDEO   1U
 
+//#define CDC_OUT_EP                  0x00
+#define UVC_IN_EP                   0x83U // because CDC is using 0x81 and 0x82
+
 #define USBD_COMPOSITE_USE_IAD       1U
 
 /*---------- -----------*/

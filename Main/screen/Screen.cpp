@@ -27,7 +27,7 @@ void Screen::SetAttribute(uint16_t attribute)
 
 void Screen::SetCursorPosition(uint8_t x, uint8_t y)
 {
-	if (this->_cursor_x == x && this->_cursor_y == y)
+	if (this->cursor_x == x && this->cursor_y == y)
 	{
 		return;
 	}
@@ -47,8 +47,8 @@ void Screen::SetCursorPosition(uint8_t x, uint8_t y)
     	//this->InvertColor();
     }
 
-	this->_cursor_x = x;
-	this->_cursor_y = y;
+	this->cursor_x = x;
+	this->cursor_y = y;
 
     if (this->_isCursorVisible)
     {
@@ -87,6 +87,11 @@ void Screen::Print(const char* str)
     }
 }
 
+void Screen::PrintCharacter(const char character, uint16_t attribute)
+{
+	this->PrintChar(character, attribute);
+}
+
 void Screen::PrintAt(uint8_t x, uint8_t y, const char* str)
 {
     this->SetCursorPosition(x, y);
@@ -112,25 +117,25 @@ void Screen::PrintChar(char c, uint16_t color)
 	case '\0': //null
 		break;
 	case '\n': //line feed
-		if (this->_cursor_y < TEXT_ROWS - 1)
+		if (this->cursor_y < TEXT_ROWS - 1)
 		{
-			this->SetCursorPosition(0, this->_cursor_y + 1);
+			this->SetCursorPosition(0, this->cursor_y + 1);
 		}
 		break;
 	case '\b': //backspace
-		if (this->_cursor_x > 0)
+		if (this->cursor_x > 0)
 		{
-			this->PrintCharAt(this->_cursor_x - 1, this->_cursor_y, ' ', color);
-			this->SetCursorPosition(this->_cursor_x - 1, this->_cursor_y);
+			this->PrintCharAt(this->cursor_x - 1, this->cursor_y, ' ', color);
+			this->SetCursorPosition(this->cursor_x - 1, this->cursor_y);
 		}
 		break;
 	case 13: //carriage return
-		this->_cursor_x = 0;
+		this->cursor_x = 0;
 		break;
 	default:
 	{
-		uint8_t x = this->_cursor_x;
-		uint8_t y = this->_cursor_y;
+		uint8_t x = this->cursor_x;
+		uint8_t y = this->cursor_y;
 		this->CursorNext();
 		this->PrintCharAt(x, y, c, color);
 	}
@@ -181,8 +186,8 @@ void Screen::PrintCharAt(uint8_t x, uint8_t y, unsigned char c)
 
 void Screen::CursorNext()
 {
-	uint8_t x = this->_cursor_x;
-	uint8_t y = this->_cursor_y;
+	uint8_t x = this->cursor_x;
+	uint8_t y = this->cursor_y;
 	if (x < TEXT_COLUMNS - 1)
 	{
 		x++;

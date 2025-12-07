@@ -245,11 +245,11 @@ USBD_StatusTypeDef USBD_LL_Init(USBD_HandleTypeDef *pdev)
 #endif /* USE_HAL_PCD_REGISTER_CALLBACKS */
 
 	  // Max 0x400 words (4 kB)
-	  HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_HS,    0x40);   // RX
-	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0, 0x10);   // EP0
-	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, 0x04);   // CDC Interrupt
-	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 2, 0x10);   // CDC Bulk: 64 bytes
-	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 3, 0x39C);  // UVC ISO
+	  HAL_PCDEx_SetRxFiFo(&hpcd_USB_OTG_HS,    0x250);  // RX
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 0, 0x20);   // EP0
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 1, 0x10);   // CDC Interrupt
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 2, 0x80);   // CDC Bulk
+	  HAL_PCDEx_SetTxFiFo(&hpcd_USB_OTG_HS, 3, 0x100);  // UVC ISO
 
 	  HAL_NVIC_SetPriority(OTG_HS_IRQn, 5, 0);
 	  HAL_NVIC_EnableIRQ(OTG_HS_IRQn);

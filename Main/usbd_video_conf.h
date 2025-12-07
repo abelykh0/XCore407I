@@ -2,8 +2,8 @@
 #define __USBD_VIDEO_CONF__H__
 
 // 512x384 NV12 @ 24 fps
-#define UVC_WIDTH                   512
-#define UVC_HEIGHT                  384
+#define UVC_WIDTH                   320
+#define UVC_HEIGHT                  240
 #define UVC_CAM_FPS_HS              20
 
 // Experimental fps:
@@ -24,6 +24,5 @@
 #define UVC_ISO_HS_MPS              (UVC_HS_HEADER_SIZE + PACKET_SIZE_NO_HEADER)
 #define UVC_ISO_FS_MPS              UVC_ISO_HS_MPS // do not remove, bug in composite builder?
 #define UVC_MAX_FRAME_SIZE          (UVC_WIDTH * UVC_HEIGHT * UVC_BITS_PER_PIXEL / 8)
-#define UVC_IN_EP                   0x83U // because CDC is using 0x81 and 0x82
 
 #endif
