@@ -13,126 +13,72 @@ extern uint8_t rgb_table[];
 uint8_t canvas_buffer[BUFFER_SIZE] __attribute__((aligned(4)));
 NV12_UV_t* uv_plane = (NV12_UV_t*)canvas_buffer;
 
-static uint8_t buffer[2][PACKET_SIZE_NO_HEADER];
-static uint8_t* currentBuffer = buffer[0];
-static uint8_t* nextBuffer = buffer[1];
+static uint8_t buffer[2][PLANE_WIDTH];
+static uint8_t* currentRow = buffer[0];
+static uint8_t* nextRow = buffer[1];
 static uint32_t bufferOffset = PACKET_SIZE_NO_HEADER / 2;
-static uint32_t nextSourceOffset = 0;
-static bool isEvenRow = false;
-
-// Returns remaining bytes
-static inline uint32_t ProcessYPlane(uint32_t offset, uint8_t* out)
-{
-	// Y plane is derived from the UV plane
-	// since we only support selected 64 colors
-
-	int32_t bytesToCopy = (Y_PLANE_SIZE - 1) - offset;
-	if (bytesToCopy <= 0)
-	{
-		// Not on Y Plane
-		int32_t remainingBytes = (Y_PLANE_SIZE + BUFFER_SIZE - 1) - offset;
-		if (remainingBytes < PACKET_SIZE_NO_HEADER)
-		{
-			// Very last packet may be smaller than PACKET_SIZE_NO_HEADER
-			return remainingBytes;
-		}
-
-		return PACKET_SIZE_NO_HEADER;
-	}
-
-	if (bytesToCopy > PACKET_SIZE_NO_HEADER)
-	{
-		bytesToCopy = PACKET_SIZE_NO_HEADER;
-	}
-
-    // Ensure aligned
-    copy_words((const uint32_t*)currentBuffer, (uint32_t*)out, bytesToCopy / sizeof(uint32_t));
-	//memcpy(out, currentBuffer + bufferOffset, bytesToCopy);
-
-    bufferOffset = bufferOffset == 0 ? (PACKET_SIZE_NO_HEADER / 2) : 0;
-
-    uint32_t nextOffset = offset + PACKET_SIZE_NO_HEADER + bufferOffset;
-	uint32_t y = nextOffset / PLANE_WIDTH;
-	isEvenRow = (y % 2) == 0;
-	y /= 2; // every 2 rows are repeating
-	uint32_t x = nextOffset % PLANE_WIDTH / 2;
-	nextSourceOffset = (y * CANVAS_WIDTH) + x;
-
-	// Only non-zero if same packet crosses plane boundary
-	return PACKET_SIZE_NO_HEADER - bytesToCopy;
-}
-
-// True if no need to process buffers yet
-static inline bool ProcessUVPlane(uint32_t offset, uint8_t* out, uint32_t size)
-{
-	// UV plane as stored as is
-
-	if (size == 0)
-	{
-		// Not on UV plane
-		return false;
-	}
-
-	int32_t canvasOffset = offset - Y_PLANE_SIZE;
-	if (canvasOffset < 0)
-	{
-		canvasOffset = 0;
-	}
-
-    // Ensure aligned
-    copy_words((const uint32_t*)(canvas_buffer + canvasOffset), (uint32_t*)out, size / sizeof(uint32_t));
-	//memcpy(out, canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER);
-
-    if (canvasOffset + size >= BUFFER_SIZE - 1)
-    {
-    	return true;
-    }
-
-    // If last packet, need to prepare next buffer
-    nextSourceOffset = 0;
-    bufferOffset = 0;
-    isEvenRow = false;
-	return false;
-}
 
 void FillBuffer(uint32_t offset, uint8_t* out)
 {
-	// Y Plane
-	uint32_t remainingBytes = ProcessYPlane(offset, out);
+	uint32_t row;
 
-	// UV Plane
-	if (ProcessUVPlane(offset, out, remainingBytes))
-	{
-		return;
-	}
+	if (offset < Y_PLANE_SIZE)
+    {
+		// Y plane is derived from the UV plane
+    	// since we only support selected 64 colors
+
+    	// copy from current buffer
+        // Ensure aligned
+        copy_words((const uint32_t*)currentRow, (uint32_t*)out, PACKET_SIZE_NO_HEADER / sizeof(uint32_t));
+    	//memcpy(out, currentBuffer + bufferOffset, PACKET_SIZE_NO_HEADER);
+
+    	row = offset / PLANE_WIDTH + 1;
+    	bufferOffset = bufferOffset == 0 ? (PACKET_SIZE_NO_HEADER / 2) : 0;
+    }
+    else
+    {
+    	// UV plane as stored as is
+
+        // Ensure aligned
+    	int32_t canvasOffset = offset - Y_PLANE_SIZE;
+        copy_words((const uint32_t*)(canvas_buffer + canvasOffset), (uint32_t*)out, PACKET_SIZE_NO_HEADER / sizeof(uint32_t));
+    	//memcpy(out, canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER);
+
+        if (canvasOffset < BUFFER_SIZE - PACKET_SIZE_NO_HEADER)
+        {
+        	return;
+        }
+
+        // If last packet, need to prepare next buffer
+        row = 0;
+        bufferOffset = 0;
+    }
 
 	// Fill half of the next buffer
 
-	//memset(nextBuffer + bufferOffset, 0x77, PACKET_SIZE_NO_HEADER / 2);
+	//memset(nextBuffer + bufferOffset, 0xFF, PACKET_SIZE_NO_HEADER / 2);
 
-	uint16_t* out_buffer = (uint16_t*)(nextBuffer + bufferOffset);
+	uint16_t* out_buffer = (uint16_t*)(nextRow + bufferOffset);
 	uint16_t* out_buffer_end = out_buffer + (PACKET_SIZE_NO_HEADER / 4) - 1;
+    uint32_t yCol = offset % PLANE_WIDTH + (bufferOffset / 2);
+    NV12_UV_t* source = uv_plane + ((row / 2) * CANVAS_WIDTH) + yCol;
 
 	for (; out_buffer <= out_buffer_end; out_buffer++)
     {
-        NV12_UV_t uv_value = *((NV12_UV_t*)canvas_buffer + nextSourceOffset);
+        NV12_UV_t uv_value = *source;
         uint8_t hash = uv_value.Cb ^ uv_value.Cr;
         uint16_t y_values = y_table[hash];
         *out_buffer = y_values;
 
-        nextSourceOffset++;
-        if (nextSourceOffset % CANVAS_WIDTH == 0 && isEvenRow)
-        {
-        	nextSourceOffset -= CANVAS_WIDTH;
-        }
+        source++;
     }
 
     if (bufferOffset > 0)
     {
         // Switch buffers
-    	uint8_t* temp = currentBuffer;
-    	currentBuffer = nextBuffer;
-    	nextBuffer = temp;
+    	uint8_t* temp = currentRow;
+    	currentRow = nextRow;
+    	nextRow = temp;
     }
 }
 

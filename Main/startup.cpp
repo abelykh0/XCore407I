@@ -38,6 +38,7 @@ extern "C" void setup()
 	PHY_EnableManualLEDMode();
 
 	init_demo_colors();
+	//Clear(0b00101010);
 }
 
 extern "C" void loop()
