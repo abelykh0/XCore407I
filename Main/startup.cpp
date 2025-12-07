@@ -206,15 +206,21 @@ static uint8_t utf8_to_cp866(const uint8_t* utf8)
 
     // Uppercase А–Я: D0 90 .. D0 AF -> E0 .. EF
     if (hi == 0xD0 && lo >= 0x90 && lo <= 0xAF)
-        return 0xE0 + (lo - 0x90);
+    {
+        return 0x80 + (lo - 0x90);
+    }
 
     // Lowercase а–п: D0 B0 .. D0 BF -> 80 .. 8F
     if (hi == 0xD0 && lo >= 0xB0 && lo <= 0xBF)
-        return 0x80 + (lo - 0xB0);
+    {
+        return 0xA0 + (lo - 0xB0);
+    }
 
     // Lowercase р–я: D1 80 .. D1 8F -> 90 .. 9F
     if (hi == 0xD1 && lo >= 0x80 && lo <= 0x8F)
-        return 0x90 + (lo - 0x80);
+    {
+        return 0xE0 + (lo - 0x80);
+    }
 
     return 0; // not Cyrillic
 }
