@@ -27,6 +27,7 @@ static void PHY_ToggleLEDs();
 // demo
 Display::Screen Screen;
 static uint8_t GetUsbBuffer(char *buffer, uint8_t maxLength);
+static uint8_t utf8_to_cp866(const uint8_t* utf8);
 
 extern "C" void initialize()
 {
@@ -46,13 +47,12 @@ extern "C" void setup()
 
 extern "C" void loop()
 {
-	loop_demo_colors();
-
-	PHY_ToggleLEDs();
 	//uint8_t test_msg[] = "STM32 CDC Test\n";
 	//CDC_Transmit_HS(test_msg, sizeof(test_msg) - 1);
 
-	HAL_Delay(1000);
+	//loop_demo_colors();
+	//PHY_ToggleLEDs();
+	//HAL_Delay(1000);
 
 	char buffer[32];
     uint8_t len = GetUsbBuffer(buffer, 32);
@@ -65,7 +65,19 @@ extern "C" void loop()
     if (len == 1)
 	{
     	Screen.PrintCharacter(buffer[0], 0x3F10);
+    	return;
 	}
+
+    if (len == 2)
+    {
+    	uint8_t cyrillicChar = utf8_to_cp866((const uint8_t*)buffer);
+    	if (cyrillicChar != 0)
+    	{
+        	Screen.PrintCharacter(cyrillicChar, 0x3F10);
+    	}
+
+    	return;
+    }
 
 	if (len == 3 && buffer[0] == '\e' && buffer[1] == '[')
 	{
@@ -187,3 +199,22 @@ static uint8_t GetUsbBuffer(char *buffer, uint8_t maxLength)
     return (uint8_t)len;
 }
 
+static uint8_t utf8_to_cp866(const uint8_t* utf8)
+{
+    uint8_t hi = utf8[0];
+    uint8_t lo = utf8[1];
+
+    // Uppercase А–Я: D0 90 .. D0 AF -> E0 .. EF
+    if (hi == 0xD0 && lo >= 0x90 && lo <= 0xAF)
+        return 0xE0 + (lo - 0x90);
+
+    // Lowercase а–п: D0 B0 .. D0 BF -> 80 .. 8F
+    if (hi == 0xD0 && lo >= 0xB0 && lo <= 0xBF)
+        return 0x80 + (lo - 0xB0);
+
+    // Lowercase р–я: D1 80 .. D1 8F -> 90 .. 9F
+    if (hi == 0xD1 && lo >= 0x80 && lo <= 0x8F)
+        return 0x90 + (lo - 0x80);
+
+    return 0; // not Cyrillic
+}

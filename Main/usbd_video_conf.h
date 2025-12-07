@@ -2,8 +2,8 @@
 #define __USBD_VIDEO_CONF__H__
 
 // 512x384 NV12 @ 24 fps
-#define UVC_WIDTH                   320
-#define UVC_HEIGHT                  240
+#define UVC_WIDTH                   512
+#define UVC_HEIGHT                  384
 #define UVC_CAM_FPS_HS              20
 
 // Experimental fps:
