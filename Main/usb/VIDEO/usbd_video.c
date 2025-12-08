@@ -3,6 +3,12 @@
 #include "usbd_core.h"
 #include "screen/canvas.h"
 
+static uint8_t buffer_bytes[UVC_ISO_HS_MPS + ALIGN_OFFSET] __attribute__((section(".ccmram"), aligned(4))); // header + payload
+static uint8_t streaming_started = 0;
+static uint32_t video_frame_offset = 0;
+static uint8_t frame_id = 0;
+static uint8_t buffer_initialized = 0;
+
 /* VIDEO Device library callbacks */
 static uint8_t USBD_VIDEO_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx);
 static uint8_t USBD_VIDEO_DeInit(USBD_HandleTypeDef *pdev, uint8_t cfgidx);
@@ -310,12 +316,6 @@ static uint8_t  USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
   /* Get the Endpoints addresses allocated for this class instance */
   //VIDEOinEpAdd = USBD_CoreGetEPAdd(pdev, USBD_EP_IN, USBD_EP_TYPE_ISOC, (uint8_t)pdev->classId);
 #endif /* USE_USBD_COMPOSITE */
-
-  static uint8_t streaming_started = 0;
-  static uint32_t video_frame_offset = 0;
-  static uint8_t frame_id = 0;
-  static uint8_t buffer_bytes[UVC_ISO_HS_MPS + ALIGN_OFFSET] __attribute__((aligned(4))); // header + payload
-  static uint8_t buffer_initialized = 0;
 
   uint8_t* buffer = buffer_bytes + ALIGN_OFFSET;
   uint32_t remaining;

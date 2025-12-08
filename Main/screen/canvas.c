@@ -13,7 +13,7 @@ extern uint8_t rgb_table[];
 uint8_t canvas_buffer[BUFFER_SIZE] __attribute__((aligned(4)));
 NV12_UV_t* uv_plane = (NV12_UV_t*)canvas_buffer;
 
-static uint8_t buffer[2][PLANE_WIDTH * 3 / 2];
+static uint8_t buffer[2][PLANE_WIDTH * 3 / 2] __attribute__((section(".ccmram"), aligned(4)));
 static uint8_t* currentRow = buffer[0];
 static uint8_t* nextRow = buffer[1];
 static uint32_t uvRow = 0;

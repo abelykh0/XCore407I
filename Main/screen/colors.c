@@ -4,7 +4,7 @@
 
 // Y-Cb-Cr 6-bit 64 color palette (indexed by BBGGRR)
 // Only Cb-Cr part
-NV12_UV_t uv_table[] = {
+const NV12_UV_t uv_table[] = {
 	/*000000*/ 	{ .Cb = 128, .Cr = 129 },
 	/*000001*/ 	{ .Cb = 115, .Cr = 166 },
 	/*000010*/ 	{ .Cb = 103, .Cr = 204 },
@@ -72,7 +72,7 @@ NV12_UV_t uv_table[] = {
 };
 
 // Only Y part (repeated twice) indexed by XOR(Cb ^ Cr)
-uint16_t y_table[] = {
+const uint16_t y_table[] = {
 	[0] = UINT16_DUP(255),
 	[1] = UINT16_DUP(16),
 	[5] = UINT16_DUP(59),
@@ -140,7 +140,7 @@ uint16_t y_table[] = {
 };
 
 // Convert CrCb back to 6 bit RGB
-uint8_t rgb_table[] = {
+const uint8_t rgb_table[] = {
 	[0] = 0b00111111,
 	[1] = 0b00000000,
 	[5] = 0b00000100,
