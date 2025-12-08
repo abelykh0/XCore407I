@@ -10,6 +10,7 @@ extern "C" {
 void initialize();
 void setup();
 void loop();
+void TimerCallback();
 
 #ifdef __cplusplus
 }

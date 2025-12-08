@@ -11,6 +11,8 @@
 #include "screen/screen.h"
 #include "demo_colors/demo_colors.h"
 
+extern TIM_HandleTypeDef htim7;
+
 // USB HS Device
 static void USB_DEVICE_Init();
 extern USBD_HandleTypeDef hUsbDeviceHS;
@@ -43,6 +45,8 @@ extern "C" void setup()
 
 	init_demo_colors();
 	//Clear(0b00101010);
+
+	HAL_TIM_Base_Start_IT(&htim7);
 }
 
 extern "C" void loop()
@@ -109,6 +113,12 @@ extern "C" void loop()
 			break;
 		}
 	}
+}
+
+void TimerCallback()
+{
+	loop_demo_colors();
+	PHY_ToggleLEDs();
 }
 
 static void USB_DEVICE_Init()

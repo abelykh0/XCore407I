@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "rtc.h"
+#include "tim.h"
 #include "gpio.h"
 #include "fsmc.h"
 
@@ -93,6 +94,7 @@ int main(void)
   MX_GPIO_Init();
   MX_FSMC_Init();
   MX_RTC_Init();
+  MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
   setup();
   /* USER CODE END 2 */
@@ -170,7 +172,11 @@ void SystemClock_Config(void)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
-
+	  if (htim->Instance == TIM7)
+	  {
+	    TimerCallback();
+	    return;
+	  }
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM14)
   {
