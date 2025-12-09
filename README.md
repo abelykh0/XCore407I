@@ -1,6 +1,6 @@
 # XCore407I
 
-Trying to implement something on USB HS
+Trying to implement something on USB HS.
 Achieved 512x384 uncompressed NV12 at 20 fps.
 Ideas:
 - increase packet size
