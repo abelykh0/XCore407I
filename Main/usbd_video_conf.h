@@ -4,7 +4,7 @@
 // 512x384 NV12 @ 24 fps
 #define UVC_WIDTH                   512
 #define UVC_HEIGHT                  384
-#define UVC_CAM_FPS_HS              20
+#define UVC_CAM_FPS_HS              50
 
 // Experimental fps:
 //  320x240: 33.3 fps // 160x120 pixels // 37.5 kB

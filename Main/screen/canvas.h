@@ -22,6 +22,8 @@ extern "C" {
 #define TEXT_COLUMNS (CANVAS_WIDTH / 8)
 #define TEXT_ROWS (CANVAS_HEIGHT / 8)
 
+#define BUFFER_SIZE (CANVAS_WIDTH * CANVAS_HEIGHT * 2)
+
 typedef union {
     struct {
         uint8_t Cb;

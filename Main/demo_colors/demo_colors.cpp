@@ -9,11 +9,11 @@ static Display::Screen screen;
 
 void init_demo_colors()
 {
-	screen.SetAttribute(0x2A10);
+	screen.SetAttribute(0xFF10);
 	screen.Clear();
 
 	// Frame
-	screen.SetAttribute(0x2A10);
+	screen.SetAttribute(0xFF10);
     screen.PrintAt(0, 0, "\xC9"); // ╔
     screen.PrintAt(TEXT_COLUMNS - 1, 0, "\xBB"); // ╗
     screen.PrintAt(0, TEXT_ROWS - 1, "\xC8"); // ╚
@@ -36,12 +36,12 @@ void init_demo_colors()
     	screen.SetAttribute((i << 8) | 0x10);
     	screen.PrintAt(2 + (i % 7) * 4, 3 + (i / 7) * 2, "\xDF\xDF\xDF"); // ▀▀▀
 
-    	screen.SetAttribute(0x2A10);
+    	screen.SetAttribute(0xFF10);
     	sprintf(buf, "%03u", CONVERT_6BIT_TO_DDD(i));
     	screen.PrintAt(2 + (i % 7) * 4, 2 + (i / 7) * 2, buf);
     }
 
-	screen.SetAttribute(0x3F10);
+	screen.SetAttribute(0xFF10);
 }
 
 int32_t loop_demo_colors()
