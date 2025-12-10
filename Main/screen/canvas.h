@@ -13,16 +13,22 @@ extern "C" {
 // Y plane, size UVC_WIDTH x UVC_HEIGHT bytes
 // UV plane, interleaved (UV UV UV ...), size UVC_WIDTH x CANVAS_HEIGHT
 
-// each pixel translate to 2x2 in UVC
-// that way we don't lose color when using NV12 format
-
-#define CANVAS_WIDTH (UVC_WIDTH / 2)
 #define CANVAS_HEIGHT (UVC_HEIGHT / 2)
+
+#ifdef BW
+// every row in Y plane is repeated
+#define CANVAS_WIDTH UVC_WIDTH
+#define BUFFER_SIZE (CANVAS_WIDTH * CANVAS_HEIGHT)
+#else
+// each pixel translates to 2x2 in UVC
+// that way we don't lose color when using NV12 format
+#define CANVAS_WIDTH (UVC_WIDTH / 2)
+#define BUFFER_SIZE (CANVAS_WIDTH * CANVAS_HEIGHT * 2)
+#endif
 
 #define TEXT_COLUMNS (CANVAS_WIDTH / 8)
 #define TEXT_ROWS (CANVAS_HEIGHT / 8)
 
-#define BUFFER_SIZE (CANVAS_WIDTH * CANVAS_HEIGHT * 2)
 
 typedef union {
     struct {

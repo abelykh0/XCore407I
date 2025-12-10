@@ -5,6 +5,7 @@
 #define UVC_WIDTH                   512
 #define UVC_HEIGHT                  384
 #define UVC_CAM_FPS_HS              50
+#define BW
 
 // Experimental fps:
 //  320x240: 33.3 fps // 160x120 pixels // 37.5 kB
@@ -19,7 +20,11 @@
 #define UVC_HS_HEADER_SIZE          2U // could be up to 12
 #define ALIGN_OFFSET                (UVC_HS_HEADER_SIZE % sizeof(uint32_t))
 
+#ifdef BW
 #define PACKET_SIZE_NO_HEADER       (UVC_WIDTH * 3 / 2)
+#else
+#define PACKET_SIZE_NO_HEADER       (UVC_WIDTH * 3 / 2)
+#endif
 
 #define UVC_ISO_HS_MPS              (UVC_HS_HEADER_SIZE + PACKET_SIZE_NO_HEADER)
 #define UVC_ISO_FS_MPS              UVC_ISO_HS_MPS // do not remove, bug in composite builder?

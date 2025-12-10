@@ -5,6 +5,12 @@
 #define PLANE_WIDTH (CANVAS_WIDTH * 2)
 #define Y_PLANE_SIZE (BUFFER_SIZE * 2)
 
+#ifndef BW
+
+extern NV12_UV_t uv_table[];
+extern uint16_t y_table[];
+extern uint8_t rgb_table[];
+
 NV12_UV_t* uv_plane = (NV12_UV_t*)canvas_buffer;
 
 static uint8_t buffer[2][PLANE_WIDTH * 3 / 2] __attribute__((section(".ccmram"), aligned(4)));
@@ -38,8 +44,6 @@ static uint32_t uvRow = 0;
 // ║    4   ║ 6  ██████  ║    3    ║ Same as packet 0                                                    ║                       ║
 // ║        ║ 7  ███░░░  ║         ║                                                                     ║ nextRow    (4) ██████ ║
 // ╚════════╩════════════╩═════════╩═════════════════════════════════════════════════════════════════════╩═══════════════════════╝
-
-/*
 
 static inline void PrepareNextRow()
 {
@@ -176,4 +180,4 @@ uint8_t GetPixel(uint16_t x, uint16_t y)
     return rgb_table[hash];
 }
 
-*/
+#endif
