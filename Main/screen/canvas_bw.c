@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdbool.h>
 #include "screen/canvas.h"
 #include "screen/copy_words.h"
 
@@ -7,37 +8,49 @@
 #ifdef BW
 
 extern const uint8_t grayscale_table[];
-static uint32_t currentRow = 0;
 
 void FillBuffer(uint32_t offset, uint8_t* out)
 {
 	if (offset < Y_PLANE_SIZE)
     {
-		uint32_t* copyFrom = (uint32_t*)(canvas_buffer + (CANVAS_WIDTH * currentRow));
-
 		// every 2nd row of the Y plane is stored as is
 
-		switch (offset / PACKET_SIZE_NO_HEADER % 2)
+		int32_t wordsRemaining = PACKET_SIZE_NO_HEADER / sizeof(uint32_t);
+		int32_t overfowBytes = offset + PACKET_SIZE_NO_HEADER - Y_PLANE_SIZE;
+		if (overfowBytes > 0)
 		{
-		case 0:
-			copy_words(copyFrom, (uint32_t*)out, CANVAS_WIDTH / sizeof(uint32_t));
-			copy_words(copyFrom, (uint32_t*)(out + CANVAS_WIDTH), CANVAS_WIDTH / 2 / sizeof(uint32_t));
+			wordsRemaining -= (overfowBytes / sizeof(uint32_t));
+		}
 
-			break;
+		uint32_t* outBuffer = (uint32_t*)out;
+		uint32_t packetOffset = offset;
+		while (wordsRemaining > 0)
+		{
+			uint32_t currentRow = (packetOffset / CANVAS_WIDTH / 2);
+			uint32_t currentColumn = (packetOffset % CANVAS_WIDTH);
+			uint32_t* copyFrom = (uint32_t*)(canvas_buffer + (CANVAS_WIDTH * currentRow) + currentColumn);
+			uint32_t wordsToCopy = (CANVAS_WIDTH - currentColumn) / sizeof(uint32_t);
+			if (wordsToCopy > wordsRemaining)
+			{
+				wordsToCopy = wordsRemaining;
+			}
 
-		default:
-			copy_words((const uint32_t*)(copyFrom + CANVAS_WIDTH), (uint32_t*)out, CANVAS_WIDTH / 2 / sizeof(uint32_t));
-			copy_words((const uint32_t*)copyFrom, (uint32_t*)(out + (CANVAS_WIDTH / 2)), CANVAS_WIDTH / sizeof(uint32_t));
-			currentRow++;
+			copy_words(copyFrom, outBuffer, wordsToCopy);
+			outBuffer += wordsToCopy;
+			wordsRemaining -= wordsToCopy;
+			packetOffset += (wordsToCopy * sizeof(uint32_t));
+		}
 
-			break;
+		// UV Plane
+		if (overfowBytes > 0)
+		{
+	    	memset(outBuffer, 128, overfowBytes);
 		}
     }
     else
     {
     	// UV plane is constant (128, 128)
     	memset(out, 128, PACKET_SIZE_NO_HEADER);
-		currentRow = 0;
     }
 }
 
