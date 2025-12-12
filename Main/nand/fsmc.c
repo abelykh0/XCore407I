@@ -22,7 +22,7 @@
 #include "fsmc.h"
 
 /* USER CODE BEGIN 0 */
-
+extern void Error_Handler();
 /* USER CODE END 0 */
 
 NAND_HandleTypeDef hnand1;

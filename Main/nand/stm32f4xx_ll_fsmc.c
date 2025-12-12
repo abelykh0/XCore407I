@@ -56,6 +56,8 @@
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f4xx_hal.h"
 
+#define HAL_NAND_MODULE_ENABLED
+
 /** @addtogroup STM32F4xx_HAL_Driver
   * @{
   */

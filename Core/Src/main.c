@@ -21,7 +21,6 @@
 #include "rtc.h"
 #include "tim.h"
 #include "gpio.h"
-#include "fsmc.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -92,7 +91,6 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_FSMC_Init();
   MX_RTC_Init();
   MX_TIM7_Init();
   /* USER CODE BEGIN 2 */
