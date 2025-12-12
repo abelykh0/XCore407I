@@ -615,6 +615,23 @@ static uint8_t USBD_VIDEO_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *
 }
 
 /**
+ * Recover from endpoint halted state
+ */
+inline void recover_uvc_endpoint(USBD_HandleTypeDef* pdev, USBD_VIDEO_HandleTypeDef* hVIDEO, uint8_t uvc_ep)
+{
+    // 1. Clear the halted state flag
+    hVIDEO->uvc_state = UVC_PLAY_STATUS_READY;
+
+    // 2. Flush the endpoint FIFO
+    USBD_LL_FlushEP(pdev, uvc_ep);
+
+    // 3. Clear the STALL condition on endpoint
+    USBD_LL_ClearStallEP(pdev, uvc_ep);
+
+    return USBD_OK;
+}
+
+/**
   * @brief  USBD_VIDEO_SOF
   *         handle SOF event
   * @param  pdev: device instance
@@ -623,7 +640,7 @@ static uint8_t USBD_VIDEO_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *
 static uint8_t  USBD_VIDEO_SOF(USBD_HandleTypeDef *pdev)
 {
   USBD_VIDEO_HandleTypeDef *hVIDEO = (USBD_VIDEO_HandleTypeDef *) pdev->pClassDataCmsit[pdev->classId];
-  uint8_t payload[2] = {0x02U, 0x00U};
+  const uint8_t payload[2] = {0x02U, 0x00U};
 
 #ifdef USE_USBD_COMPOSITE
   /* Get the Endpoints addresses allocated for this class instance */
@@ -633,7 +650,7 @@ static uint8_t  USBD_VIDEO_SOF(USBD_HandleTypeDef *pdev)
   /* Check if the Streaming has already been started by SetInterface AltSetting 1 */
   if (hVIDEO->uvc_state == UVC_PLAY_STATUS_READY)
   {
-    hVIDEO->uvc_buffer = (uint8_t *)&payload;
+    hVIDEO->uvc_buffer = (uint8_t*)&payload;
     hVIDEO->uvc_size = 2U;
 
     /* Transmit the first packet indicating that Streaming is starting */
@@ -641,6 +658,12 @@ static uint8_t  USBD_VIDEO_SOF(USBD_HandleTypeDef *pdev)
 
     /* Enable Streaming state */
     hVIDEO->uvc_state = UVC_PLAY_STATUS_STREAMING;
+  }
+
+  if (hVIDEO->uvc_state & 0x00080000)
+  {
+	  // Halted - try to recover
+	  recover_uvc_endpoint(pdev, hVIDEO, VIDEOinEpAdd);
   }
 
   /* Exit with no error code */
