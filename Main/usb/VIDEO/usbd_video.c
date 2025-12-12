@@ -617,7 +617,7 @@ static uint8_t USBD_VIDEO_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *
 /**
  * Recover from endpoint halted state
  */
-inline void recover_uvc_endpoint(USBD_HandleTypeDef* pdev, USBD_VIDEO_HandleTypeDef* hVIDEO, uint8_t uvc_ep)
+static inline void recover_uvc_endpoint(USBD_HandleTypeDef* pdev, USBD_VIDEO_HandleTypeDef* hVIDEO, uint8_t uvc_ep)
 {
     // 1. Clear the halted state flag
     hVIDEO->uvc_state = UVC_PLAY_STATUS_READY;
@@ -627,8 +627,6 @@ inline void recover_uvc_endpoint(USBD_HandleTypeDef* pdev, USBD_VIDEO_HandleType
 
     // 3. Clear the STALL condition on endpoint
     USBD_LL_ClearStallEP(pdev, uvc_ep);
-
-    return USBD_OK;
 }
 
 /**
