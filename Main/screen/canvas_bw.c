@@ -28,12 +28,34 @@ void FillBuffer(uint32_t offset, uint8_t* out)
 		{
 			uint32_t currentRow = (packetOffset / CANVAS_WIDTH / 2);
 			uint32_t currentColumn = (packetOffset % CANVAS_WIDTH);
-			uint32_t* copyFrom = (uint32_t*)(canvas_buffer + (CANVAS_WIDTH * currentRow) + currentColumn);
+
 			uint32_t wordsToCopy = (CANVAS_WIDTH - currentColumn) / sizeof(uint32_t);
 			if (wordsToCopy > wordsRemaining)
 			{
 				wordsToCopy = wordsRemaining;
 			}
+
+			uint32_t canvasOffset = (CANVAS_WIDTH * currentRow) + currentColumn;
+			uint32_t* copyFrom;
+
+#if (BUFFER_TAIL_SIZE > 0)
+			uint32_t nextOffset = canvasOffset + (wordsToCopy * sizeof(uint32_t));
+			if (nextOffset >= BUFFER1_SIZE)
+			{
+				wordsToCopy = (nextOffset - canvasOffset) / sizeof(uint32_t);
+			}
+
+			if (canvasOffset < BUFFER1_SIZE)
+		    {
+				copyFrom = (uint32_t*)(canvas_buffer + canvasOffset);
+		    }
+		    else
+		    {
+				copyFrom = (uint32_t*)(canvas_tail + canvasOffset - BUFFER1_SIZE);
+		    }
+#else
+			copyFrom = (uint32_t*)(canvas_buffer + canvasOffset);
+#endif
 
 			copy_words(copyFrom, outBuffer, wordsToCopy);
 			outBuffer += wordsToCopy;
@@ -57,7 +79,10 @@ void FillBuffer(uint32_t offset, uint8_t* out)
 void Clear(uint8_t color)
 {
 	uint8_t Y = grayscale_table[color & 0x3f];
-	memset(canvas_buffer, Y, BUFFER_SIZE);
+	memset(canvas_buffer, Y, BUFFER1_SIZE);
+#if (BUFFER_TAIL_SIZE > 0)
+	memset(canvas_tail, Y, BUFFER_TAIL_SIZE);
+#endif
 }
 
 void SetPixel(uint16_t x, uint16_t y, uint8_t color)
@@ -67,7 +92,20 @@ void SetPixel(uint16_t x, uint16_t y, uint8_t color)
         return; // out of canvas
     }
 
-    canvas_buffer[y * CANVAS_WIDTH + x] = grayscale_table[color & 0x3f];
+    uint32_t offset = y * CANVAS_WIDTH + x;
+
+#if (BUFFER_TAIL_SIZE == 0)
+    canvas_buffer[offset] = grayscale_table[color & 0x3f];
+#else
+    if (offset < BUFFER1_SIZE)
+    {
+        canvas_buffer[offset] = grayscale_table[color & 0x3f];
+    }
+    else
+    {
+    	canvas_tail[offset - BUFFER1_SIZE] = grayscale_table[color & 0x3f];
+    }
+#endif
 }
 
 uint8_t GetPixel(uint16_t x, uint16_t y)
@@ -77,7 +115,8 @@ uint8_t GetPixel(uint16_t x, uint16_t y)
         return 0; // out of canvas
     }
 
-    return canvas_buffer[y * CANVAS_WIDTH + x];
+    // TODO, need lookup table
+    return 0;
 }
 
 #endif

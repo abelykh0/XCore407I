@@ -28,7 +28,7 @@ extern "C" {
 
 #define TEXT_COLUMNS (CANVAS_WIDTH / 8)
 #define TEXT_ROWS (CANVAS_HEIGHT / 8)
-
+#define BUFFER1_SIZE (BUFFER_SIZE - BUFFER_TAIL_SIZE)
 
 typedef union {
     struct {
@@ -41,6 +41,9 @@ typedef union {
 // Store only UV plane,
 // since we only support 64 specific colors, Y plane can be derived
 extern uint8_t canvas_buffer[];
+#if (BUFFER_TAIL_SIZE > 0)
+extern uint8_t canvas_tail[];
+#endif
 
 void Clear(uint8_t color);
 void SetPixel(uint16_t x, uint16_t y, uint8_t color);
