@@ -2,8 +2,6 @@
 #include "stm32f4xx_hal.h"
 #include "eth.h"
 #include "stm32f4xx_hal_eth.h"
-//#include "fsmc.h"
-//#include "stm32f4xx_hal_nand.h"
 
 #include "usb_device.h"
 #include "usbd_desc.h"
@@ -49,11 +47,6 @@ extern "C" void setup()
 	//Clear(0b00101010);
 
 	HAL_TIM_Base_Start_IT(&htim7);
-
-	//MX_FSMC_Init();
-
-	//NAND_IDTypeDef nand_id_struct;
-    //HAL_NAND_Read_ID(&hnand1, &nand_id_struct);
 }
 
 extern "C" void loop()
