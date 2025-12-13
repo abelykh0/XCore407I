@@ -10,27 +10,29 @@
 
 static void show_colors(uint16_t x, uint16_t y, uint8_t r, uint8_t g, uint8_t b);
 
-static Display::Screen screen;
+extern Display::Screen Screen;
+
+#define TEXT_COLUMNS (UVC_WIDTH / 2 / 8)
 
 void init_demo_colors()
 {
-	screen.SetAttribute(GREY_ON_BLACK);
-	screen.Clear();
+	Screen.SetAttribute(GREY_ON_BLACK);
+	Screen.Clear();
 
 	// Frame
-    screen.PrintAt(0, 0, "\xC9"); // ╔
-    screen.PrintAt(TEXT_COLUMNS - 1, 0, "\xBB"); // ╗
-    screen.PrintAt(0, TEXT_ROWS - 1, "\xC8"); // ╚
-    screen.PrintAt(TEXT_COLUMNS - 1, TEXT_ROWS - 1, "\xBC"); // ╝
+	Screen.PrintAt(0, 0, "\xC9"); // ╔
+	Screen.PrintAt(TEXT_COLUMNS - 1, 0, "\xBB"); // ╗
+	Screen.PrintAt(0, TEXT_ROWS - 1, "\xC8"); // ╚
+	Screen.PrintAt(TEXT_COLUMNS - 1, TEXT_ROWS - 1, "\xBC"); // ╝
     for (uint16_t i = 1; i < TEXT_COLUMNS - 1; i++)
     {
-        screen.PrintAt(i, 0, "\x0CD"); // ═
-        screen.PrintAt(i, TEXT_ROWS - 1, "\x0CD"); // ═
+    	Screen.PrintAt(i, 0, "\x0CD"); // ═
+    	Screen.PrintAt(i, TEXT_ROWS - 1, "\x0CD"); // ═
     }
     for (uint16_t i = 1; i < TEXT_ROWS - 1; i++)
     {
-        screen.PrintAt(0, i, "\x0BA"); // ║
-        screen.PrintAt(TEXT_COLUMNS - 1, i, "\x0BA"); // ║
+    	Screen.PrintAt(0, i, "\x0BA"); // ║
+    	Screen.PrintAt(TEXT_COLUMNS - 1, i, "\x0BA"); // ║
     }
 
     // Colors
@@ -89,7 +91,7 @@ void init_demo_colors()
     show_colors(24, 20, 3, 3, 1);
     show_colors(24, 21, 3, 3, 2);
 
-	screen.SetAttribute(WHITE_ON_BLACK);
+    Screen.SetAttribute(WHITE_ON_BLACK);
 }
 
 int32_t loop_demo_colors()
@@ -101,7 +103,7 @@ int32_t loop_demo_colors()
 	HAL_RTC_GetTime(&hrtc, &timeStruct, RTC_FORMAT_BIN);
 	HAL_RTC_GetDate(&hrtc, &dateStruct, RTC_FORMAT_BIN); // important
 	sprintf(showTime, " %.2d:%.2d:%.2d ", timeStruct.Hours, timeStruct.Minutes, timeStruct.Seconds);
-    screen.PrintAlignCenter(0, showTime);
+	Screen.PrintAlignCenter(0, showTime);
 
 	return 0;// Ps2_GetScancode();
 }
@@ -113,13 +115,13 @@ static void show_colors(uint16_t x, uint16_t y, uint8_t r, uint8_t g, uint8_t b)
 	if ((r < 4) && (g < 4) && (b < 4))
 	{
 		uint8_t color = (b << 4) | (g << 2) | r;
-    	screen.SetAttribute((color << 8));
-    	screen.PrintAt(x, y, "\xDB\xDB\xDD"); // ██▌
+		Screen.SetAttribute((color << 8));
+		Screen.PrintAt(x, y, "\xDB\xDB\xDD"); // ██▌
 
     	char buf[20];
-    	screen.SetAttribute(GREY_ON_BLACK);
+    	Screen.SetAttribute(GREY_ON_BLACK);
     	sprintf(buf, "%03u", CONVERT_6BIT_TO_DDD(color));
-    	screen.PrintAt(x + 3, y, buf);
+    	Screen.PrintAt(x + 3, y, buf);
 
     	return;
 	}
@@ -161,13 +163,13 @@ static void show_colors(uint16_t x, uint16_t y, uint8_t r, uint8_t g, uint8_t b)
 			continue;
 		}
 
-    	screen.SetAttribute((color << 8));
-    	screen.PrintAt(x, y, "\xDB\xDB\xDD"); // ██▌
+		Screen.SetAttribute((color << 8));
+		Screen.PrintAt(x, y, "\xDB\xDB\xDD"); // ██▌
 
     	char buf[20];
-    	screen.SetAttribute(GREY_ON_BLACK);
+    	Screen.SetAttribute(GREY_ON_BLACK);
     	sprintf(buf, "%03u", CONVERT_6BIT_TO_DDD(color));
-    	screen.PrintAt(x + 3, y, buf);
+    	Screen.PrintAt(x + 3, y, buf);
 
     	y++;
 	}

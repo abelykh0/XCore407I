@@ -2,10 +2,9 @@
 #include "screen/canvas.h"
 #include "screen/copy_words.h"
 
-#define PLANE_WIDTH (CANVAS_WIDTH * 2)
+#define CANVAS_WIDTH (UVC_WIDTH / 2)
+#define PLANE_WIDTH UVC_WIDTH
 #define Y_PLANE_SIZE (BUFFER_SIZE * 2)
-
-#ifndef BW
 
 extern NV12_UV_t uv_table[];
 extern uint16_t y_table[];
@@ -256,5 +255,3 @@ uint8_t GetPixel(uint16_t x, uint16_t y)
 
     return rgb_table[hash];
 }
-
-#endif

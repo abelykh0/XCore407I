@@ -20,15 +20,19 @@ protected:
     //virtual void InvertColor();
 
     bool _isCursorVisible;
+    bool _isColorMode;
+    uint16_t _textColumns;
+    uint16_t _textRows;
 
     uint8_t* _font = (uint8_t*)font8x8;
-    uint16_t _attribute = 0x3F01; // white on blue
+    uint16_t _attribute = 0x3F01; // white on blue in color mode
 
 public:
 	Screen();
     uint8_t cursor_x = 0;
     uint8_t cursor_y = 0;
 
+    void SetMode(bool isColor);
 	void Clear();
 	void SetFont(const uint8_t* font);
 	void SetAttribute(uint16_t attribute);

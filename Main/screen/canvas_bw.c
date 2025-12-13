@@ -3,13 +3,12 @@
 #include "screen/canvas.h"
 #include "screen/copy_words.h"
 
+#define CANVAS_WIDTH UVC_WIDTH
 #define Y_PLANE_SIZE (BUFFER_SIZE * 2)
-
-#ifdef BW
 
 extern const uint8_t grayscale_table[];
 
-void FillBuffer(uint32_t offset, uint8_t* out)
+void FillBufferBW(uint32_t offset, uint8_t* out)
 {
 	if (offset < Y_PLANE_SIZE)
     {
@@ -76,7 +75,7 @@ void FillBuffer(uint32_t offset, uint8_t* out)
     }
 }
 
-void Clear(uint8_t color)
+void ClearBW(uint8_t color)
 {
 	uint8_t Y = grayscale_table[color & 0x3f];
 	memset(canvas_buffer, Y, BUFFER1_SIZE);
@@ -85,7 +84,7 @@ void Clear(uint8_t color)
 #endif
 }
 
-void SetPixel(uint16_t x, uint16_t y, uint8_t color)
+void SetPixelBW(uint16_t x, uint16_t y, uint8_t color)
 {
     if (x >= CANVAS_WIDTH || y >= CANVAS_HEIGHT)
     {
@@ -108,7 +107,7 @@ void SetPixel(uint16_t x, uint16_t y, uint8_t color)
 #endif
 }
 
-uint8_t GetPixel(uint16_t x, uint16_t y)
+uint8_t GetPixelBW(uint16_t x, uint16_t y)
 {
     if (x >= CANVAS_WIDTH || y >= CANVAS_HEIGHT)
     {
@@ -118,5 +117,3 @@ uint8_t GetPixel(uint16_t x, uint16_t y)
     // TODO, need lookup table
     return 0;
 }
-
-#endif

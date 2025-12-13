@@ -8,11 +8,33 @@ namespace Display
 Screen::Screen()
 {
 	this->_isCursorVisible = false;
+	this->_textRows = TEXT_ROWS;
+	this->SetMode(true);
 }
 
 void Screen::Clear()
 {
-	::Clear(this->_attribute);
+	if (this->_isColorMode)
+	{
+		::Clear(this->_attribute);
+	}
+	else
+	{
+		::ClearBW(this->_attribute);
+	}
+}
+
+void Screen::SetMode(bool isColor)
+{
+	this->_isColorMode = isColor;
+	if (this->_isColorMode)
+	{
+		this->_textColumns = UVC_WIDTH / 8 / 2;
+	}
+	else
+	{
+		this->_textColumns = UVC_WIDTH / 8;
+	}
 }
 
 void Screen::SetFont(const uint8_t* font)
@@ -32,14 +54,14 @@ void Screen::SetCursorPosition(uint8_t x, uint8_t y)
 		return;
 	}
 
-	if (x >= TEXT_COLUMNS)
+	if (x >= this->_textColumns)
 	{
-		x = TEXT_COLUMNS - 1;
+		x = this->_textColumns - 1;
 	}
 
-	if (y >= TEXT_ROWS)
+	if (y >= this->_textRows)
 	{
-		y = TEXT_ROWS - 1;
+		y = this->_textRows - 1;
 	}
 
     if (this->_isCursorVisible)
@@ -100,13 +122,13 @@ void Screen::PrintAt(uint8_t x, uint8_t y, const char* str)
 
 void Screen::PrintAlignRight(uint8_t y, const char *str)
 {
-    uint8_t leftX = TEXT_COLUMNS - strlen(str);
+    uint8_t leftX = this->_textColumns - strlen(str);
     this->PrintAt(leftX, y, str);
 }
 
 void Screen::PrintAlignCenter(uint8_t y, const char *str)
 {
-    uint8_t leftX = (TEXT_COLUMNS - strlen(str)) / 2;
+    uint8_t leftX = (this->_textColumns - strlen(str)) / 2;
     this->PrintAt(leftX, y, str);
 }
 
@@ -117,7 +139,7 @@ void Screen::PrintChar(char c, uint16_t color)
 	case '\0': //null
 		break;
 	case '\n': //line feed
-		if (this->cursor_y < TEXT_ROWS - 1)
+		if (this->cursor_y < this->_textRows - 1)
 		{
 			this->SetCursorPosition(0, this->cursor_y + 1);
 		}
@@ -168,7 +190,14 @@ void Screen::DrawChar(const uint8_t* f, uint16_t x, uint16_t y, uint8_t c)
             	color = this->_attribute & 0x03F;
             }
 
-            SetPixel(x * 8 + j, y * 8 + i, color);
+        	if (this->_isColorMode)
+        	{
+        		::SetPixel(x * 8 + j, y * 8 + i, color);
+        	}
+        	else
+        	{
+        		::SetPixelBW(x * 8 + j, y * 8 + i, color);
+        	}
         }
     }
 }
@@ -188,13 +217,13 @@ void Screen::CursorNext()
 {
 	uint8_t x = this->cursor_x;
 	uint8_t y = this->cursor_y;
-	if (x < TEXT_COLUMNS - 1)
+	if (x < this->_textColumns - 1)
 	{
 		x++;
 	}
 	else
 	{
-		if (y < TEXT_ROWS - 1)
+		if (y < this->_textRows - 1)
 		{
 			x = 0;
 			y++;

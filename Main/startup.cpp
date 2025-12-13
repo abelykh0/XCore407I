@@ -27,6 +27,7 @@ static void PHY_EnableManualLEDMode();
 static void PHY_ToggleLEDs();
 
 // demo
+#define TEXT_COLUMNS (UVC_WIDTH / 2 / 8)
 Display::Screen Screen;
 static uint8_t GetUsbBuffer(char *buffer, uint8_t maxLength);
 static uint8_t utf8_to_cp866(const uint8_t* utf8);
@@ -43,6 +44,7 @@ extern "C" void setup()
 	MX_ETH_Init();
 	PHY_EnableManualLEDMode();
 
+	Screen.SetMode(false);
 	init_demo_colors();
 	//Clear(0b00101010);
 
