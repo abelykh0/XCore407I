@@ -93,7 +93,7 @@ static inline void SwapBuffers()
 	nextRow = temp;
 }
 
-void FillBuffer(uint32_t offset, uint8_t* out)
+void FillBufferColor(uint32_t offset, uint8_t* out)
 {
 	if (offset < Y_PLANE_SIZE)
     {

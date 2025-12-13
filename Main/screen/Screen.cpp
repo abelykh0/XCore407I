@@ -30,10 +30,16 @@ void Screen::SetMode(bool isColor)
 	if (this->_isColorMode)
 	{
 		this->_textColumns = UVC_WIDTH / 8 / 2;
+
+		// TODO I dont really like this
+		FillBuffer = FillBufferColor;
 	}
 	else
 	{
 		this->_textColumns = UVC_WIDTH / 8;
+
+		// TODO I dont really like this
+		FillBuffer = FillBufferBW;
 	}
 }
 

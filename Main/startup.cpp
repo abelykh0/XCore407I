@@ -44,7 +44,7 @@ extern "C" void setup()
 	MX_ETH_Init();
 	PHY_EnableManualLEDMode();
 
-	Screen.SetMode(false);
+	//Screen.SetMode(false);
 	init_demo_colors();
 	//Clear(0b00101010);
 
@@ -70,6 +70,15 @@ extern "C" void loop()
 
     if (len == 1)
 	{
+    	if (buffer[0] == '1')
+    	{
+    		Screen.SetMode(true);
+    	}
+    	else if (buffer[0] == '2')
+    	{
+    		Screen.SetMode(false);
+    	}
+
     	Screen.PrintCharacter(buffer[0], 0x3F10);
     	return;
 	}

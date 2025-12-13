@@ -43,11 +43,13 @@ extern uint8_t canvas_tail[];
 void Clear(uint8_t color);
 void SetPixel(uint16_t x, uint16_t y, uint8_t color);
 uint8_t GetPixel(uint16_t x, uint16_t y);
-void FillBuffer(uint32_t offset, uint8_t* out);
 void ClearBW(uint8_t color);
 void SetPixelBW(uint16_t x, uint16_t y, uint8_t color);
 uint8_t GetPixelBW(uint16_t x, uint16_t y);
+
+void FillBufferColor(uint32_t offset, uint8_t* out);
 void FillBufferBW(uint32_t offset, uint8_t* out);
+extern void (*FillBuffer)(uint32_t, uint8_t*);
 
 #ifdef __cplusplus
 }
