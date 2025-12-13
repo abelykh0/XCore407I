@@ -5,7 +5,7 @@
 #include "demo_colors.h"
 #include "screen/screen.h"
 
-#define GREY_ON_BLACK  0x2A00
+#define GREY_ON_BLACK  0x2A10
 #define WHITE_ON_BLACK  0x3F00
 
 static void show_colors(uint16_t x, uint16_t y, uint8_t r, uint8_t g, uint8_t b);

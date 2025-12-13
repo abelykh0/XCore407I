@@ -12,6 +12,11 @@ extern uint16_t y_table[];
 extern uint8_t rgb_table[];
 
 NV12_UV_t* uv_plane = (NV12_UV_t*)canvas_buffer;
+#if (BUFFER_TAIL_SIZE > 0)
+NV12_UV_t* uv_tail = (NV12_UV_t*)canvas_tail;
+#define PART1_SIZE (BUFFER1_SIZE / sizeof(NV12_UV_t))
+#define PART2_SIZE (BUFFER_TAIL_SIZE / sizeof(NV12_UV_t))
+#endif
 
 static uint8_t buffer[2][PLANE_WIDTH * 3 / 2] __attribute__((section(".ccmram"), aligned(4)));
 static uint8_t* currentRow = buffer[0];
@@ -55,17 +60,31 @@ static inline void PrepareNextRow()
 
 	uint16_t* out_buffer = (uint16_t*)nextRow;
 	uint16_t* out_buffer_end = out_buffer + CANVAS_WIDTH - 1;
-    NV12_UV_t* source = uv_plane + (uvRow * CANVAS_WIDTH);
+    uint32_t sourceOffset = uvRow * CANVAS_WIDTH;
 
 	for (; out_buffer <= out_buffer_end; out_buffer++)
     {
-        NV12_UV_t uv_value = *source;
+        NV12_UV_t uv_value;
+#if (BUFFER_TAIL_SIZE > 0)
+        if (sourceOffset < PART1_SIZE)
+        {
+            uv_value = uv_plane[sourceOffset];
+        }
+        else
+        {
+            uv_value = uv_tail[sourceOffset - PART1_SIZE];
+        }
+#else
+        uv_value = uv_plane[sourceOffset];
+#endif
+
         uint8_t hash = uv_value.Cb ^ uv_value.Cr;
         uint16_t y_values = y_table[hash];
         *out_buffer = y_values;
 
-        source++;
+        sourceOffset++;
     }
+
 }
 
 static inline void SwapBuffers()
@@ -130,10 +149,35 @@ void FillBuffer(uint32_t offset, uint8_t* out)
     {
     	// UV plane as stored as is
 
-        // Ensure aligned
     	int32_t canvasOffset = offset - Y_PLANE_SIZE;
-        copy_words((const uint32_t*)(canvas_buffer + canvasOffset), (uint32_t*)out, PACKET_SIZE_NO_HEADER / sizeof(uint32_t));
-    	//memcpy(out, canvas_buffer + bufferOffset, PACKET_SIZE_NO_HEADER);
+
+#if (BUFFER_TAIL_SIZE > 0)
+    	int32_t wordsRemaining = PACKET_SIZE_NO_HEADER / sizeof(uint32_t);
+		while (wordsRemaining > 0)
+		{
+			uint32_t wordsToCopy = wordsRemaining;
+			if (canvasOffset < BUFFER1_SIZE)
+			{
+				uint32_t nextOffset = canvasOffset + (wordsToCopy * sizeof(uint32_t));
+				if (nextOffset > BUFFER1_SIZE)
+				{
+					wordsToCopy = (BUFFER1_SIZE - canvasOffset) / sizeof(uint32_t);
+				}
+
+				copy_words((const uint32_t*)(canvas_buffer + canvasOffset), (uint32_t*)out, wordsToCopy);
+			}
+			else
+			{
+				copy_words((const uint32_t*)(canvas_tail + canvasOffset - BUFFER1_SIZE), (uint32_t*)out, wordsToCopy);
+			}
+
+			wordsRemaining -= wordsToCopy;
+			canvasOffset += wordsToCopy;
+		}
+
+#else
+    	copy_words((const uint32_t*)(canvas_buffer + canvasOffset), (uint32_t*)out, PACKET_SIZE_NO_HEADER / sizeof(uint32_t));
+#endif
 
         if (canvasOffset < BUFFER_SIZE - PACKET_SIZE_NO_HEADER)
         {
@@ -150,10 +194,16 @@ void FillBuffer(uint32_t offset, uint8_t* out)
 void Clear(uint8_t color)
 {
     NV12_UV_t uv_value = uv_table[color & 0x3f];
-    for (uint32_t i = 0; i < CANVAS_WIDTH * CANVAS_HEIGHT; i++)
+    for (uint32_t i = 0; i < PART1_SIZE; i++)
     {
     	uv_plane[i] = uv_value;
     }
+#if (BUFFER_TAIL_SIZE > 0)
+    for (uint32_t i = 0; i < PART2_SIZE; i++)
+    {
+    	uv_tail[i] = uv_value;
+    }
+#endif
 }
 
 void SetPixel(uint16_t x, uint16_t y, uint8_t color)
@@ -164,7 +214,20 @@ void SetPixel(uint16_t x, uint16_t y, uint8_t color)
     }
 
     NV12_UV_t uv_value = uv_table[color & 0x3f];
+
+#if (BUFFER_TAIL_SIZE > 0)
+    uint32_t offset = y * CANVAS_WIDTH + x;
+    if (offset < PART1_SIZE)
+    {
+    	uv_plane[offset] = uv_value;
+    }
+    else
+    {
+    	uv_tail[offset - PART1_SIZE] = uv_value;
+    }
+#else
     uv_plane[y * CANVAS_WIDTH + x] = uv_value;
+#endif
 }
 
 uint8_t GetPixel(uint16_t x, uint16_t y)
@@ -174,7 +237,21 @@ uint8_t GetPixel(uint16_t x, uint16_t y)
         return 0; // out of canvas
     }
 
-    NV12_UV_t uv_value = uv_plane[y * CANVAS_WIDTH + x];
+    NV12_UV_t uv_value;
+#if (BUFFER_TAIL_SIZE > 0)
+    uint32_t offset = y * CANVAS_WIDTH + x;
+    if (offset < PART1_SIZE)
+    {
+    	uv_value = uv_plane[offset];
+    }
+    else
+    {
+    	uv_value = uv_tail[offset - PART1_SIZE];
+    }
+#else
+    uv_value = uv_plane[y * CANVAS_WIDTH + x];
+#endif
+
     uint8_t hash = uv_value.Cb ^ uv_value.Cr;
 
     return rgb_table[hash];

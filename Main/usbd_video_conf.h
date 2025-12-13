@@ -3,9 +3,9 @@
 
 #define UVC_WIDTH                   512
 #define UVC_HEIGHT                  512
-#define UVC_CAM_FPS_HS              20
+#define UVC_CAM_FPS_HS              12
 #define BUFFER_TAIL_SIZE            16384
-#define BW
+//#define BW
 
 // Experimental fps (color):
 //  320x240: 33.3 fps // 160x120 pixels // 37.5 kB
