@@ -3,7 +3,7 @@
 #include "usbd_core.h"
 #include "screen/canvas.h"
 
-static uint8_t buffer_bytes[UVC_ISO_HS_MPS + ALIGN_OFFSET] __attribute__((section(".ccmram"), aligned(4))); // header + payload
+static uint8_t buffer_bytes[UVC_ISO_HS_MPS + ALIGN_OFFSET] __attribute__((aligned(4))); // header + payload
 static uint8_t streaming_started = 0;
 static uint32_t video_frame_offset = 0;
 static uint8_t frame_id = 0;
