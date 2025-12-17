@@ -82,6 +82,11 @@ static inline void PrepareNextRow()
         *out_buffer = y_values;
 
         sourceOffset++;
+        if (sourceOffset > UVC_HEIGHT * CANVAS_WIDTH)
+        {
+        	// end of Y plane
+        	break;
+        }
     }
 
 }
@@ -115,6 +120,13 @@ void FillBufferColor(uint32_t offset, uint8_t* out)
 		case 1:
 			// use second half of currentRow and nextRow to fill "out"
 			copy_words((const uint32_t*)(currentRow + CANVAS_WIDTH), (uint32_t*)out, PLANE_WIDTH / 2 / sizeof(uint32_t));
+
+			// TODO workaround this is only correct for 512x512 and 768 buffer size
+			if (Y_PLANE_SIZE - offset == 256)
+			{
+				copy_words((const uint32_t*)canvas_buffer, (uint32_t*)(out + (PLANE_WIDTH / 2)), PLANE_WIDTH / sizeof(uint32_t));
+				return;
+			}
 			copy_words((const uint32_t*)nextRow, (uint32_t*)(out + (PLANE_WIDTH / 2)), PLANE_WIDTH / sizeof(uint32_t));
 
 			SwapBuffers();
