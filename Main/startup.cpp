@@ -4,6 +4,7 @@
 #include "stm32f4xx_hal_eth.h"
 
 #include "usb_device.h"
+#include "usb_host.h"
 #include "usbd_desc.h"
 #include "usbd_cdc_if.h"
 #include "usbd_video_if.h"
@@ -39,6 +40,7 @@ extern "C" void initialize()
 extern "C" void setup()
 {
 	USB_DEVICE_Init();
+	MX_USB_HOST_Init();
 
 	// Using Ethernet PHY to toggle LEDs
 	MX_ETH_Init();
@@ -53,6 +55,8 @@ extern "C" void setup()
 
 extern "C" void loop()
 {
+	MX_USB_HOST_Process();
+
 	//uint8_t test_msg[] = "STM32 CDC Test\n";
 	//CDC_Transmit_HS(test_msg, sizeof(test_msg) - 1);
 
