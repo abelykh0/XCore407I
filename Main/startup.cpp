@@ -5,6 +5,7 @@
 
 #include "usb_device.h"
 #include "usb_host.h"
+#include "usbh_hid.h"
 #include "usbd_desc.h"
 #include "usbd_cdc_if.h"
 #include "usbd_video_if.h"
@@ -56,6 +57,11 @@ extern "C" void setup()
 extern "C" void loop()
 {
 	MX_USB_HOST_Process();
+
+	uint8_t buf[8];
+	//if(USBH_HID_GetReport(&hUsbHostFS, 0, 0, buf, 8) == USBH_OK) {
+	//	// Process buf[0]...buf[7]
+	//}
 
 	//uint8_t test_msg[] = "STM32 CDC Test\n";
 	//CDC_Transmit_HS(test_msg, sizeof(test_msg) - 1);
