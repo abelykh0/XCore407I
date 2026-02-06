@@ -1,9 +1,7 @@
 #include "keyboard.h"
-#include "usbh_hid.h"
-#include "usb_host.h"
 
 static uint8_t lastScanCode;
-static HID_KEYBD_Info_TypeDef lastInfo;
+HID_KEYBD_Info_TypeDef lastInfo;
 
 uint8_t GetScanCode(bool wait)
 {

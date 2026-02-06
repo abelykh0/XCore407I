@@ -1,7 +1,7 @@
 #include "bkinput.h"
 #include "bkEmu.h"
 #include "usbh_hid_keybd.h"
-//#include "Keyboard/ps2Keyboard.h"
+#include "keyboard/keyboard.h"
 
 // 0020 Screen mode 0 - 512x256, FF - 256x256
 // 0023 Keyboard 0 - LAT, 80 - RUS
@@ -103,7 +103,7 @@ bool OnKey(uint32_t scanCode, bool isKeyUp)
 
 	uint8_t symbol = '\0';
 
-	if (ModifierKeyState & (ModifierKeys::LeftAlt | ModifierKeys::RightAlt))
+	if (lastInfo.lalt | lastInfo.ralt)
 	{
 		// АР2
 
@@ -122,7 +122,7 @@ bool OnKey(uint32_t scanCode, bool isKeyUp)
 			symbol = 140;
 			break;
 		default:
-			symbol = Ps2_ConvertScancode(scanCode);
+			symbol = GetAsciiCode();
 			symbol = convertSymbol(symbol, false);
 			if (symbol != '\0')
 			{
@@ -171,11 +171,11 @@ bool OnKey(uint32_t scanCode, bool isKeyUp)
 		case KEY_RIGHT_GUI:
 			symbol = 0x0F;
 			break;
-		case KEY_ALT: // АР2
+		case KEY_LEFTALT: // АР2
 			symbol = 0x0F;
 			break;
 		default:
-			symbol = Ps2_ConvertScancode(scanCode);
+			symbol = GetAsciiCode();
 			if (RamBuffer[0x0023] == 0x80)
 			{
 				// РУС

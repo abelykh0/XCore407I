@@ -118,6 +118,7 @@ int32_t bk_loop()
 	}
 
 	// Keyboard input
+	/*
 	int32_t scanCode = Ps2_GetScancode();
 	if (scanCode > 0)
 	{
@@ -137,6 +138,7 @@ int32_t bk_loop()
 			OnKey(scanCode, false);
 		}
 	}
+	*/
 
 	if ((p->psw & 020) && (rtt == 0))
 	{ /* trace bit */
@@ -240,7 +242,7 @@ extern "C" int ll_byte(pdp_regs* p, c_addr addr, d_byte* byte)
 	else if (addr >= (uint16_t) 0x4000)
 	{
 		// Video RAM
-		*byte = _bkScreen->Settings->Pixels[addr - (uint16_t) 0x4000];
+		return _bkScreen->ll_byte(addr, byte);
 	}
 	else
 	{
@@ -313,7 +315,7 @@ extern "C" int ll_word(pdp_regs* p, c_addr addr, d_word* word)
 	else if (addr >= (uint16_t)0x4000)
 	{
 		// Video RAM
-		*word = ((uint16_t*) _bkScreen->Settings->Pixels)[(addr - (uint16_t)0x4000) >> 1];
+		return _bkScreen->ll_word(addr, word);
 	}
 	else
 	{
@@ -362,7 +364,7 @@ extern "C" int sl_byte(pdp_regs* p, c_addr addr, d_byte byte)
 	else if (addr >= (uint16_t) 0x4000)
 	{
 		// Video RAM
-		_bkScreen->Settings->Pixels[addr - (uint16_t) 0x4000] = byte;
+		return _bkScreen->sl_byte(addr, byte);
 	}
 	else
 	{
@@ -418,7 +420,7 @@ extern "C" int sl_word(pdp_regs* p, c_addr addr, d_word word)
 	else if (addr >= (uint16_t)0x4000)
 	{
 		// Video RAM
-		((uint16_t*)_bkScreen->Settings->Pixels)[(addr - (uint16_t)0x4000) >> 1] = word;
+		return _bkScreen->sl_word(addr, word);
 	}
 	else
 	{
