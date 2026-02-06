@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+#define FMC_Bank2_3
 #include "main.h"
 
 void initialize();
