@@ -23,7 +23,7 @@
 
 using namespace bk;
 
-uint8_t RamBuffer[RAM_AVAILABLE];
+uint8_t RamBuffer[RAM_AVAILABLE] __attribute__((section(".ccmram"), aligned(4)));
 pdp_regs pdp;
 BkScreen* _bkScreen;
 
@@ -370,6 +370,11 @@ extern "C" int sl_byte(pdp_regs* p, c_addr addr, d_byte byte)
 	{
 		// RAM
 		RamBuffer[addr] = byte;
+
+		if (addr == 0x0020)
+		{
+			_bkScreen->SetMode(byte == 0 ? false : true);
+		}
 	}
 
 	return OK;

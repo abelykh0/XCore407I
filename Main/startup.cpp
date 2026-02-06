@@ -12,6 +12,7 @@
 
 #include "screen/screen.h"
 #include "demo_colors/demo_colors.h"
+#include "emulator/bkEmu.h"
 
 extern TIM_HandleTypeDef htim7;
 
@@ -30,9 +31,7 @@ static void PHY_ToggleLEDs();
 
 // demo
 #define TEXT_COLUMNS (UVC_WIDTH / 2 / 8)
-Display::Screen Screen;
-static uint8_t GetUsbBuffer(char *buffer, uint8_t maxLength);
-static uint8_t utf8_to_cp866(const uint8_t* utf8);
+bk::BkScreen Screen;
 
 extern "C" void initialize()
 {
@@ -47,98 +46,22 @@ extern "C" void setup()
 	MX_ETH_Init();
 	PHY_EnableManualLEDMode();
 
-	//Screen.SetMode(false);
-	init_demo_colors();
-	//Clear(0b00101010);
-
 	HAL_TIM_Base_Start_IT(&htim7);
+
+	Screen.SetMode(false);
+	init_demo_colors();
+	bk_setup(&Screen);
 }
 
 extern "C" void loop()
 {
 	MX_USB_HOST_Process();
 
-	uint8_t buf[8];
-	//if(USBH_HID_GetReport(&hUsbHostFS, 0, 0, buf, 8) == USBH_OK) {
-	//	// Process buf[0]...buf[7]
-	//}
-
-	//uint8_t test_msg[] = "STM32 CDC Test\n";
-	//CDC_Transmit_HS(test_msg, sizeof(test_msg) - 1);
-
-	//loop_demo_colors();
-	//PHY_ToggleLEDs();
-	//HAL_Delay(1000);
-
-	char buffer[32];
-    uint8_t len = GetUsbBuffer(buffer, 32);
-	//uint8_t len = 0;
-    if (len == 0)
-    {
-    	return;
-    }
-
-    if (len == 1)
-	{
-    	if (buffer[0] == '1')
-    	{
-    		Screen.SetMode(true);
-    	}
-    	else if (buffer[0] == '2')
-    	{
-    		Screen.SetMode(false);
-    	}
-
-    	Screen.PrintCharacter(buffer[0], 0x3F10);
-    	return;
-	}
-
-    if (len == 2)
-    {
-    	uint8_t cyrillicChar = utf8_to_cp866((const uint8_t*)buffer);
-    	if (cyrillicChar != 0)
-    	{
-        	Screen.PrintCharacter(cyrillicChar, 0x3F10);
-    	}
-
-    	return;
-    }
-
-	if (len == 3 && buffer[0] == '\e' && buffer[1] == '[')
-	{
-		switch (buffer[2])
-		{
-		case 'D':
-			if (Screen.cursor_x > 0)
-			{
-				Screen.SetCursorPosition(Screen.cursor_x - 1, Screen.cursor_y);
-			}
-			break;
-		case 'C':
-			if (Screen.cursor_x < TEXT_COLUMNS - 1)
-			{
-				Screen.SetCursorPosition(Screen.cursor_x + 1, Screen.cursor_y);
-			}
-			break;
-		case 'A':
-			if (Screen.cursor_y > 0)
-			{
-				Screen.SetCursorPosition(Screen.cursor_x, Screen.cursor_y - 1);
-			}
-			break;
-		case 'B':
-			if (Screen.cursor_y < TEXT_ROWS - 1)
-			{
-				Screen.SetCursorPosition(Screen.cursor_x, Screen.cursor_y + 1);
-			}
-			break;
-		}
-	}
+	bk_loop();
 }
 
 void TimerCallback()
 {
-	loop_demo_colors();
 	PHY_ToggleLEDs();
 }
 
@@ -205,53 +128,4 @@ static void PHY_ToggleLEDs()
 
     // Write back the updated value
     HAL_ETH_WritePHYRegister(&heth, PHY_ADDR, PHY_LEDCR, phycr);
-}
-
-static uint8_t GetUsbBuffer(char *buffer, uint8_t maxLength)
-{
-	USBD_CDC_HandleTypeDef *hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceHS.pClassDataCmsit[CDC_CLASS_ID];
-	if (hcdc == NULL)
-	{
-		return 0;
-	}
-
-    uint32_t len = hcdc->RxLength;
-    if (len > 0)
-    {
-        if (len > maxLength)
-        {
-            len = maxLength;
-        }
-
-        memcpy(buffer, hcdc->RxBuffer, len);
-        hcdc->RxLength = 0;
-    }
-
-    return (uint8_t)len;
-}
-
-static uint8_t utf8_to_cp866(const uint8_t* utf8)
-{
-    uint8_t hi = utf8[0];
-    uint8_t lo = utf8[1];
-
-    // Uppercase А–Я: D0 90 .. D0 AF -> E0 .. EF
-    if (hi == 0xD0 && lo >= 0x90 && lo <= 0xAF)
-    {
-        return 0x80 + (lo - 0x90);
-    }
-
-    // Lowercase а–п: D0 B0 .. D0 BF -> 80 .. 8F
-    if (hi == 0xD0 && lo >= 0xB0 && lo <= 0xBF)
-    {
-        return 0xA0 + (lo - 0xB0);
-    }
-
-    // Lowercase р–я: D1 80 .. D1 8F -> 90 .. 9F
-    if (hi == 0xD1 && lo >= 0x80 && lo <= 0x8F)
-    {
-        return 0xE0 + (lo - 0x80);
-    }
-
-    return 0; // not Cyrillic
 }
