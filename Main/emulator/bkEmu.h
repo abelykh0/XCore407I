@@ -13,5 +13,6 @@ extern pdp_regs pdp;
 void bk_setup(bk::BkScreen* bkScreen);
 int32_t bk_loop();
 void bk_reset();
+void sendInput(uint8_t* buffer, uint8_t size);
 
 #endif

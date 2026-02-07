@@ -14,6 +14,7 @@
 //   FFC8 System Timer counter
 //   FFCA System Timer control
 
+#include "stm32f4xx_hal.h"
 #include "bkEmu.h"
 #include "bkInput.h"
 #include "resources/basic.h"
@@ -37,6 +38,29 @@ void bk_setup(BkScreen* bkScreen)
 {
 	_bkScreen = bkScreen;
 	bk_reset();
+}
+
+void sendInput(uint8_t* buffer, uint8_t size)
+{
+	for (int i = 0; i < size; i++)
+	{
+		while ((port0177660 & 0x80) != 0)
+		{
+			bk_loop();
+		}
+
+		uint8_t symbol = buffer[i];
+
+		if (symbol == 0x0d)
+		{
+			// Enter
+			symbol = 0x0a;
+		}
+
+		port0177660 |= 0x80;
+		port0177662 = symbol & 0x7F;
+		ev_register(TTY_PRI, tty_finish, 0, symbol);
+	}
 }
 
 int32_t bk_loop()
@@ -431,6 +455,11 @@ extern "C" int sl_word(pdp_regs* p, c_addr addr, d_word word)
 	{
 		// RAM
 		((uint16_t*)RamBuffer)[addr >> 1] = word;
+
+		if (addr == 0x0020)
+		{
+			_bkScreen->SetMode((word & 0xff) == 0 ? false : true);
+		}
 	}
 
 

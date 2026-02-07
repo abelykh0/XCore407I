@@ -16,6 +16,8 @@
 
 extern TIM_HandleTypeDef htim7;
 
+static uint8_t GetUsbBuffer(char *buffer, uint8_t maxLength);
+
 // USB HS Device
 static void USB_DEVICE_Init();
 extern USBD_HandleTypeDef hUsbDeviceHS;
@@ -58,6 +60,18 @@ extern "C" void loop()
 	MX_USB_HOST_Process();
 
 	bk_loop();
+
+	char buffer[32];
+    uint8_t len = GetUsbBuffer(buffer, 32);
+    if (len == 0)
+    {
+    	return;
+    }
+
+    if (len == 1)
+    {
+    	sendInput((uint8_t*)buffer, len);
+    }
 }
 
 void TimerCallback()
@@ -128,4 +142,27 @@ static void PHY_ToggleLEDs()
 
     // Write back the updated value
     HAL_ETH_WritePHYRegister(&heth, PHY_ADDR, PHY_LEDCR, phycr);
+}
+
+static uint8_t GetUsbBuffer(char* buffer, uint8_t maxLength)
+{
+	USBD_CDC_HandleTypeDef* hcdc = (USBD_CDC_HandleTypeDef*)hUsbDeviceHS.pClassDataCmsit[CDC_CLASS_ID];
+	if (hcdc == NULL)
+	{
+		return 0;
+	}
+
+    uint32_t len = hcdc->RxLength;
+    if (len > 0)
+    {
+        if (len > maxLength)
+        {
+            len = maxLength;
+        }
+
+        memcpy(buffer, hcdc->RxBuffer, len);
+        hcdc->RxLength = 0;
+    }
+
+    return (uint8_t)len;
 }

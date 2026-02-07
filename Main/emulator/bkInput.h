@@ -8,5 +8,6 @@ extern uint8_t port0177662;
 extern uint16_t port0177716;
 
 bool OnKey(uint32_t scanCode, bool isKeyUp);
+int tty_finish(unsigned short info);
 
 #endif  // DRAW4_H
