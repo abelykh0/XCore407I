@@ -7,6 +7,7 @@
 #define Y_PLANE_SIZE (BUFFER_SIZE * 2)
 
 extern const uint8_t grayscale_table[];
+extern const uint8_t bw_table[];
 
 void FillBufferBW(uint32_t offset, uint8_t* out)
 {
@@ -114,6 +115,21 @@ uint8_t GetPixelBW(uint16_t x, uint16_t y)
         return 0; // out of canvas
     }
 
-    // TODO, need lookup table
-    return 0;
+    uint32_t offset = y * CANVAS_WIDTH + x;
+    uint8_t luminosity;
+
+#if (BUFFER_TAIL_SIZE == 0)
+    luminosity = canvas_buffer[offset];
+#else
+    if (offset < BUFFER1_SIZE)
+    {
+    	luminosity = canvas_buffer[offset];
+    }
+    else
+    {
+    	luminosity = canvas_tail[offset - BUFFER1_SIZE];
+    }
+#endif
+
+    return bw_table[luminosity];
 }

@@ -35,7 +35,7 @@ int BkScreen::ll_byte(uint32_t addr, uint8_t* byte)
 		int x = (addr % 64) * 8;
 		for (int i = 0; i < 8; i++)
 		{
-			uint8_t realColor = ::GetPixel(x + i, y);
+			uint8_t realColor = ::GetPixelBW(x + i, y);
 
 			result >>= 1;
 			if (realColor != 0x00)
