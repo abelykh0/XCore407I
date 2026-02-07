@@ -37,12 +37,12 @@ int BkScreen::ll_byte(uint32_t addr, uint8_t* byte)
 		{
 			uint8_t realColor = ::GetPixel(x + i, y);
 
+			result >>= 1;
 			if (realColor != 0x00)
 			{
-				result |= 0x01;
+				result |= 0x80;
 			}
 
-			result <<= 1;
 		}
 	}
 	else
@@ -57,21 +57,21 @@ int BkScreen::ll_byte(uint32_t addr, uint8_t* byte)
 			switch (realColor)
 			{
 			case 0x00:
-				color = 0x00; // black
+				color = 0x00 << 6; // black
 				break;
 			case 0x30:
-				color = 0x01; // blue
+				color = 0x01 << 6; // blue
 				break;
 			case 0x0c:
-				color = 0x02; // green
+				color = 0x02 << 6; // green
 				break;
 			case 0x03:
-				color = 0x03; // red
+				color = 0x03 << 6; // red
 				break;
 			}
 
+			result >>= 2;
 			result |= color;
-			result <<= 2;
 		}
 	}
 
