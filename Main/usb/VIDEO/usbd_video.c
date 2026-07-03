@@ -260,7 +260,9 @@ __ALIGN_BEGIN static uint8_t USBD_VIDEO_DeviceQualifierDesc[USB_LEN_DEV_QUALIFIE
 static uint8_t VIDEOinEpAdd = UVC_IN_EP;
 
 /* Video Commit data structure */
-static USBD_VideoControlTypeDef video_Commit_Control =
+// USBD_VideoControlTypeDef is __PACKED (aligned(1)); USB_OTG_HS's internal
+// DMA requires a word-aligned buffer for control transfers, so force it here.
+static USBD_VideoControlTypeDef video_Commit_Control __attribute__((aligned(4))) =
 {
   .bmHint = 0x0000U,
   .bFormatIndex = 0x01U,
@@ -281,7 +283,9 @@ static USBD_VideoControlTypeDef video_Commit_Control =
 };
 
 /* Video Probe data structure */
-static USBD_VideoControlTypeDef video_Probe_Control =
+// USBD_VideoControlTypeDef is __PACKED (aligned(1)); USB_OTG_HS's internal
+// DMA requires a word-aligned buffer for control transfers, so force it here.
+static USBD_VideoControlTypeDef video_Probe_Control __attribute__((aligned(4))) =
 {
   .bmHint = 0x0000U,
   .bFormatIndex = 0x01U,
