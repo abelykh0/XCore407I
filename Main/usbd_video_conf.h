@@ -22,7 +22,10 @@
 #define UVC_UNCOMPRESSED_GUID       UVC_GUID_NV12
 #define UVC_BITS_PER_PIXEL          12U
 
-#define UVC_HS_HEADER_SIZE          2U // could be up to 12
+// 4 (not 2): keeps ALIGN_OFFSET at 0 so the packet buffer and the payload
+// (right after the header) are both word-aligned, which USB_OTG_HS's
+// internal DMA requires for the ISO IN transfer source address.
+#define UVC_HS_HEADER_SIZE          4U // could be up to 12
 #define ALIGN_OFFSET                (UVC_HS_HEADER_SIZE % sizeof(uint32_t))
 
 //#define PACKET_SIZE_NO_HEADER_BW    1020
