@@ -167,3 +167,4 @@ void HAL_ETH_MspDeInit(ETH_HandleTypeDef* ethHandle)
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
+
