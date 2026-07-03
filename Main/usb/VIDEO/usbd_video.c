@@ -638,7 +638,7 @@ static inline void recover_uvc_endpoint(USBD_HandleTypeDef* pdev, USBD_VIDEO_Han
 static uint8_t  USBD_VIDEO_SOF(USBD_HandleTypeDef *pdev)
 {
   USBD_VIDEO_HandleTypeDef *hVIDEO = (USBD_VIDEO_HandleTypeDef *) pdev->pClassDataCmsit[pdev->classId];
-  const uint8_t payload[2] = {0x02U, 0x00U};
+  static const uint8_t payload[2] = {0x02U, 0x00U};
 
 #ifdef USE_USBD_COMPOSITE
   /* Get the Endpoints addresses allocated for this class instance */
