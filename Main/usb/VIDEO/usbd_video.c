@@ -8,6 +8,7 @@ static uint8_t streaming_started = 0;
 static uint32_t video_frame_offset = 0;
 static uint8_t frame_id = 0;
 static uint8_t buffer_initialized = 0;
+static uint8_t iso_incomplete_count = 0;
 
 /* VIDEO Device library callbacks */
 static uint8_t USBD_VIDEO_Init(USBD_HandleTypeDef *pdev, uint8_t cfgidx);
@@ -325,6 +326,9 @@ static uint8_t  USBD_VIDEO_DataIn(USBD_HandleTypeDef *pdev, uint8_t epnum)
   uint32_t remaining;
   uint32_t packet_size;
 
+  // Reaching DataIn means the previous transfer actually completed (not incomplete)
+  iso_incomplete_count = 0;
+
   // Only stream when host requests
   if (hVIDEO->uvc_state != UVC_PLAY_STATUS_STREAMING)
   {
@@ -619,18 +623,26 @@ static uint8_t USBD_VIDEO_Setup(USBD_HandleTypeDef *pdev, USBD_SetupReqTypedef *
 }
 
 /**
- * Recover from endpoint halted state
+ * Recover the ISO IN endpoint after repeated Incomplete ISO IN events.
+ * With DMA enabled, a stuck endpoint's NAK/IISOIXFR state has been observed
+ * to survive a plain FlushEP/ClearStallEP; closing and reopening the endpoint
+ * forces the core to fully re-arm it.
  */
 static inline void recover_uvc_endpoint(USBD_HandleTypeDef* pdev, USBD_VIDEO_HandleTypeDef* hVIDEO, uint8_t uvc_ep)
 {
-    // 1. Clear the halted state flag
-    hVIDEO->uvc_state = UVC_PLAY_STATUS_READY;
+    uint16_t mps = (pdev->dev_speed == USBD_SPEED_HIGH) ? UVC_ISO_HS_MPS : UVC_ISO_FS_MPS;
 
-    // 2. Flush the endpoint FIFO
     USBD_LL_FlushEP(pdev, uvc_ep);
+    USBD_LL_CloseEP(pdev, uvc_ep);
+    (void)USBD_LL_OpenEP(pdev, uvc_ep, USBD_EP_TYPE_ISOC, mps);
+    pdev->ep_in[uvc_ep & 0xFU].is_used = 1U;
+    pdev->ep_in[uvc_ep & 0xFU].maxpacket = mps;
 
-    // 3. Clear the STALL condition on endpoint
-    USBD_LL_ClearStallEP(pdev, uvc_ep);
+    streaming_started = 0;
+    iso_incomplete_count = 0;
+
+    // Restart the streaming handshake on the next SOF
+    hVIDEO->uvc_state = UVC_PLAY_STATUS_READY;
 }
 
 /**
@@ -662,12 +674,6 @@ static uint8_t  USBD_VIDEO_SOF(USBD_HandleTypeDef *pdev)
     hVIDEO->uvc_state = UVC_PLAY_STATUS_STREAMING;
   }
 
-  if (hVIDEO->uvc_state & 0x00080000)
-  {
-	  // Halted - try to recover
-	  recover_uvc_endpoint(pdev, hVIDEO, VIDEOinEpAdd);
-  }
-
   /* Exit with no error code */
   return (uint8_t)USBD_OK;
 }
@@ -690,7 +696,17 @@ static uint8_t USBD_VIDEO_IsoINIncomplete(USBD_HandleTypeDef *pdev, uint8_t epnu
 
   if (epnum == (VIDEOinEpAdd & 0xFU))
   {
-    (void)USBD_LL_Transmit(pdev, VIDEOinEpAdd, hVIDEO->uvc_buffer, hVIDEO->uvc_size);
+    iso_incomplete_count++;
+    if (iso_incomplete_count >= 3U)
+    {
+      // Endpoint appears stuck (repeated Incomplete ISO IN with no successful
+      // completion in between) - recover instead of retrying forever.
+      recover_uvc_endpoint(pdev, hVIDEO, VIDEOinEpAdd);
+    }
+    else
+    {
+      (void)USBD_LL_Transmit(pdev, VIDEOinEpAdd, hVIDEO->uvc_buffer, hVIDEO->uvc_size);
+    }
   }
 
   return (uint8_t)USBD_OK;
