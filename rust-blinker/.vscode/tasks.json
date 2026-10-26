@@ -11,6 +11,16 @@
       },
       "problemMatcher": ["$rustc"],
       "group": "build"
+    },
+    {
+      "label": "cargo build (release, USB internal DMA)",
+      "type": "process",
+      "command": "cargo",
+      "args": ["build", "--release", "--features", "usb-internal-dma"],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": ["$rustc"]
     }
   ]
 }

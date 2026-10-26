@@ -8,7 +8,18 @@ cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
 panic-halt = "0.2"
 usb-device = { version = "0.3.2", features = ["control-buffer-256"] }
-synopsys-usb-otg = { version = "0.5.0", features = ["hs"] }
+synopsys-usb-otg = { path = "vendor/synopsys-usb-otg", version = "0.5.0", features = ["hs"] }
+
+[features]
+default = []
+# Experimental STM32 OTG-HS internal DMA backend. Omit this feature to keep the
+# known-working FIFO implementation as the fallback.
+usb-internal-dma = ["synopsys-usb-otg/internal-dma"]
+# Keep a one-packet-per-microframe UVC mode available for host compatibility.
+uvc-single-transaction = []
+
+[patch.crates-io]
+usb-device = { path = "vendor/usb-device" }
 
 [profile.release]
 codegen-units = 1

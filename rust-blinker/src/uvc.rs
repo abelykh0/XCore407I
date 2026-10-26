@@ -2,21 +2,37 @@
 //!
 //! This is the class layer shared with the USB device controller: it builds
 //! the UVC configuration descriptors, answers Probe/Commit control requests,
-//! and supplies one 772-byte isochronous payload per IN completion. The USB
-//! controller glue must expose interface 0/1 and an HS ISO IN endpoint at
-//! `ENDPOINT_IN` with `MAX_PACKET_SIZE` bytes per microframe.
+//! and supplies one C-sized isochronous payload per IN completion.
+//! The USB controller glue must expose interface 0/1 and a high-bandwidth HS
+//! ISO IN endpoint at `ENDPOINT_IN`.
 
-use crate::camera::{Nv12ColorBars, TRANSFER_BYTES};
+use crate::camera::{Nv12DemoImage, TRANSFER_BYTES};
 
 pub const CONTROL_INTERFACE: u8 = 0;
 pub const STREAMING_INTERFACE: u8 = 1;
 pub const ENDPOINT_IN: u8 = 0x81;
 pub const MAX_PACKET_SIZE: u16 = TRANSFER_BYTES as u16;
-pub const FRAME_INTERVAL_100NS: u32 = 10_000_000 / 12;
+// Start with one 772-byte packet per high-speed microframe, matching the
+// known-good C packet framing while we debug video delivery.
+pub const ISO_PACKETS_PER_MICROFRAME: u8 = 1;
+// Each USB transaction carries a complete UVC payload. Keep the batch buffer
+// sized from the transaction count so the two-transaction experiment is easy
+// to re-enable later.
+pub const ISO_BATCH_BYTES: usize = TRANSFER_BYTES * ISO_PACKETS_PER_MICROFRAME as usize;
+pub const MAX_PAYLOAD_TRANSFER_SIZE: u32 = TRANSFER_BYTES as u32;
+pub const FRAME_RATE_FPS: u32 = 15;
+pub const FRAME_INTERVAL_100NS: u32 = 10_000_000 / FRAME_RATE_FPS;
 pub const FRAME_BYTES: u32 = 512 * 512 * 3 / 2;
+pub const FRAME_BIT_RATE: u32 = FRAME_BYTES * 8 * FRAME_RATE_FPS;
 pub const UVC_VERSION: u16 = 0x0110;
 pub const PROBE_LENGTH: usize = 34;
 pub const PROBE_LENGTH_UVC_10: usize = 26;
+
+// OTG_HS internal DMA reads payloads from SRAM in 32-bit words. Keep the
+// persistent packet buffer explicitly aligned even though the current driver
+// still writes packets through the FIFO.
+#[repr(C, align(4))]
+struct UsbDmaBuffer([u8; ISO_BATCH_BYTES]);
 
 const PROBE: u8 = 1;
 const COMMIT: u8 = 2;
@@ -56,8 +72,8 @@ pub struct UvcClass {
     alternate_setting: u8,
     probe: [u8; PROBE_LENGTH],
     commit: [u8; PROBE_LENGTH],
-    camera: Nv12ColorBars,
-    packet: [u8; TRANSFER_BYTES],
+    camera: Nv12DemoImage,
+    packet: UsbDmaBuffer,
     start_marker_pending: bool,
 }
 
@@ -68,8 +84,8 @@ impl UvcClass {
             alternate_setting: 0,
             probe: make_stream_control(),
             commit: make_stream_control(),
-            camera: Nv12ColorBars::new(),
-            packet: [0; TRANSFER_BYTES],
+            camera: Nv12DemoImage::new(),
+            packet: UsbDmaBuffer([0; ISO_BATCH_BYTES]),
             start_marker_pending: false,
         }
     }
@@ -82,6 +98,10 @@ impl UvcClass {
         matches!(self.state, StreamState::Streaming)
     }
 
+    pub fn set_cpu_metrics(&mut self, available: u8, generate: u8, submit: u8) {
+        self.camera.set_cpu_metrics(available, generate, submit);
+    }
+
     /// Handle standard SET_INTERFACE for the VideoStreaming interface.
     pub fn set_interface(&mut self, interface: u8, alternate: u8) -> Result<(), ControlError> {
         if interface != STREAMING_INTERFACE {
@@ -92,41 +112,55 @@ impl UvcClass {
                 self.alternate_setting = 0;
                 self.state = StreamState::Stopped;
                 self.start_marker_pending = false;
-                self.camera = Nv12ColorBars::new();
+                self.camera = Nv12DemoImage::new();
                 Ok(())
             }
             1 => {
                 self.alternate_setting = 1;
                 self.state = StreamState::Ready;
                 self.start_marker_pending = true;
-                self.camera = Nv12ColorBars::new();
+                self.camera = Nv12DemoImage::new();
                 Ok(())
             }
             _ => Err(ControlError::Unsupported),
         }
     }
 
-    /// Produces the first complete UVC payload when alternate setting 1
-    /// activates the stream. The USB driver queues it immediately.
-    pub fn start_stream_packet(&mut self) -> Option<&[u8]> {
+    /// Produces up to the configured number of complete UVC payloads when alternate setting 1
+    /// activates the stream. The USB driver queues them in one microframe.
+    pub fn start_stream_batch(&mut self) -> Option<(&[u8], u8)> {
         if self.state == StreamState::Ready && self.start_marker_pending {
             self.start_marker_pending = false;
             self.state = StreamState::Streaming;
-            let packet = self.camera.next_packet(&mut self.packet)?;
-            Some(&self.packet[..packet.len])
+            self.build_packet_batch()
         } else {
             None
         }
     }
 
-    /// Return the next UVC payload after the previous IN transfer completes.
+    /// Return the next batch of UVC payloads after the previous IN
+    /// transfer completes.
     /// The returned slice remains valid until this method is called again.
-    pub fn next_in_packet(&mut self) -> Option<&[u8]> {
+    pub fn next_in_batch(&mut self) -> Option<(&[u8], u8)> {
         if self.state != StreamState::Streaming {
             return None;
         }
-        let packet = self.camera.next_packet(&mut self.packet)?;
-        Some(&self.packet[..packet.len])
+        self.build_packet_batch()
+    }
+
+    fn build_packet_batch(&mut self) -> Option<(&[u8], u8)> {
+        let mut len = 0;
+        let mut count = 0;
+        while count < ISO_PACKETS_PER_MICROFRAME {
+            let end = len + TRANSFER_BYTES;
+            let packet = self.camera.next_packet(&mut self.packet.0[len..end])?;
+            len += packet.len;
+            count += 1;
+            if packet.frame_complete {
+                break;
+            }
+        }
+        Some((&self.packet.0[..len], count))
     }
 
     /// Process UVC class-specific control requests. `out_data` is the EP0 OUT
@@ -224,8 +258,8 @@ const fn make_stream_control() -> [u8; PROBE_LENGTH] {
     d[19] = (FRAME_BYTES >> 8) as u8;
     d[20] = (FRAME_BYTES >> 16) as u8;
     d[21] = (FRAME_BYTES >> 24) as u8;
-    d[22] = MAX_PACKET_SIZE as u8;
-    d[23] = (MAX_PACKET_SIZE >> 8) as u8;
+    d[22] = MAX_PAYLOAD_TRANSFER_SIZE as u8;
+    d[23] = (MAX_PAYLOAD_TRANSFER_SIZE >> 8) as u8;
     let clock_hz = 48_000_000u32;
     d[26] = clock_hz as u8;
     d[27] = (clock_hz >> 8) as u8;
@@ -266,8 +300,7 @@ pub fn configuration_descriptor(out: &mut [u8]) -> Option<usize> {
     frame[0..5].copy_from_slice(&[30, 0x24, 5, 1, 0]);
     frame[5..7].copy_from_slice(&512u16.to_le_bytes());
     frame[7..9].copy_from_slice(&512u16.to_le_bytes());
-    // Keep the original firmware's 16-bit-per-pixel rate estimate.
-    let bitrate: u32 = 512 * 512 * 16 * 12;
+    let bitrate = FRAME_BIT_RATE;
     frame[9..13].copy_from_slice(&bitrate.to_le_bytes());
     frame[13..17].copy_from_slice(&bitrate.to_le_bytes());
     frame[17..21].copy_from_slice(&FRAME_BYTES.to_le_bytes());
@@ -278,13 +311,14 @@ pub fn configuration_descriptor(out: &mut [u8]) -> Option<usize> {
     w.desc(&[6, 0x24, 0x0d, 1, 1, 4])?;
     // Alternate 1 is the high-speed isochronous IN stream endpoint.
     w.desc(&[9, 4, 1, 1, 1, 0x0e, 2, 0, 0])?;
+    let encoded_max_packet = MAX_PACKET_SIZE | (((ISO_PACKETS_PER_MICROFRAME - 1) as u16) << 11);
     w.desc(&[
         7,
         5,
         ENDPOINT_IN,
         5,
-        MAX_PACKET_SIZE as u8,
-        (MAX_PACKET_SIZE >> 8) as u8,
+        encoded_max_packet as u8,
+        (encoded_max_packet >> 8) as u8,
         1,
     ])?;
     if w.pos != 158 {

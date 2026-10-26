@@ -14,8 +14,10 @@ The firmware now runs the Ethernet PHY blinker while polling the OTG-HS device
 controller. `usb_uvc` supplies a custom F407 `UsbPeripheral` adapter for the
 USB3300 ULPI pins and a `usb-device` UVC class. The camera advertises a single
 512x512 NV12 frame at 12 fps, handles 26- and 34-byte Probe/Commit requests, and
-sends the static color bars over high-speed isochronous IN endpoint `0x81`
-(772 bytes per service interval). The host should identify it as a USB video
+sends the compact demo image over high-speed isochronous IN endpoint `0x81`
+(two 1024-byte transactions per microframe). Build with
+`--features uvc-single-transaction` for the one-transaction fallback. The host
+should identify it as a USB video
 class camera; the development USB ID is `1209:4071`.
 
 ## Build
@@ -51,5 +53,21 @@ This standalone image replaces the existing firmware while running.
 
 The implementation is `no_std`, uses no HAL or heap allocator, and uses
 `cortex-m-rt`, `usb-device`, and `synopsys-usb-otg` for startup and USB device
-support. Build validation has been run for the Cortex-M4 target; physical USB
-enumeration and video capture still need confirmation on the board and a host.
+support.
+
+## Experimental OTG-HS internal DMA
+
+The default build keeps the FIFO based USB driver path. To build the optional
+STM32 OTG-HS internal DMA backend, use:
+
+```powershell
+cargo build --release --features usb-internal-dma
+```
+
+This feature uses the vendored `synopsys-usb-otg` driver fork and enables the
+OTG controller's internal AHB DMA engine. It is separate from DMA in the
+USB3300 PHY. DMA IN buffers are aligned `u32` arrays owned by the USB driver;
+OUT and EP0 buffers come from statically allocated, `u32` aligned endpoint
+memory in normal SRAM. The default FIFO implementation remains available by
+building without the feature. Treat DMA mode as experimental until enumeration
+and video capture have both been checked on the board.

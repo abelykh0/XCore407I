@@ -1,8 +1,10 @@
 //! `usb-device` class adapter for the board's external USB3300 ULPI PHY.
 
 use crate::uvc::{
-    ControlResponse, UvcClass, ENDPOINT_IN, FRAME_BYTES, FRAME_INTERVAL_100NS, MAX_PACKET_SIZE,
+    ControlResponse, UvcClass, ENDPOINT_IN, FRAME_BIT_RATE, FRAME_BYTES, FRAME_INTERVAL_100NS,
+    ISO_PACKETS_PER_MICROFRAME, MAX_PACKET_SIZE,
 };
+use core::sync::atomic::{AtomicU32, Ordering};
 use synopsys_usb_otg::{PhyType, UsbPeripheral};
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus, UsbBusAllocator};
 use usb_device::class::{ControlIn, ControlOut, UsbClass};
@@ -16,6 +18,43 @@ use usb_device::Result;
 const VIDEO_CLASS: u8 = 0x0e;
 const VIDEO_CONTROL_SUBCLASS: u8 = 0x01;
 const VIDEO_STREAMING_SUBCLASS: u8 = 0x02;
+
+static UVC_BUSY_CYCLES: AtomicU32 = AtomicU32::new(0);
+static UVC_GENERATE_CYCLES: AtomicU32 = AtomicU32::new(0);
+static UVC_SUBMIT_CYCLES: AtomicU32 = AtomicU32::new(0);
+
+// Keep these debugger-visible counters while investigating high-bandwidth
+// streaming. They separate packet generation, FIFO submission, and USB XFRC.
+#[no_mangle]
+pub static UVC_DEBUG_GENERATED_BATCHES: AtomicU32 = AtomicU32::new(0);
+#[no_mangle]
+pub static UVC_DEBUG_SUBMITTED_BATCHES: AtomicU32 = AtomicU32::new(0);
+#[no_mangle]
+pub static UVC_DEBUG_SUBMIT_ERRORS: AtomicU32 = AtomicU32::new(0);
+#[no_mangle]
+pub static UVC_DEBUG_IN_COMPLETIONS: AtomicU32 = AtomicU32::new(0);
+
+/// Return and clear the measured cycle count spent generating/submitting UVC
+/// packets since the previous sample.
+pub fn take_uvc_cycle_metrics() -> (u32, u32, u32) {
+    (
+        UVC_BUSY_CYCLES.swap(0, Ordering::Relaxed),
+        UVC_GENERATE_CYCLES.swap(0, Ordering::Relaxed),
+        UVC_SUBMIT_CYCLES.swap(0, Ordering::Relaxed),
+    )
+}
+
+#[inline(always)]
+fn cycle_counter() -> u32 {
+    unsafe { (0xE000_1004 as *const u32).read_volatile() }
+}
+
+#[inline(always)]
+fn record_uvc_cycles(start: u32, counter: &AtomicU32) {
+    let elapsed = cycle_counter().wrapping_sub(start);
+    counter.fetch_add(elapsed, Ordering::Relaxed);
+    UVC_BUSY_CYCLES.fetch_add(elapsed, Ordering::Relaxed);
+}
 
 /// F407's OTG_HS controller and external USB3300 PHY.
 pub struct F407UsbHs;
@@ -130,6 +169,10 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
         }
     }
 
+    pub fn set_cpu_metrics(&mut self, available: u8, generate: u8, submit: u8) {
+        self.function.set_cpu_metrics(available, generate, submit);
+    }
+
     fn write_video_control_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
         writer.interface(
             self.control_interface,
@@ -184,7 +227,7 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
         frame[0..3].copy_from_slice(&[5, 1, 0]);
         frame[3..5].copy_from_slice(&512u16.to_le_bytes());
         frame[5..7].copy_from_slice(&512u16.to_le_bytes());
-        let bitrate = 512u32 * 512 * 16 * 12;
+        let bitrate = FRAME_BIT_RATE;
         frame[7..11].copy_from_slice(&bitrate.to_le_bytes());
         frame[11..15].copy_from_slice(&bitrate.to_le_bytes());
         frame[15..19].copy_from_slice(&FRAME_BYTES.to_le_bytes());
@@ -202,7 +245,8 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
             0,
             Some(self.interface_string),
         )?;
-        writer.endpoint(&self.endpoint)?;
+        // Advertise one isochronous transaction per HS microframe for now.
+        writer.endpoint_hs_iso(&self.endpoint, ISO_PACKETS_PER_MICROFRAME - 1)?;
         Ok(())
     }
 
@@ -211,6 +255,25 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
             && request.recipient == Recipient::Interface
             && (request.index as u8 == u8::from(self.control_interface)
                 || request.index as u8 == u8::from(self.streaming_interface))
+    }
+
+    fn submit_video_batch(endpoint: &EndpointIn<'a, B>, packet: &[u8], packet_count: u8) -> bool {
+        #[cfg(feature = "usb-internal-dma")]
+        {
+            // The packet buffer is 4-byte aligned and remains untouched until
+            // endpoint_in_complete queues the next batch.
+            unsafe {
+                endpoint
+                    .write_iso_batch_dma(packet, packet_count, ISO_PACKETS_PER_MICROFRAME)
+                    .is_ok()
+            }
+        }
+        #[cfg(not(feature = "usb-internal-dma"))]
+        {
+            endpoint
+                .write_iso_batch(packet, packet_count, ISO_PACKETS_PER_MICROFRAME)
+                .is_ok()
+        }
     }
 }
 
@@ -314,8 +377,18 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
             return false;
         };
         if alternative == 1 {
-            if let Some(marker) = self.function.start_stream_packet() {
-                let _ = self.endpoint.write(marker);
+            let start = cycle_counter();
+            let marker = self.function.start_stream_batch();
+            record_uvc_cycles(start, &UVC_GENERATE_CYCLES);
+            if let Some((marker, packet_count)) = marker {
+                UVC_DEBUG_GENERATED_BATCHES.fetch_add(1, Ordering::Relaxed);
+                let start = cycle_counter();
+                if Self::submit_video_batch(&self.endpoint, marker, packet_count) {
+                    UVC_DEBUG_SUBMITTED_BATCHES.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    UVC_DEBUG_SUBMIT_ERRORS.fetch_add(1, Ordering::Relaxed);
+                }
+                record_uvc_cycles(start, &UVC_SUBMIT_CYCLES);
             }
         }
         true
@@ -323,15 +396,29 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
 
     fn endpoint_in_complete(&mut self, address: EndpointAddress) {
         if address == self.endpoint.address() {
-            if let Some(packet) = self.function.next_in_packet() {
-                let _ = self.endpoint.write(packet);
+            UVC_DEBUG_IN_COMPLETIONS.fetch_add(1, Ordering::Relaxed);
+            let start = cycle_counter();
+            let packet = self.function.next_in_batch();
+            record_uvc_cycles(start, &UVC_GENERATE_CYCLES);
+            if let Some((packet, packet_count)) = packet {
+                UVC_DEBUG_GENERATED_BATCHES.fetch_add(1, Ordering::Relaxed);
+                let start = cycle_counter();
+                if Self::submit_video_batch(&self.endpoint, packet, packet_count) {
+                    UVC_DEBUG_SUBMITTED_BATCHES.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    UVC_DEBUG_SUBMIT_ERRORS.fetch_add(1, Ordering::Relaxed);
+                }
+                record_uvc_cycles(start, &UVC_SUBMIT_CYCLES);
             }
         }
     }
 }
 
 pub fn usb_bus() -> UsbBusAllocator<synopsys_usb_otg::UsbBus<F407UsbHs>> {
+    #[cfg(not(feature = "usb-internal-dma"))]
     static mut EP_MEMORY: [u32; 32] = [0; 32];
+    #[cfg(feature = "usb-internal-dma")]
+    static mut EP_MEMORY: [u32; 64] = [0; 64];
     let memory = unsafe { &mut *core::ptr::addr_of_mut!(EP_MEMORY) };
     synopsys_usb_otg::UsbBus::new(F407UsbHs, memory)
 }

@@ -7,7 +7,10 @@ use cortex_m_rt::{entry, exception};
 use panic_halt as _;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::usb_uvc::{configure_ulpi_pins, usb_bus, F407UsbHs, UvcUsbClass};
+use xcore407i_blinker::camera::initialize_demo_canvas;
+use xcore407i_blinker::usb_uvc::{
+    configure_ulpi_pins, take_uvc_cycle_metrics, usb_bus, F407UsbHs, UvcUsbClass,
+};
 
 const RCC_AHB1ENR: *mut u32 = 0x4002_3830 as *mut u32;
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
@@ -26,11 +29,15 @@ const MII_WRITE: u32 = 1 << 1;
 // HCLK=168 MHz: STM32F4 MAC MDC divisor /102 (CR=100b).
 const MII_CLOCK_DIV102: u32 = 4 << 2;
 const BLINK_INTERVAL_MS: u32 = 500;
+const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
+const CORE_CLOCK_HZ: u64 = 168_000_000;
 static TICKS: AtomicU32 = AtomicU32::new(0);
 
 #[entry]
 fn main() -> ! {
     system_clock_168mhz();
+    enable_cycle_counter();
+    initialize_demo_canvas();
     configure_blinker_pins();
     unsafe {
         ETH_MACMIIAR.write_volatile(MII_CLOCK_DIV102);
@@ -58,6 +65,7 @@ fn main() -> ! {
     .build();
 
     let mut last_blink = 0;
+    let mut last_cpu_sample = 0;
     loop {
         // Poll continuously: control transfers and each HS isochronous IN
         // completion must be serviced promptly while the camera is streaming.
@@ -72,6 +80,27 @@ fn main() -> ! {
                 phy_write(PHY_LED_CONTROL, led);
             }
         }
+
+        if now.wrapping_sub(last_cpu_sample) >= CPU_SAMPLE_INTERVAL_MS {
+            last_cpu_sample = now;
+            let (busy, generate, submit) = take_uvc_cycle_metrics();
+            let busy_cycles = busy as u64;
+            let busy_percent = ((busy_cycles * 100) / CORE_CLOCK_HZ).min(100) as u8;
+            let generate_percent = (((generate as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
+            let submit_percent = (((submit as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
+            camera.set_cpu_metrics(100 - busy_percent, generate_percent, submit_percent);
+        }
+    }
+}
+
+fn enable_cycle_counter() {
+    const DEMCR: *mut u32 = 0xE000_EDFC as *mut u32;
+    const DWT_CTRL: *mut u32 = 0xE000_1000 as *mut u32;
+    const DWT_CYCCNT: *mut u32 = 0xE000_1004 as *mut u32;
+    unsafe {
+        DEMCR.write_volatile(DEMCR.read_volatile() | (1 << 24));
+        DWT_CYCCNT.write_volatile(0);
+        DWT_CTRL.write_volatile(DWT_CTRL.read_volatile() | 1);
     }
 }
 

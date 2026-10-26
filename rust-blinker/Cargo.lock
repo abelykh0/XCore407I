@@ -216,8 +216,6 @@ dependencies = [
 [[package]]
 name = "synopsys-usb-otg"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46672633ec4f32826e4267866ba732aac8a95a0b86317aadbddac7474f747407"
 dependencies = [
  "critical-section",
  "embedded-hal 0.2.7",
@@ -235,8 +233,6 @@ checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 [[package]]
 name = "usb-device"
 version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98816b1accafbb09085168b90f27e93d790b4bfa19d883466b5e53315b5f06a6"
 dependencies = [
  "heapless",
  "portable-atomic",
