@@ -108,6 +108,11 @@ fn canvas_read_chunk(offset: usize) -> (*const u8, usize) {
 
 /// Initialize the demo chart in the compact canvas before USB streaming.
 pub fn initialize_demo_canvas() {
+    #[cfg(not(feature = "camera-bw"))]
+    initialize_demo_colors_canvas();
+
+    #[cfg(feature = "camera-bw")]
+    {
     let mut y = 0;
     while y < CANVAS_HEIGHT {
         let mut x = 0;
@@ -169,6 +174,153 @@ pub fn initialize_demo_canvas() {
         }
         y += 1;
     }
+    }
+}
+
+#[cfg(not(feature = "camera-bw"))]
+fn initialize_demo_colors_canvas() {
+    const GREY_ON_BLACK: u16 = 0x2A10;
+
+    let mut y = 0;
+    while y < CANVAS_HEIGHT {
+        let mut x = 0;
+        while x < CANVAS_WIDTH {
+            set_demo_pixel(x, y, GREY_ON_BLACK as u8);
+            x += 1;
+        }
+        y += 1;
+    }
+
+    draw_demo_char(0, 0, 0xC9, GREY_ON_BLACK);
+    draw_demo_char(31, 0, 0xBB, GREY_ON_BLACK);
+    draw_demo_char(0, 31, 0xC8, GREY_ON_BLACK);
+    draw_demo_char(31, 31, 0xBC, GREY_ON_BLACK);
+    let mut x = 1;
+    while x < 31 {
+        draw_demo_char(x, 0, 0xCD, GREY_ON_BLACK);
+        draw_demo_char(x, 31, 0xCD, GREY_ON_BLACK);
+        x += 1;
+    }
+    let mut y = 1;
+    while y < 31 {
+        draw_demo_char(0, y, 0xBA, GREY_ON_BLACK);
+        draw_demo_char(31, y, 0xBA, GREY_ON_BLACK);
+        y += 1;
+    }
+
+    draw_demo_colors(3, 2, 4, 4, 4);
+    draw_demo_colors(10, 2, 4, 0, 0);
+    draw_demo_colors(17, 2, 0, 4, 0);
+    draw_demo_colors(24, 2, 0, 0, 4);
+    draw_demo_colors(10, 6, 0, 4, 4);
+    draw_demo_colors(17, 6, 4, 4, 0);
+    draw_demo_colors(24, 6, 4, 0, 4);
+
+    draw_demo_colors(3, 10, 0, 1, 2);
+    draw_demo_colors(3, 11, 0, 1, 3);
+    draw_demo_colors(3, 12, 0, 2, 1);
+    draw_demo_colors(3, 13, 0, 2, 3);
+    draw_demo_colors(3, 14, 0, 3, 1);
+    draw_demo_colors(3, 15, 0, 3, 2);
+    draw_demo_colors(3, 16, 1, 0, 2);
+    draw_demo_colors(3, 17, 1, 0, 3);
+    draw_demo_colors(3, 18, 1, 1, 2);
+    draw_demo_colors(3, 19, 1, 1, 3);
+    draw_demo_colors(3, 20, 1, 2, 0);
+    draw_demo_colors(3, 21, 1, 2, 1);
+
+    draw_demo_colors(10, 12, 1, 2, 2);
+    draw_demo_colors(10, 13, 1, 2, 3);
+    draw_demo_colors(10, 14, 1, 3, 0);
+    draw_demo_colors(10, 15, 1, 3, 1);
+    draw_demo_colors(10, 16, 1, 3, 2);
+    draw_demo_colors(10, 17, 1, 3, 3);
+    draw_demo_colors(10, 18, 2, 0, 1);
+    draw_demo_colors(10, 19, 2, 0, 3);
+    draw_demo_colors(10, 20, 2, 1, 0);
+    draw_demo_colors(10, 21, 2, 1, 1);
+
+    draw_demo_colors(17, 12, 2, 1, 2);
+    draw_demo_colors(17, 13, 2, 1, 3);
+    draw_demo_colors(17, 14, 2, 2, 1);
+    draw_demo_colors(17, 15, 2, 2, 3);
+    draw_demo_colors(17, 16, 2, 3, 0);
+    draw_demo_colors(17, 17, 2, 3, 1);
+    draw_demo_colors(17, 18, 2, 3, 2);
+    draw_demo_colors(17, 19, 2, 3, 3);
+    draw_demo_colors(17, 20, 3, 0, 1);
+    draw_demo_colors(17, 21, 3, 0, 2);
+
+    draw_demo_colors(24, 12, 3, 1, 0);
+    draw_demo_colors(24, 13, 3, 1, 1);
+    draw_demo_colors(24, 14, 3, 1, 2);
+    draw_demo_colors(24, 15, 3, 1, 3);
+    draw_demo_colors(24, 16, 3, 2, 0);
+    draw_demo_colors(24, 17, 3, 2, 1);
+    draw_demo_colors(24, 18, 3, 2, 2);
+    draw_demo_colors(24, 19, 3, 2, 3);
+    draw_demo_colors(24, 20, 3, 3, 1);
+    draw_demo_colors(24, 21, 3, 3, 2);
+}
+
+#[cfg(not(feature = "camera-bw"))]
+fn draw_demo_char(cell_x: usize, cell_y: usize, character: u8, attribute: u16) {
+    use crate::font8x8::FONT8X8;
+
+    let glyph = (character as usize - 1) * 8;
+    let foreground = (attribute >> 8) as u8 & 0x3f;
+    let background = attribute as u8 & 0x3f;
+    let mut row = 0;
+    while row < 8 {
+        let bits = FONT8X8[glyph + row];
+        let mut column = 0;
+        while column < 8 {
+            let color = if bits & (0x80 >> column) != 0 { foreground } else { background };
+            set_demo_pixel(cell_x * 8 + column, cell_y * 8 + row, color);
+            column += 1;
+        }
+        row += 1;
+    }
+}
+
+#[cfg(not(feature = "camera-bw"))]
+fn draw_demo_text(cell_x: usize, cell_y: usize, text: &[u8], attribute: u16) {
+    for (i, character) in text.iter().enumerate() {
+        draw_demo_char(cell_x + i, cell_y, *character, attribute);
+    }
+}
+
+#[cfg(not(feature = "camera-bw"))]
+fn draw_demo_colors(x: usize, y: usize, red: u8, green: u8, blue: u8) {
+    if red < 4 && green < 4 && blue < 4 {
+        let color = (blue << 4) | (green << 2) | red;
+        draw_demo_text(x, y, &[0xDB, 0xDB, 0xDD], (color as u16) << 8);
+        draw_demo_color_label(x + 3, y, color);
+        return;
+    }
+
+    let grayscale = red == 4 && green == 4 && blue == 4;
+    let mut variable = 1;
+    let mut row = y;
+    while variable < 4 {
+        let r = if red < 4 { red } else { variable };
+        let g = if green < 4 { green } else { variable };
+        let b = if blue < 4 { blue } else { variable };
+        let color = (b << 4) | (g << 2) | r;
+        if grayscale || (color & 0x03) * 0x15 != color {
+            draw_demo_text(x, row, &[0xDB, 0xDB, 0xDD], (color as u16) << 8);
+            draw_demo_color_label(x + 3, row, color);
+            row += 1;
+        }
+        variable += 1;
+    }
+}
+
+#[cfg(not(feature = "camera-bw"))]
+fn draw_demo_color_label(x: usize, y: usize, color: u8) {
+    let value = ((color & 0x03) * 100) + (((color >> 2) & 0x03) * 10) + ((color >> 4) & 0x03);
+    let digits = [b'0' + value / 100, b'0' + (value / 10) % 10, b'0' + value % 10];
+    draw_demo_text(x, y, &digits, 0x2A10);
 }
 
 /// Change one logical color pixel. Every source pixel expands to a 2x2 block
@@ -289,6 +441,8 @@ impl Nv12DemoImage {
             self.offset,
             &mut out[UVC_HEADER_BYTES..UVC_HEADER_BYTES + data_len],
         );
+        /* CPU diagnostics are retained here for later use, but hidden from
+         * the demo image so its contents remain unobstructed.
         let stage_start = cycle_counter();
         overlay_cpu_text(
             self.offset,
@@ -298,6 +452,7 @@ impl Nv12DemoImage {
             self.cpu_submit_percent,
         );
         record_render_cycles(stage_start, &UVC_DEBUG_RENDER_OVERLAY_CYCLES);
+        */
 
         self.offset += data_len;
         if complete {
