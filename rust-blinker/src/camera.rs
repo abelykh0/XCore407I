@@ -50,13 +50,21 @@ fn write_canvas(index: usize, value: u8) {
     }
 }
 
-fn read_canvas(index: usize) -> u8 {
+fn canvas_read_chunk(offset: usize) -> (*const u8, usize) {
     unsafe {
-        if index < CANVAS_MAIN_BYTES {
-            core::ptr::addr_of!(DEMO_CANVAS.0).cast::<u8>().add(index).read()
+        if offset < CANVAS_MAIN_BYTES {
+            (
+                core::ptr::addr_of!(DEMO_CANVAS.0).cast::<u8>().add(offset),
+                CANVAS_MAIN_BYTES - offset,
+            )
         } else {
-            core::ptr::addr_of!(DEMO_CANVAS_TAIL.0).cast::<u8>()
-                .add(index - CANVAS_MAIN_BYTES).read()
+            let tail_offset = offset - CANVAS_MAIN_BYTES;
+            (
+                core::ptr::addr_of!(DEMO_CANVAS_TAIL.0)
+                    .cast::<u8>()
+                    .add(tail_offset),
+                CANVAS_TAIL_BYTES - tail_offset,
+            )
         }
     }
 }
@@ -140,11 +148,6 @@ pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
             write_canvas(offset + 1, uv[1]);
         }
     }
-}
-
-#[inline(always)]
-fn demo_pixel(index: usize) -> u8 {
-    read_canvas(index)
 }
 
 #[cfg(feature = "camera-bw")]
@@ -306,28 +309,41 @@ impl Nv12DemoImage {
         if self.cached_y_source_row == source_row {
             return;
         }
-        let base = source_row as usize * CANVAS_WIDTH;
-        let mut x = 0;
-        while x < CANVAS_WIDTH {
+        #[cfg(feature = "camera-bw")]
+        let source_bytes_per_pixel = 1;
+        #[cfg(not(feature = "camera-bw"))]
+        let source_bytes_per_pixel = 2;
+
+        let row_offset = source_row as usize * CANVAS_WIDTH * source_bytes_per_pixel;
+        let mut pixel_x = 0;
+        while pixel_x < CANVAS_WIDTH {
+            let byte_offset = row_offset + pixel_x * source_bytes_per_pixel;
+            let (source, available_bytes) = canvas_read_chunk(byte_offset);
+            let chunk_pixels = (CANVAS_WIDTH - pixel_x)
+                .min(available_bytes / source_bytes_per_pixel);
+            let destination = unsafe { y_row_ptr().cast::<u16>().add(pixel_x) };
+            let mut i = 0;
             #[cfg(feature = "camera-bw")]
             {
-                let y = demo_pixel(base + x);
-                unsafe {
-                    y_row_ptr().add(x * 2).write(y);
-                    y_row_ptr().add(x * 2 + 1).write(y);
+                while i < chunk_pixels {
+                    let y = unsafe { source.add(i).read() };
+                    unsafe { destination.add(i).write(u16::from_ne_bytes([y, y])) };
+                    i += 1;
                 }
             }
             #[cfg(not(feature = "camera-bw"))]
             {
-                let offset = (base + x) * 2;
-                let hash = demo_pixel(offset) ^ demo_pixel(offset + 1);
-                let y = Y_HASH_TABLE[hash as usize];
-                unsafe {
-                    y_row_ptr().add(x * 2).write(y);
-                    y_row_ptr().add(x * 2 + 1).write(y);
+                // Canvas chunk starts and each color pixel are 16-bit aligned.
+                let source_pairs = source.cast::<u16>();
+                while i < chunk_pixels {
+                    let pair = unsafe { source_pairs.add(i).read() };
+                    let hash = pair as u8 ^ (pair >> 8) as u8;
+                    let y = Y_HASH_TABLE[hash as usize];
+                    unsafe { destination.add(i).write(u16::from_ne_bytes([y, y])) };
+                    i += 1;
                 }
             }
-            x += 1;
+            pixel_x += chunk_pixels;
         }
         self.cached_y_source_row = source_row;
     }
