@@ -4,6 +4,8 @@
 //! ordinary SRAM and CCM, with two 768-byte row caches in CCM. Color stores
 //! packed Cb/Cr pairs at 256x256; BW stores Y at 512x256.
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 #[cfg(not(feature = "camera-bw"))]
 use crate::palette::{UV_PALETTE, Y_HASH_TABLE};
 
@@ -25,6 +27,25 @@ pub const CANVAS_HEIGHT: usize = HEIGHT / 2;
 pub const CANVAS_BYTES: usize = WIDTH * CANVAS_HEIGHT;
 pub const CANVAS_TAIL_BYTES: usize = 19_200;
 pub const CANVAS_MAIN_BYTES: usize = CANVAS_BYTES - CANVAS_TAIL_BYTES;
+
+#[no_mangle]
+pub static UVC_DEBUG_RENDER_Y_CYCLES: AtomicU32 = AtomicU32::new(0);
+#[no_mangle]
+pub static UVC_DEBUG_RENDER_UV_CYCLES: AtomicU32 = AtomicU32::new(0);
+#[no_mangle]
+pub static UVC_DEBUG_RENDER_COPY_CYCLES: AtomicU32 = AtomicU32::new(0);
+#[no_mangle]
+pub static UVC_DEBUG_RENDER_OVERLAY_CYCLES: AtomicU32 = AtomicU32::new(0);
+
+#[inline(always)]
+fn cycle_counter() -> u32 {
+    unsafe { (0xE000_1004 as *const u32).read_volatile() }
+}
+
+#[inline(always)]
+fn record_render_cycles(start: u32, counter: &AtomicU32) {
+    counter.fetch_add(cycle_counter().wrapping_sub(start), Ordering::Relaxed);
+}
 
 #[repr(C, align(4))]
 struct AlignedCanvas<const N: usize>([u8; N]);
@@ -237,6 +258,7 @@ impl Nv12DemoImage {
             self.offset,
             &mut out[UVC_HEADER_BYTES..UVC_HEADER_BYTES + data_len],
         );
+        let stage_start = cycle_counter();
         overlay_cpu_text(
             self.offset,
             &mut out[UVC_HEADER_BYTES..UVC_HEADER_BYTES + data_len],
@@ -244,6 +266,7 @@ impl Nv12DemoImage {
             self.cpu_generate_percent,
             self.cpu_submit_percent,
         );
+        record_render_cycles(stage_start, &UVC_DEBUG_RENDER_OVERLAY_CYCLES);
 
         self.offset += data_len;
         if complete {
@@ -276,14 +299,18 @@ impl Nv12DemoImage {
                 let output_row = pos / WIDTH;
                 let x = pos % WIDTH;
                 let source_row = (output_row / 2) as u16;
+                let stage_start = cycle_counter();
                 self.prepare_y_row(source_row);
+                record_render_cycles(stage_start, &UVC_DEBUG_RENDER_Y_CYCLES);
                 let run = (WIDTH - x)
                     .min(Y_PLANE_BYTES - pos)
                     .min(out.len() - written);
                 unsafe {
+                    let stage_start = cycle_counter();
                     crate::copy_words::copy_words(
                         y_row_ptr().add(x), out.as_mut_ptr().add(written), run,
                     );
+                    record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
                 }
                 pos += run;
                 written += run;
@@ -291,12 +318,16 @@ impl Nv12DemoImage {
                 let chroma_pos = pos - Y_PLANE_BYTES;
                 let source_row = (chroma_pos / WIDTH) as u16;
                 let x = chroma_pos % WIDTH;
+                let stage_start = cycle_counter();
                 self.prepare_uv_row(source_row);
+                record_render_cycles(stage_start, &UVC_DEBUG_RENDER_UV_CYCLES);
                 let run = (WIDTH - x).min(FRAME_BYTES - pos).min(out.len() - written);
                 unsafe {
+                    let stage_start = cycle_counter();
                     crate::copy_words::copy_words(
                         uv_row_ptr().add(x), out.as_mut_ptr().add(written), run,
                     );
+                    record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
                 }
                 pos += run;
                 written += run;
@@ -321,13 +352,14 @@ impl Nv12DemoImage {
             let (source, available_bytes) = canvas_read_chunk(byte_offset);
             let chunk_pixels = (CANVAS_WIDTH - pixel_x)
                 .min(available_bytes / source_bytes_per_pixel);
-            let destination = unsafe { y_row_ptr().cast::<u16>().add(pixel_x) };
             let mut i = 0;
             #[cfg(feature = "camera-bw")]
             {
+                // BW canvas already has the output width; only rows are doubled.
+                let destination = unsafe { y_row_ptr().add(pixel_x) };
                 while i < chunk_pixels {
                     let y = unsafe { source.add(i).read() };
-                    unsafe { destination.add(i).write(u16::from_ne_bytes([y, y])) };
+                    unsafe { destination.add(i).write(y) };
                     i += 1;
                 }
             }
@@ -335,6 +367,7 @@ impl Nv12DemoImage {
             {
                 // Canvas chunk starts and each color pixel are 16-bit aligned.
                 let source_pairs = source.cast::<u16>();
+                let destination = unsafe { y_row_ptr().cast::<u16>().add(pixel_x) };
                 while i < chunk_pixels {
                     let pair = unsafe { source_pairs.add(i).read() };
                     let hash = pair as u8 ^ (pair >> 8) as u8;
