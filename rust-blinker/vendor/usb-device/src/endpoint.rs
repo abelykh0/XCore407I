@@ -230,6 +230,12 @@ impl<B: UsbBus> Endpoint<'_, B, In> {
             transactions_per_microframe,
         )
     }
+
+    /// Reinitialize this endpoint after repeated incomplete isochronous
+    /// transfers. Buses without endpoint recovery support do nothing.
+    pub fn recover_iso_endpoint(&self) {
+        self.bus().recover_iso_endpoint(self.address);
+    }
 }
 
 impl<B: UsbBus> Endpoint<'_, B, Out> {

@@ -1,9 +1,11 @@
 //! C-style compact color canvas and NV12 UVC packetizer.
 //!
-//! A 256x256 palette-index canvas lives in SRAM. Each source color expands to
-//! a 2x2 NV12 output block, so there is no 384 KiB frame buffer in RAM.
+//! This mirrors the original C canvas: 128 KiB of source data split between
+//! ordinary SRAM and CCM, with two 768-byte row caches in CCM. Color stores
+//! packed Cb/Cr pairs at 256x256; BW stores Y at 512x256.
 
-use crate::palette::{UV_PALETTE, Y_PALETTE};
+#[cfg(not(feature = "camera-bw"))]
+use crate::palette::{UV_PALETTE, Y_HASH_TABLE};
 
 pub const WIDTH: usize = 512;
 pub const HEIGHT: usize = 512;
@@ -15,40 +17,109 @@ pub const UVC_HEADER_BYTES: usize = 4;
 pub const PAYLOAD_BYTES: usize = WIDTH * 3 / 2;
 pub const TRANSFER_BYTES: usize = UVC_HEADER_BYTES + PAYLOAD_BYTES;
 
+#[cfg(feature = "camera-bw")]
+pub const CANVAS_WIDTH: usize = WIDTH;
+#[cfg(not(feature = "camera-bw"))]
 pub const CANVAS_WIDTH: usize = WIDTH / 2;
 pub const CANVAS_HEIGHT: usize = HEIGHT / 2;
-pub const CANVAS_BYTES: usize = CANVAS_WIDTH * CANVAS_HEIGHT;
+pub const CANVAS_BYTES: usize = WIDTH * CANVAS_HEIGHT;
+pub const CANVAS_TAIL_BYTES: usize = 19_200;
+pub const CANVAS_MAIN_BYTES: usize = CANVAS_BYTES - CANVAS_TAIL_BYTES;
 
-// One 8-bit palette index per 2x2 output block. This is 64 KiB rather than a
-// 384 KiB NV12 frame; the USB packet is assembled from two 512-byte row caches.
-static mut DEMO_CANVAS: [u8; CANVAS_BYTES] = [0; CANVAS_BYTES];
+#[repr(C, align(4))]
+struct AlignedCanvas<const N: usize>([u8; N]);
 
-/// Initialize a colorful image in the compact canvas. Call once before USB
-/// streaming; later calls to `set_demo_pixel` can update individual source pixels.
+static mut DEMO_CANVAS: AlignedCanvas<CANVAS_MAIN_BYTES> = AlignedCanvas([0; CANVAS_MAIN_BYTES]);
+#[link_section = ".ccmram.canvas"]
+static mut DEMO_CANVAS_TAIL: AlignedCanvas<CANVAS_TAIL_BYTES> =
+    AlignedCanvas([0; CANVAS_TAIL_BYTES]);
+
+#[repr(C, align(4))]
+struct RowBuffers([u8; PAYLOAD_BYTES * 2]);
+#[link_section = ".ccmram.rows"]
+static mut ROW_BUFFERS: RowBuffers = RowBuffers([0; PAYLOAD_BYTES * 2]);
+
+fn write_canvas(index: usize, value: u8) {
+    unsafe {
+        if index < CANVAS_MAIN_BYTES {
+            core::ptr::addr_of_mut!(DEMO_CANVAS.0).cast::<u8>().add(index).write(value);
+        } else {
+            core::ptr::addr_of_mut!(DEMO_CANVAS_TAIL.0).cast::<u8>()
+                .add(index - CANVAS_MAIN_BYTES).write(value);
+        }
+    }
+}
+
+fn read_canvas(index: usize) -> u8 {
+    unsafe {
+        if index < CANVAS_MAIN_BYTES {
+            core::ptr::addr_of!(DEMO_CANVAS.0).cast::<u8>().add(index).read()
+        } else {
+            core::ptr::addr_of!(DEMO_CANVAS_TAIL.0).cast::<u8>()
+                .add(index - CANVAS_MAIN_BYTES).read()
+        }
+    }
+}
+
+/// Initialize the demo chart in the compact canvas before USB streaming.
 pub fn initialize_demo_canvas() {
-    let canvas = core::ptr::addr_of_mut!(DEMO_CANVAS).cast::<u8>();
     let mut y = 0;
     while y < CANVAS_HEIGHT {
         let mut x = 0;
         while x < CANVAS_WIDTH {
-            // 8x8 color chart, matching the original C palette demo.
+            #[cfg(not(feature = "camera-bw"))]
             let mut color = ((y / 32) * 8 + x / 32) as u8;
+            #[cfg(feature = "camera-bw")]
+            let mut color = if ((x / 32) + (y / 16)) & 1 == 0 { 255 } else { 0 };
 
-            // Camera silhouette and lens make this a recognizable test image,
-            // not just a set of strips.
-            if x >= 88 && x < 168 && y >= 96 && y < 160 {
-                color = 21; // gray camera body
+            #[cfg(not(feature = "camera-bw"))]
+            {
+                // 8x8 color chart, matching the original C palette demo.
+
+                // Camera silhouette and lens make this a recognizable test image,
+                // not just a set of strips.
+                if x >= 88 && x < 168 && y >= 96 && y < 160 {
+                    color = 21; // gray camera body
+                }
+                if x >= 108 && x < 148 && y >= 80 && y < 96 {
+                    color = 21; // viewfinder
+                }
+                let dx = x as i32 - 128;
+                let dy = y as i32 - 128;
+                let radius_sq = dx * dx + dy * dy;
+                if radius_sq <= 22 * 22 && x >= 88 && x < 168 && y >= 96 && y < 160 {
+                    color = if radius_sq > 17 * 17 { 63 } else { 48 };
+                }
             }
-            if x >= 108 && x < 148 && y >= 80 && y < 96 {
-                color = 21; // viewfinder
+            #[cfg(feature = "camera-bw")]
+            {
+                // High-contrast camera target drawn directly into luma bytes.
+                if x >= 72 && x < 184 && y >= 72 && y < 176 {
+                    color = 219;
+                }
+                if x >= 96 && x < 160 && y >= 56 && y < 72 {
+                    color = 219;
+                }
+                let dx = x as i32 - 128;
+                let dy = y as i32 - 124;
+                let r2 = dx * dx + dy * dy;
+                if r2 <= 24 * 24 && x >= 72 && x < 184 && y >= 72 && y < 176 {
+                    color = if r2 > 24 * 24 { 255 } else { 0 };
+                }
             }
-            let dx = x as i32 - 128;
-            let dy = y as i32 - 128;
-            let radius_sq = dx * dx + dy * dy;
-            if radius_sq <= 22 * 22 && x >= 88 && x < 168 && y >= 96 && y < 160 {
-                color = if radius_sq > 17 * 17 { 63 } else { 48 };
+            #[cfg(feature = "camera-bw")]
+            let value = GRAYSCALE[color as usize & 0x3f];
+            #[cfg(not(feature = "camera-bw"))]
+            let value = color;
+            #[cfg(feature = "camera-bw")]
+            write_canvas(y * CANVAS_WIDTH + x, value);
+            #[cfg(not(feature = "camera-bw"))]
+            {
+                let uv = UV_PALETTE[value as usize & 0x3f];
+                let offset = (y * CANVAS_WIDTH + x) * 2;
+                write_canvas(offset, uv[0]);
+                write_canvas(offset + 1, uv[1]);
             }
-            unsafe { canvas.add(y * CANVAS_WIDTH + x).write(color) };
             x += 1;
         }
         y += 1;
@@ -59,16 +130,30 @@ pub fn initialize_demo_canvas() {
 /// in the 512x512 NV12 stream, as in the original C color mode.
 pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
     if x < CANVAS_WIDTH && y < CANVAS_HEIGHT {
-        let canvas = core::ptr::addr_of_mut!(DEMO_CANVAS).cast::<u8>();
-        unsafe { canvas.add(y * CANVAS_WIDTH + x).write(color & 0x3f) };
+        #[cfg(feature = "camera-bw")]
+        write_canvas(y * CANVAS_WIDTH + x, GRAYSCALE[(color & 0x3f) as usize]);
+        #[cfg(not(feature = "camera-bw"))]
+        {
+            let uv = UV_PALETTE[(color & 0x3f) as usize];
+            let offset = (y * CANVAS_WIDTH + x) * 2;
+            write_canvas(offset, uv[0]);
+            write_canvas(offset + 1, uv[1]);
+        }
     }
 }
 
 #[inline(always)]
 fn demo_pixel(index: usize) -> u8 {
-    let canvas = core::ptr::addr_of!(DEMO_CANVAS).cast::<u8>();
-    unsafe { canvas.add(index).read() }
+    read_canvas(index)
 }
+
+#[cfg(feature = "camera-bw")]
+const GRAYSCALE: [u8; 64] = [
+    0,6,12,18,61,67,73,79,122,128,134,140,183,189,195,201,
+    18,24,30,36,79,85,91,97,140,146,152,158,201,207,213,219,
+    36,42,48,54,97,103,109,115,158,164,170,176,219,225,231,237,
+    54,60,66,72,115,121,127,133,176,182,188,194,237,243,249,255,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Packet {
@@ -85,8 +170,6 @@ pub struct Nv12DemoImage {
     cpu_submit_percent: u8,
     cached_y_source_row: u16,
     cached_uv_source_row: u16,
-    y_row: [u8; WIDTH],
-    uv_row: [u8; WIDTH],
 }
 
 impl Nv12DemoImage {
@@ -99,8 +182,6 @@ impl Nv12DemoImage {
             cpu_submit_percent: 0,
             cached_y_source_row: u16::MAX,
             cached_uv_source_row: u16::MAX,
-            y_row: [0; WIDTH],
-            uv_row: [0; WIDTH],
         }
     }
 
@@ -137,8 +218,7 @@ impl Nv12DemoImage {
             return None;
         }
         let remaining = FRAME_BYTES - self.offset;
-        let data_len = remaining
-            .min(transfer_capacity - UVC_HEADER_BYTES);
+        let data_len = remaining.min(transfer_capacity - UVC_HEADER_BYTES);
         if data_len == 0 {
             return None;
         }
@@ -182,9 +262,9 @@ impl Default for Nv12DemoImage {
 }
 
 impl Nv12DemoImage {
-    /// Render one sequential NV12 byte range using one cached row per plane.
-    /// The luma row is doubled horizontally and vertically from the compact
-    /// 256x256 color canvas, like the original C color renderer.
+    /// Render sequential NV12 bytes from the mode-specific compact canvas.
+    /// Color doubles both axes from 256x256 UV pairs; BW doubles the 512x256
+    /// luma canvas vertically and uses neutral chroma.
     fn fill_nv12(&mut self, offset: usize, out: &mut [u8]) {
         let mut pos = offset;
         let mut written = 0;
@@ -197,7 +277,11 @@ impl Nv12DemoImage {
                 let run = (WIDTH - x)
                     .min(Y_PLANE_BYTES - pos)
                     .min(out.len() - written);
-                out[written..written + run].copy_from_slice(&self.y_row[x..x + run]);
+                unsafe {
+                    crate::copy_words::copy_words(
+                        y_row_ptr().add(x), out.as_mut_ptr().add(written), run,
+                    );
+                }
                 pos += run;
                 written += run;
             } else {
@@ -206,7 +290,11 @@ impl Nv12DemoImage {
                 let x = chroma_pos % WIDTH;
                 self.prepare_uv_row(source_row);
                 let run = (WIDTH - x).min(FRAME_BYTES - pos).min(out.len() - written);
-                out[written..written + run].copy_from_slice(&self.uv_row[x..x + run]);
+                unsafe {
+                    crate::copy_words::copy_words(
+                        uv_row_ptr().add(x), out.as_mut_ptr().add(written), run,
+                    );
+                }
                 pos += run;
                 written += run;
             }
@@ -221,9 +309,24 @@ impl Nv12DemoImage {
         let base = source_row as usize * CANVAS_WIDTH;
         let mut x = 0;
         while x < CANVAS_WIDTH {
-            let y = Y_PALETTE[demo_pixel(base + x) as usize];
-            self.y_row[x * 2] = y;
-            self.y_row[x * 2 + 1] = y;
+            #[cfg(feature = "camera-bw")]
+            {
+                let y = demo_pixel(base + x);
+                unsafe {
+                    y_row_ptr().add(x * 2).write(y);
+                    y_row_ptr().add(x * 2 + 1).write(y);
+                }
+            }
+            #[cfg(not(feature = "camera-bw"))]
+            {
+                let offset = (base + x) * 2;
+                let hash = demo_pixel(offset) ^ demo_pixel(offset + 1);
+                let y = Y_HASH_TABLE[hash as usize];
+                unsafe {
+                    y_row_ptr().add(x * 2).write(y);
+                    y_row_ptr().add(x * 2 + 1).write(y);
+                }
+            }
             x += 1;
         }
         self.cached_y_source_row = source_row;
@@ -233,15 +336,51 @@ impl Nv12DemoImage {
         if self.cached_uv_source_row == source_row {
             return;
         }
-        let base = source_row as usize * CANVAS_WIDTH;
-        let mut x = 0;
-        while x < CANVAS_WIDTH {
-            let uv = UV_PALETTE[demo_pixel(base + x) as usize];
-            self.uv_row[x * 2] = uv[0];
-            self.uv_row[x * 2 + 1] = uv[1];
-            x += 1;
+        #[cfg(feature = "camera-bw")]
+        unsafe { uv_row_ptr().write_bytes(128, WIDTH) };
+        #[cfg(not(feature = "camera-bw"))]
+        unsafe {
+            copy_canvas_range(
+                source_row as usize * WIDTH,
+                uv_row_ptr(),
+                WIDTH,
+            );
         }
         self.cached_uv_source_row = source_row;
+    }
+}
+
+#[inline(always)]
+unsafe fn y_row_ptr() -> *mut u8 {
+    core::ptr::addr_of_mut!(ROW_BUFFERS.0).cast::<u8>()
+}
+
+#[inline(always)]
+unsafe fn uv_row_ptr() -> *mut u8 {
+    core::ptr::addr_of_mut!(ROW_BUFFERS.0).cast::<u8>().add(PAYLOAD_BYTES)
+}
+
+/// Copy an aligned region from the C-style main SRAM + CCM canvas split.
+#[cfg(not(feature = "camera-bw"))]
+unsafe fn copy_canvas_range(mut offset: usize, mut destination: *mut u8, mut bytes: usize) {
+    while bytes != 0 {
+        let (source, available) = if offset < CANVAS_MAIN_BYTES {
+            (
+                core::ptr::addr_of!(DEMO_CANVAS.0).cast::<u8>().add(offset),
+                CANVAS_MAIN_BYTES - offset,
+            )
+        } else {
+            let tail_offset = offset - CANVAS_MAIN_BYTES;
+            (
+                core::ptr::addr_of!(DEMO_CANVAS_TAIL.0).cast::<u8>().add(tail_offset),
+                CANVAS_TAIL_BYTES - tail_offset,
+            )
+        };
+        let run = bytes.min(available);
+        crate::copy_words::copy_words(source, destination, run);
+        offset += run;
+        destination = destination.add(run);
+        bytes -= run;
     }
 }
 

@@ -113,6 +113,9 @@ pub trait UsbBus: Sync + Sized {
         Err(UsbError::Unsupported)
     }
 
+    /// Reinitialize an isochronous IN endpoint after repeated missed frames.
+    fn recover_iso_endpoint(&self, _ep_addr: EndpointAddress) {}
+
     /// Reads a single packet of data from the specified endpoint and returns the actual length of
     /// the packet.
     ///
@@ -397,6 +400,10 @@ pub enum PollResult {
         /// An IN packet has finished transmitting. This event should only be reported once for each
         /// completed transfer.
         ep_in_complete: u16,
+
+        /// An isochronous IN transfer missed its scheduled USB frame.
+        /// The class may retry the current payload or recover its endpoint.
+        ep_in_incomplete: u16,
 
         /// A SETUP packet has been received. This event should continue to be reported until the
         /// packet is read. The corresponding bit in `ep_out` may also be set but is ignored.

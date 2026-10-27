@@ -538,7 +538,7 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
             modify_reg!(otg_device, regs.device(), DCFG, XCVRDLY: 1);
 
             // unmask EP interrupts
-            write_reg!(otg_device, regs.device(), DIEPMSK, XFRCM: 1);
+            write_reg!(otg_device, regs.device(), DIEPMSK, XFRCM: 1, EPDM: 1);
 
             // unmask core interrupts
             #[cfg(not(feature = "internal-dma"))]
@@ -551,7 +551,7 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
             write_reg!(otg_global, regs.global(), GINTMSK,
                 USBRST: 1, ENUMDNEM: 1,
                 USBSUSPM: 1, WUIM: 1,
-                IEPINT: 1, OEPINT: 1
+                IEPINT: 1, OEPINT: 1, IISOIXFRM: 1
             );
 
             // clear pending interrupts
@@ -634,6 +634,14 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
         }
     }
 
+    fn recover_iso_endpoint(&self, ep_addr: EndpointAddress) {
+        if ep_addr.is_in() && (ep_addr.index() as usize) < USB::ENDPOINT_COUNT {
+            if let Some(ep) = &self.allocator.endpoints_in[ep_addr.index() as usize] {
+                ep.recover_iso_endpoint_hw();
+            }
+        }
+    }
+
     fn read(&self, ep_addr: EndpointAddress, buf: &mut [u8]) -> Result<usize> {
         if !ep_addr.is_out() || ep_addr.index() >= USB::ENDPOINT_COUNT {
             return Err(UsbError::InvalidEndpoint);
@@ -690,6 +698,18 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                 RXFLVL,
                 OEPINT
             );
+            let incomplete_iso_in = read_reg!(otg_global, regs.global(), GINTSTS, IISOIXFR);
+            let mut ep_in_incomplete = 0u16;
+
+            if incomplete_iso_in != 0 {
+                write_reg!(otg_global, regs.global(), GINTSTS, IISOIXFR: 1);
+                #[cfg(feature = "internal-dma")]
+                for ep in self.allocator.endpoints_in.iter().flatten() {
+                    if ep.abort_iso_incomplete() {
+                        ep_in_incomplete |= 1 << ep.address().index();
+                    }
+                }
+            }
 
             if reset != 0 {
                 write_reg!(otg_global, regs.global(), GINTSTS, USBRST: 1);
@@ -902,10 +922,11 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                     }
                 }
 
-                if (ep_in_complete | ep_out | ep_setup) != 0 {
+                if (ep_in_complete | ep_in_incomplete | ep_out | ep_setup) != 0 {
                     PollResult::Data {
                         ep_out,
                         ep_in_complete,
+                        ep_in_incomplete,
                         ep_setup,
                     }
                 } else {

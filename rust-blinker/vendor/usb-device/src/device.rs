@@ -197,10 +197,11 @@ impl<B: UsbBus> UsbDevice<'_, B> {
             PollResult::Data {
                 ep_out,
                 ep_in_complete,
+                ep_in_incomplete,
                 ep_setup,
             } => {
                 // Combine bit fields for quick tests
-                let mut eps = ep_out | ep_in_complete | ep_setup;
+                let mut eps = ep_out | ep_in_complete | ep_in_incomplete | ep_setup;
 
                 // Pending events for endpoint 0?
                 if (eps & 1) != 0 {
@@ -299,6 +300,16 @@ impl<B: UsbBus> UsbDevice<'_, B> {
                             usb_trace!("Handling EP{}-IN", i);
                             for cls in classes.iter_mut() {
                                 cls.endpoint_in_complete(EndpointAddress::from_parts(
+                                    i,
+                                    UsbDirection::In,
+                                ));
+                            }
+                        }
+
+                        if (ep_in_incomplete & bit) != 0 {
+                            for cls in classes.iter_mut() {
+                                usb_trace!("Handling EP{}-IN-INCOMPLETE", i);
+                                cls.endpoint_in_incomplete(EndpointAddress::from_parts(
                                     i,
                                     UsbDirection::In,
                                 ));

@@ -2,27 +2,25 @@
 //!
 //! This is the class layer shared with the USB device controller: it builds
 //! the UVC configuration descriptors, answers Probe/Commit control requests,
-//! and supplies one C-sized isochronous payload per IN completion.
+//! and supplies high-speed isochronous payload transfers per IN completion.
 //! The USB controller glue must expose interface 0/1 and a high-bandwidth HS
 //! ISO IN endpoint at `ENDPOINT_IN`.
 
-use crate::camera::{Nv12DemoImage, TRANSFER_BYTES};
+use crate::camera::{Nv12DemoImage, HEIGHT, TRANSFER_BYTES, WIDTH};
 
 pub const CONTROL_INTERFACE: u8 = 0;
 pub const STREAMING_INTERFACE: u8 = 1;
 pub const ENDPOINT_IN: u8 = 0x81;
 pub const MAX_PACKET_SIZE: u16 = TRANSFER_BYTES as u16;
-// Start with one 772-byte packet per high-speed microframe, matching the
-// known-good C packet framing while we debug video delivery.
-pub const ISO_PACKETS_PER_MICROFRAME: u8 = 1;
-// Each USB transaction carries a complete UVC payload. Keep the batch buffer
-// sized from the transaction count so the two-transaction experiment is easy
-// to re-enable later.
-pub const ISO_BATCH_BYTES: usize = TRANSFER_BYTES * ISO_PACKETS_PER_MICROFRAME as usize;
-pub const MAX_PAYLOAD_TRANSFER_SIZE: u32 = TRANSFER_BYTES as u32;
-pub const FRAME_RATE_FPS: u32 = 15;
+// Two USB transactions carry one UVC payload transfer per high-speed
+// microframe: the first has the UVC header, the second continues image data.
+pub const ISO_PACKETS_PER_MICROFRAME: u8 = 2;
+pub const ISO_BATCH_BYTES: usize = crate::camera::UVC_HEADER_BYTES
+    + crate::camera::PAYLOAD_BYTES * ISO_PACKETS_PER_MICROFRAME as usize;
+pub const MAX_PAYLOAD_TRANSFER_SIZE: u32 = ISO_BATCH_BYTES as u32;
+pub const FRAME_RATE_FPS: u32 = 25;
 pub const FRAME_INTERVAL_100NS: u32 = 10_000_000 / FRAME_RATE_FPS;
-pub const FRAME_BYTES: u32 = 512 * 512 * 3 / 2;
+pub const FRAME_BYTES: u32 = crate::camera::FRAME_BYTES as u32;
 pub const FRAME_BIT_RATE: u32 = FRAME_BYTES * 8 * FRAME_RATE_FPS;
 pub const UVC_VERSION: u16 = 0x0110;
 pub const PROBE_LENGTH: usize = 34;
@@ -74,6 +72,8 @@ pub struct UvcClass {
     commit: [u8; PROBE_LENGTH],
     camera: Nv12DemoImage,
     packet: UsbDmaBuffer,
+    packet_len: usize,
+    packet_count: u8,
     start_marker_pending: bool,
 }
 
@@ -86,6 +86,8 @@ impl UvcClass {
             commit: make_stream_control(),
             camera: Nv12DemoImage::new(),
             packet: UsbDmaBuffer([0; ISO_BATCH_BYTES]),
+            packet_len: 0,
+            packet_count: 0,
             start_marker_pending: false,
         }
     }
@@ -113,6 +115,8 @@ impl UvcClass {
                 self.state = StreamState::Stopped;
                 self.start_marker_pending = false;
                 self.camera = Nv12DemoImage::new();
+                self.packet_len = 0;
+                self.packet_count = 0;
                 Ok(())
             }
             1 => {
@@ -120,6 +124,8 @@ impl UvcClass {
                 self.state = StreamState::Ready;
                 self.start_marker_pending = true;
                 self.camera = Nv12DemoImage::new();
+                self.packet_len = 0;
+                self.packet_count = 0;
                 Ok(())
             }
             _ => Err(ControlError::Unsupported),
@@ -148,19 +154,29 @@ impl UvcClass {
         self.build_packet_batch()
     }
 
-    fn build_packet_batch(&mut self) -> Option<(&[u8], u8)> {
-        let mut len = 0;
-        let mut count = 0;
-        while count < ISO_PACKETS_PER_MICROFRAME {
-            let end = len + TRANSFER_BYTES;
-            let packet = self.camera.next_packet(&mut self.packet.0[len..end])?;
-            len += packet.len;
-            count += 1;
-            if packet.frame_complete {
-                break;
-            }
+    /// The last generated payload, retained for retry after an incomplete
+    /// isochronous IN event. It stays valid until another batch is generated.
+    pub fn current_in_batch(&self) -> Option<(&[u8], u8)> {
+        (self.packet_len != 0).then_some((&self.packet.0[..self.packet_len], self.packet_count))
+    }
+
+    /// Start a fresh frame after the endpoint has been recovered.
+    pub fn restart_after_iso_recovery(&mut self) -> Option<(&[u8], u8)> {
+        if self.state != StreamState::Streaming {
+            return None;
         }
-        Some((&self.packet.0[..len], count))
+        self.camera = Nv12DemoImage::new();
+        self.build_packet_batch()
+    }
+
+    fn build_packet_batch(&mut self) -> Option<(&[u8], u8)> {
+        let payload = self
+            .camera
+            .next_payload_transfer(&mut self.packet.0, ISO_BATCH_BYTES)?;
+        let packet_count = payload.len.div_ceil(TRANSFER_BYTES) as u8;
+        self.packet_len = payload.len;
+        self.packet_count = packet_count;
+        Some((&self.packet.0[..self.packet_len], self.packet_count))
     }
 
     /// Process UVC class-specific control requests. `out_data` is the EP0 OUT
@@ -298,8 +314,8 @@ pub fn configuration_descriptor(out: &mut [u8]) -> Option<usize> {
     ])?;
     let mut frame = [0u8; 30];
     frame[0..5].copy_from_slice(&[30, 0x24, 5, 1, 0]);
-    frame[5..7].copy_from_slice(&512u16.to_le_bytes());
-    frame[7..9].copy_from_slice(&512u16.to_le_bytes());
+    frame[5..7].copy_from_slice(&(WIDTH as u16).to_le_bytes());
+    frame[7..9].copy_from_slice(&(HEIGHT as u16).to_le_bytes());
     let bitrate = FRAME_BIT_RATE;
     frame[9..13].copy_from_slice(&bitrate.to_le_bytes());
     frame[13..17].copy_from_slice(&bitrate.to_le_bytes());

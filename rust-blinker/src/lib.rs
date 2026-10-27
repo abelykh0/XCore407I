@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod camera;
+mod copy_words;
 mod font8x8;
 mod palette;
 pub mod usb_uvc;

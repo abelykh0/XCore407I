@@ -2,6 +2,7 @@
 #![no_main]
 
 use core::sync::atomic::{AtomicU32, Ordering};
+use core::mem::MaybeUninit;
 use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m_rt::{entry, exception};
 use panic_halt as _;
@@ -36,6 +37,7 @@ static TICKS: AtomicU32 = AtomicU32::new(0);
 #[entry]
 fn main() -> ! {
     system_clock_168mhz();
+    enable_fpu();
     enable_cycle_counter();
     initialize_demo_canvas();
     configure_blinker_pins();
@@ -53,23 +55,38 @@ fn main() -> ! {
 
     unsafe { configure_ulpi_pins() };
     let bus = usb_bus();
-    let mut camera = UvcUsbClass::new(&bus);
-    let mut usb: UsbDevice<'_, UsbBus<F407UsbHs>> = UsbDeviceBuilder::new(
-        &bus,
+    // Keep the camera state and UsbDevice out of the entry-point stack frame.
+    // The packet buffer inside UvcClass is DMA-visible SRAM; the device state
+    // itself can live in CCM.  A large stack frame overlaps the compact canvas
+    // and corrupts USB enumeration on this 128 KiB SRAM part.
+    static mut CAMERA: MaybeUninit<UvcUsbClass<'static, UsbBus<F407UsbHs>>> =
+        MaybeUninit::uninit();
+    #[link_section = ".ccmram.usb_device"]
+    static mut USB_DEVICE: MaybeUninit<UsbDevice<'static, UsbBus<F407UsbHs>>> =
+        MaybeUninit::uninit();
+    let camera: &'static mut UvcUsbClass<'static, UsbBus<F407UsbHs>> = unsafe {
+        (*core::ptr::addr_of_mut!(CAMERA)).write(UvcUsbClass::new(bus));
+        (*core::ptr::addr_of_mut!(CAMERA)).assume_init_mut()
+    };
+    let usb: &'static mut UsbDevice<'static, UsbBus<F407UsbHs>> = unsafe {
+        (*core::ptr::addr_of_mut!(USB_DEVICE)).write(UsbDeviceBuilder::new(
+        bus,
         // Development VID/PID; USB class descriptors identify this as UVC.
         UsbVidPid(0x1209, 0x4071),
     )
     .composite_with_iads()
     .max_packet_size_0(64)
     .unwrap()
-    .build();
+    .build());
+        (*core::ptr::addr_of_mut!(USB_DEVICE)).assume_init_mut()
+    };
 
     let mut last_blink = 0;
     let mut last_cpu_sample = 0;
     loop {
         // Poll continuously: control transfers and each HS isochronous IN
         // completion must be serviced promptly while the camera is streaming.
-        let _ = usb.poll(&mut [&mut camera]);
+        let _ = usb.poll(&mut [camera]);
 
         let now = TICKS.load(Ordering::Relaxed);
         if now.wrapping_sub(last_blink) >= BLINK_INTERVAL_MS {
@@ -90,6 +107,17 @@ fn main() -> ! {
             let submit_percent = (((submit as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
             camera.set_cpu_metrics(100 - busy_percent, generate_percent, submit_percent);
         }
+    }
+}
+
+#[inline]
+fn enable_fpu() {
+    // CP10/CP11 full access, equivalent to the C startup's FPU enable.
+    const CPACR: *mut u32 = 0xE000_ED88 as *mut u32;
+    unsafe {
+        CPACR.write_volatile(CPACR.read_volatile() | (0xFu32 << 20));
+        cortex_m::asm::dsb();
+        cortex_m::asm::isb();
     }
 }
 

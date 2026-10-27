@@ -1,6 +1,7 @@
 use crate::endpoint_memory::{EndpointBuffer, EndpointBufferState};
 use crate::ral::{
-    endpoint0_out, endpoint_in, endpoint_out, modify_reg, otg_device, read_reg, write_reg,
+    endpoint0_out, endpoint_in, endpoint_out, modify_reg, otg_device, otg_global, read_reg,
+    write_reg,
 };
 #[cfg(not(feature = "internal-dma"))]
 use crate::target::fifo_write;
@@ -128,6 +129,67 @@ impl EndpointIn {
         write_reg!(endpoint_in, regs, DIEPINT, 0xff);
 
         // TODO: deconfiguring TX FIFO
+    }
+
+    /// Abort a missed isochronous IN transaction and flush its TX FIFO.
+    /// Returns true when an enabled isochronous endpoint was successfully
+    /// stopped, matching the STM32 HAL's incomplete-ISO interrupt handling.
+    #[cfg(feature = "internal-dma")]
+    pub fn abort_iso_incomplete(&self) -> bool {
+        if !matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. })
+            || self.index() == 0
+        {
+            return false;
+        }
+
+        let ep = self.usb.endpoint_in(self.index() as usize);
+        if read_reg!(endpoint_in, ep, DIEPCTL, EPENA) == 0 {
+            return false;
+        }
+        modify_reg!(endpoint_in, ep, DIEPCTL, SNAK: 1);
+        modify_reg!(endpoint_in, ep, DIEPCTL, EPDIS: 1);
+
+        let mut timeout = 10_000;
+        while read_reg!(endpoint_in, ep, DIEPCTL, EPENA) != 0 && timeout != 0 {
+            timeout -= 1;
+        }
+        if read_reg!(endpoint_in, ep, DIEPCTL, EPENA) != 0 {
+            return false;
+        }
+
+        write_reg!(endpoint_in, ep, DIEPINT, EPDISD: 1);
+        let global = self.usb.global();
+        timeout = 10_000;
+        while read_reg!(otg_global, global, GRSTCTL, AHBIDL) == 0 && timeout != 0 {
+            timeout -= 1;
+        }
+        if read_reg!(otg_global, global, GRSTCTL, AHBIDL) == 0 {
+            return false;
+        }
+
+        write_reg!(
+            otg_global,
+            global,
+            GRSTCTL,
+            TXFNUM: self.index() as u32,
+            TXFFLSH: 1
+        );
+        timeout = 10_000;
+        while read_reg!(otg_global, global, GRSTCTL, TXFFLSH) != 0 && timeout != 0 {
+            timeout -= 1;
+        }
+        read_reg!(otg_global, global, GRSTCTL, TXFFLSH) == 0
+    }
+
+    /// Reinitialize an isochronous endpoint after repeated incomplete frames.
+    #[cfg(feature = "internal-dma")]
+    pub(crate) fn recover_iso_endpoint_hw(&self) {
+        if matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. }) {
+            critical_section::with(|cs| {
+                self.deconfigure(cs);
+                self.configure(cs);
+            });
+        }
     }
 
     pub fn write(&self, buf: &[u8]) -> Result<()> {
