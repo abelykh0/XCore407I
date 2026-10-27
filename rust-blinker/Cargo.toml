@@ -8,13 +8,9 @@ cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
 cortex-m-rt = "0.7"
 panic-halt = "0.2"
 usb-device = { version = "0.3.2", features = ["control-buffer-256"] }
-synopsys-usb-otg = { path = "vendor/synopsys-usb-otg", version = "0.5.0", features = ["hs"] }
+synopsys-usb-otg = { path = "vendor/synopsys-usb-otg", version = "0.5.0", features = ["hs", "internal-dma"] }
 
 [features]
-default = ["usb-internal-dma"]
-# STM32 OTG-HS internal DMA backend. This is the only supported USB transfer
-# path in this firmware build.
-usb-internal-dma = ["synopsys-usb-otg/internal-dma"]
 # Keep a one-packet-per-microframe UVC mode available for host compatibility.
 uvc-single-transaction = []
 # Interpret the existing compact source canvas as monochrome luma. The UVC

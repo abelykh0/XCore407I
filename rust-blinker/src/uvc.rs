@@ -261,7 +261,7 @@ impl UvcClass {
 
 impl Default for UvcClass {
     fn default() -> Self {
-        Self::new()
+        Self::try_new().expect("UVC camera instance already in use")
     }
 }
 
