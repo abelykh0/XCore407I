@@ -53,7 +53,7 @@ fn main() -> ! {
     core.SYST.enable_counter();
 
     unsafe { configure_ulpi_pins() };
-    let bus = usb_bus();
+    let bus = usb_bus().expect("USB bus already initialized");
     // Keep the camera state and UsbDevice out of the entry-point stack frame.
     // The packet buffer inside UvcClass is DMA-visible SRAM; the device state
     // itself can live in CCM.  A large stack frame overlaps the compact canvas

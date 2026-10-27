@@ -6,7 +6,7 @@ use crate::uvc::{
     ISO_PACKETS_PER_MICROFRAME, MAX_PACKET_SIZE,
 };
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use synopsys_usb_otg::{PhyType, UsbPeripheral};
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus, UsbBusAllocator};
 use usb_device::class::{ControlIn, ControlOut, UsbClass};
@@ -471,8 +471,20 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
 type BoardUsbBus = synopsys_usb_otg::UsbBus<F407UsbHs>;
 type BoardUsbAllocator = UsbBusAllocator<BoardUsbBus>;
 
+static USB_BUS_TAKEN: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UsbBusAlreadyInitialized;
+
 #[inline(never)]
-pub fn usb_bus() -> &'static BoardUsbAllocator {
+pub fn usb_bus() -> core::result::Result<&'static BoardUsbAllocator, UsbBusAlreadyInitialized> {
+    // EP_MEMORY and BUS are static mutable storage. Claim them permanently so
+    // a second safe call cannot create another mutable reference or overwrite
+    // the allocator while the first returned reference remains live.
+    USB_BUS_TAKEN
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .map_err(|_| UsbBusAlreadyInitialized)?;
+
     // DMA buffers for EP0 OUT (256 bytes) and EP0 IN (64 bytes). The UVC
     // isochronous endpoint submits directly from the camera buffer.
     const EP0_OUT_WORDS: usize = 256 / 4;
@@ -482,8 +494,9 @@ pub fn usb_bus() -> &'static BoardUsbAllocator {
     static mut BUS: MaybeUninit<BoardUsbAllocator> = MaybeUninit::uninit();
     let memory = unsafe { &mut *core::ptr::addr_of_mut!(EP_MEMORY) };
     let bus = synopsys_usb_otg::UsbBus::new(F407UsbHs, memory);
-    unsafe {
+    let allocator = unsafe {
         (*core::ptr::addr_of_mut!(BUS)).write(bus);
         (*core::ptr::addr_of!(BUS)).assume_init_ref()
-    }
+    };
+    Ok(allocator)
 }
