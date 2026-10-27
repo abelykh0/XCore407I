@@ -149,20 +149,27 @@ impl<USB: UsbPeripheral> EndpointMemoryAllocator<USB> {
 
     pub fn allocate_rx_buffer(&mut self, size: usize) -> Result<EndpointBuffer> {
         let size_words = (size + 3) / 4;
+        let buffer = self.allocate_words(size_words)?;
+        self.max_size_words = core::cmp::max(self.max_size_words, size_words);
+        Ok(EndpointBuffer::new(buffer))
+    }
 
+    /// Allocate DMA-visible IN staging memory without counting it toward the
+    /// controller's RX FIFO sizing calculation.
+    pub fn allocate_dma_tx_buffer(&mut self, size: usize) -> Result<&'static mut [u32]> {
+        self.allocate_words((size + 3) / 4)
+    }
+
+    fn allocate_words(&mut self, size_words: usize) -> Result<&'static mut [u32]> {
         let offset = self.next_free_offset;
         if offset + size_words > self.memory.len() {
             return Err(UsbError::EndpointMemoryOverflow);
         }
-
         self.next_free_offset += size_words;
-        self.max_size_words = core::cmp::max(self.max_size_words, size_words);
-
-        let buffer = unsafe {
+        Ok(unsafe {
             let ptr = self.memory.as_mut_ptr().add(offset);
             slice::from_raw_parts_mut(ptr, size_words)
-        };
-        Ok(EndpointBuffer::new(buffer))
+        })
     }
 
     pub fn allocate_tx_buffer(&mut self, ep_number: u8, size: usize) -> Result<()> {

@@ -336,6 +336,26 @@ impl<USB: UsbPeripheral> EndpointAllocator<USB> {
         // C endpoint FIFO. High-bandwidth multi-transaction mode is disabled.
         self.memory_allocator
             .allocate_tx_buffer(descr.address.index() as u8, tx_fifo_size)?;
+        #[cfg(feature = "internal-dma")]
+        let ep = {
+            // EP0 sends one packet at a time. High-speed isochronous IN may
+            // stage two transactions in one microframe; reserve only enough
+            // storage for this allocated endpoint, not all nine endpoint
+            // slots in the bus object.
+            let packet_count = if descr.address.index() != 0
+                && matches!(descr.ep_type, EndpointType::Isochronous { .. })
+            {
+                2
+            } else {
+                1
+            };
+            let staging_bytes = descr.max_packet_size as usize * packet_count;
+            let dma_buffer = self
+                .memory_allocator
+                .allocate_dma_tx_buffer(staging_bytes)?;
+            EndpointIn::new::<USB>(descr, dma_buffer)
+        };
+        #[cfg(not(feature = "internal-dma"))]
         let ep = EndpointIn::new::<USB>(descr);
 
         Ok(ep)

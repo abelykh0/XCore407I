@@ -75,14 +75,17 @@ pub struct EndpointIn {
 
 #[cfg(feature = "internal-dma")]
 #[repr(align(4))]
-struct DmaTxBuffer([u32; 512]);
+struct DmaTxBuffer(&'static mut [u32]);
 
 impl EndpointIn {
-    pub fn new<USB: UsbPeripheral>(descriptor: EndpointDescriptor) -> EndpointIn {
+    pub fn new<USB: UsbPeripheral>(
+        descriptor: EndpointDescriptor,
+        #[cfg(feature = "internal-dma")] dma_buffer: &'static mut [u32],
+    ) -> EndpointIn {
         EndpointIn {
             common: Endpoint::new::<USB>(descriptor),
             #[cfg(feature = "internal-dma")]
-            dma_buffer: Mutex::new(RefCell::new(DmaTxBuffer([0; 512]))),
+            dma_buffer: Mutex::new(RefCell::new(DmaTxBuffer(dma_buffer))),
         }
     }
 
@@ -284,14 +287,14 @@ impl EndpointIn {
 
         #[cfg(feature = "internal-dma")]
         {
-            if buf.len() > 2048 {
-                return Err(UsbError::BufferOverflow);
-            }
             critical_section::with(|cs| {
                 let mut dma = self.dma_buffer.borrow_ref_mut(cs);
                 let dma_address = if let Some(address) = direct_dma_address {
                     address
                 } else {
+                    if buf.len() > dma.0.len() * core::mem::size_of::<u32>() {
+                        return Err(UsbError::BufferOverflow);
+                    }
                     let bytes = unsafe {
                         core::slice::from_raw_parts_mut(
                             dma.0.as_mut_ptr().cast::<u8>(),
