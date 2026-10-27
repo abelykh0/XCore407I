@@ -1,22 +1,18 @@
+
 {
   "version": "2.0.0",
   "tasks": [
     {
       "label": "cargo build (debug)",
-      "type": "process",
+      "type": "shell",
       "command": "cargo",
-      "args": ["build"],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": ["$rustc"],
-      "group": "build"
-    },
-    {
-      "label": "cargo build (release, USB internal DMA)",
-      "type": "process",
-      "command": "cargo",
-      "args": ["build", "--release", "--features", "usb-internal-dma"],
+      "args": [
+        "build",
+        "--target",
+        "thumbv7em-none-eabihf",
+        "--bin",
+        "xcore407i-blinker"
+      ],
       "options": {
         "cwd": "${workspaceFolder}"
       },
