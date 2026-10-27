@@ -6,17 +6,19 @@
 //! The USB controller glue must expose interface 0/1 and a high-bandwidth HS
 //! ISO IN endpoint at `ENDPOINT_IN`.
 
-use crate::camera::{Nv12DemoImage, HEIGHT, TRANSFER_BYTES, WIDTH};
+use crate::camera::{Nv12DemoImage, HEIGHT, WIDTH};
 
 pub const CONTROL_INTERFACE: u8 = 0;
 pub const STREAMING_INTERFACE: u8 = 1;
 pub const ENDPOINT_IN: u8 = 0x81;
-pub const MAX_PACKET_SIZE: u16 = TRANSFER_BYTES as u16;
+pub const MAX_PACKET_SIZE: u16 = 1024;
 // Two USB transactions carry one UVC payload transfer per high-speed
 // microframe: the first has the UVC header, the second continues image data.
 pub const ISO_PACKETS_PER_MICROFRAME: u8 = 2;
-pub const ISO_BATCH_BYTES: usize = crate::camera::UVC_HEADER_BYTES
-    + crate::camera::PAYLOAD_BYTES * ISO_PACKETS_PER_MICROFRAME as usize;
+// USB batch capacity is transport-sized; the camera renderer fills it across
+// as many source-row segments as needed. One transfer header occupies four bytes.
+pub const ISO_BATCH_BYTES: usize =
+    MAX_PACKET_SIZE as usize * ISO_PACKETS_PER_MICROFRAME as usize;
 pub const MAX_PAYLOAD_TRANSFER_SIZE: u32 = ISO_BATCH_BYTES as u32;
 pub const FRAME_RATE_FPS: u32 = 25;
 pub const FRAME_INTERVAL_100NS: u32 = 10_000_000 / FRAME_RATE_FPS;
@@ -173,7 +175,7 @@ impl UvcClass {
         let payload = self
             .camera
             .next_payload_transfer(&mut self.packet.0, ISO_BATCH_BYTES)?;
-        let packet_count = payload.len.div_ceil(TRANSFER_BYTES) as u8;
+        let packet_count = payload.len.div_ceil(MAX_PACKET_SIZE as usize) as u8;
         self.packet_len = payload.len;
         self.packet_count = packet_count;
         Some((&self.packet.0[..self.packet_len], self.packet_count))

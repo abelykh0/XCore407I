@@ -270,7 +270,10 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
         // endpoint_in_complete queues the next batch.
         unsafe {
             endpoint
-                .write_iso_batch_dma(packet, packet_count, ISO_PACKETS_PER_MICROFRAME)
+                // The descriptor advertises the endpoint's two-transaction
+                // maximum. Program DIEPTSIZ MCNT for this transfer's actual
+                // packet count, which can be one on a short final frame batch.
+                .write_iso_batch_dma(packet, packet_count, packet_count)
                 .is_ok()
         }
     }

@@ -316,12 +316,11 @@ impl<USB: UsbPeripheral> EndpointAllocator<USB> {
             // Match the original C configuration's 32-word EP0 TX FIFO.
             core::cmp::max(descr.max_packet_size as usize, 128)
         } else {
-            // Reserve enough for three packets at the endpoint MPS plus 64
-            // words of refill margin. This leaves room to test 3 transactions
-            // without another FIFO repartition.
+            // Reserve enough for two high-bandwidth isochronous transactions
+            // at the endpoint MPS plus 64 words of refill margin.
             descr.max_packet_size as usize
                 * if matches!(descr.ep_type, EndpointType::Isochronous { .. }) {
-                    3
+                    2
                 } else {
                     1
                 }
@@ -332,8 +331,7 @@ impl<USB: UsbPeripheral> EndpointAllocator<USB> {
                 }
         };
         #[cfg(feature = "hs")]
-        // Reserve one 1024-byte UVC packet (256 words), matching the original
-        // C endpoint FIFO. High-bandwidth multi-transaction mode is disabled.
+        // Reserve the high-bandwidth packet budget plus refill margin above.
         self.memory_allocator
             .allocate_tx_buffer(descr.address.index() as u8, tx_fifo_size)?;
         #[cfg(feature = "internal-dma")]
