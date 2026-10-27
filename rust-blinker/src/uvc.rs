@@ -11,10 +11,10 @@ use crate::camera::{Nv12DemoImage, HEIGHT, WIDTH};
 pub const CONTROL_INTERFACE: u8 = 0;
 pub const STREAMING_INTERFACE: u8 = 1;
 pub const ENDPOINT_IN: u8 = 0x81;
-pub const MAX_PACKET_SIZE: u16 = 1024;
-// Two USB transactions carry one UVC payload transfer per high-speed
-// microframe: the first has the UVC header, the second continues image data.
-pub const ISO_PACKETS_PER_MICROFRAME: u8 = 2;
+pub const MAX_PACKET_SIZE: u16 = 768;
+// Three USB transactions carry one UVC payload transfer per high-speed
+// microframe: the first has the UVC header and the others continue image data.
+pub const ISO_PACKETS_PER_MICROFRAME: u8 = 3;
 // USB batch capacity is transport-sized; the camera renderer fills it across
 // as many source-row segments as needed. One transfer header occupies four bytes.
 pub const ISO_BATCH_BYTES: usize =

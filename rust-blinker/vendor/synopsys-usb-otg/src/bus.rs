@@ -316,11 +316,11 @@ impl<USB: UsbPeripheral> EndpointAllocator<USB> {
             // Match the original C configuration's 32-word EP0 TX FIFO.
             core::cmp::max(descr.max_packet_size as usize, 128)
         } else {
-            // Reserve enough for two high-bandwidth isochronous transactions
+            // Reserve enough for three high-bandwidth isochronous transactions
             // at the endpoint MPS plus 64 words of refill margin.
             descr.max_packet_size as usize
                 * if matches!(descr.ep_type, EndpointType::Isochronous { .. }) {
-                    2
+                    3
                 } else {
                     1
                 }
