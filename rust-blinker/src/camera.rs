@@ -4,7 +4,7 @@
 //! ordinary SRAM and CCM, with two 768-byte row caches in CCM. Color stores
 //! packed Cb/Cr pairs at 256x256; BW stores Y at 512x256.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 #[cfg(not(feature = "camera-bw"))]
 use crate::palette::{UV_PALETTE, Y_HASH_TABLE};
@@ -74,6 +74,7 @@ static mut DEMO_CANVAS_TAIL: AlignedCanvas<CANVAS_TAIL_BYTES> =
 struct RowBuffers([u8; WIDTH * 2]);
 #[link_section = ".ccmram.rows"]
 static mut ROW_BUFFERS: RowBuffers = RowBuffers([0; WIDTH * 2]);
+static CAMERA_IN_USE: AtomicBool = AtomicBool::new(false);
 
 fn write_canvas(index: usize, value: u8) {
     unsafe {
@@ -201,7 +202,7 @@ pub struct Packet {
 }
 
 /// Emits the same compact demo image repeatedly as UVC payloads.
-pub struct Nv12DemoImage {
+pub(crate) struct Nv12DemoImage {
     offset: usize,
     frame_id: bool,
     cpu_available_percent: u8,
@@ -212,8 +213,13 @@ pub struct Nv12DemoImage {
 }
 
 impl Nv12DemoImage {
-    pub const fn new() -> Self {
-        Self {
+    /// Claim the shared row buffers for the single live camera instance.
+    /// Returns `None` while another camera instance owns them.
+    pub(crate) fn try_new() -> Option<Self> {
+        CAMERA_IN_USE
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok()?;
+        Some(Self {
             offset: 0,
             frame_id: false,
             cpu_available_percent: 100,
@@ -221,7 +227,17 @@ impl Nv12DemoImage {
             cpu_submit_percent: 0,
             cached_y_source_row: u16::MAX,
             cached_uv_source_row: u16::MAX,
-        }
+        })
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.offset = 0;
+        self.frame_id = false;
+        self.cpu_available_percent = 100;
+        self.cpu_generate_percent = 0;
+        self.cpu_submit_percent = 0;
+        self.cached_y_source_row = u16::MAX;
+        self.cached_uv_source_row = u16::MAX;
     }
 
     /// Set the estimated CPU percentage available outside measured UVC work.
@@ -296,9 +312,9 @@ impl Nv12DemoImage {
     }
 }
 
-impl Default for Nv12DemoImage {
-    fn default() -> Self {
-        Self::new()
+impl Drop for Nv12DemoImage {
+    fn drop(&mut self) {
+        CAMERA_IN_USE.store(false, Ordering::Release);
     }
 }
 

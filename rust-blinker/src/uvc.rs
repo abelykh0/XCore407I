@@ -80,18 +80,19 @@ pub struct UvcClass {
 }
 
 impl UvcClass {
-    pub const fn new() -> Self {
-        Self {
+    pub fn try_new() -> Option<Self> {
+        let camera = Nv12DemoImage::try_new()?;
+        Some(Self {
             state: StreamState::Stopped,
             alternate_setting: 0,
             probe: make_stream_control(),
             commit: make_stream_control(),
-            camera: Nv12DemoImage::new(),
+            camera,
             packet: UsbDmaBuffer([0; ISO_BATCH_BYTES]),
             packet_len: 0,
             packet_count: 0,
             start_marker_pending: false,
-        }
+        })
     }
 
     pub const fn alternate_setting(&self) -> u8 {
@@ -116,7 +117,7 @@ impl UvcClass {
                 self.alternate_setting = 0;
                 self.state = StreamState::Stopped;
                 self.start_marker_pending = false;
-                self.camera = Nv12DemoImage::new();
+                self.camera.reset();
                 self.packet_len = 0;
                 self.packet_count = 0;
                 Ok(())
@@ -125,7 +126,7 @@ impl UvcClass {
                 self.alternate_setting = 1;
                 self.state = StreamState::Ready;
                 self.start_marker_pending = true;
-                self.camera = Nv12DemoImage::new();
+                self.camera.reset();
                 self.packet_len = 0;
                 self.packet_count = 0;
                 Ok(())
@@ -167,7 +168,7 @@ impl UvcClass {
         if self.state != StreamState::Streaming {
             return None;
         }
-        self.camera = Nv12DemoImage::new();
+        self.camera.reset();
         self.build_packet_batch()
     }
 

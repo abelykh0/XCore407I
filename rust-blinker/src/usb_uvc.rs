@@ -142,6 +142,11 @@ unsafe fn configure_alternate_pin(base: usize, pin: u32, af: u32) {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UvcUsbClassInitError {
+    CameraAlreadyInUse,
+}
+
 pub struct UvcUsbClass<'a, B: UsbBus> {
     function: UvcClass,
     control_interface: InterfaceNumber,
@@ -152,7 +157,12 @@ pub struct UvcUsbClass<'a, B: UsbBus> {
 }
 
 impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
-    pub fn new(allocator: &'a UsbBusAllocator<B>) -> Self {
+    pub fn new(
+        allocator: &'a UsbBusAllocator<B>,
+    ) -> core::result::Result<Self, UvcUsbClassInitError> {
+        // Claim the singleton camera before allocating any USB resources, so
+        // a second class instance is rejected without consuming bus endpoints.
+        let function = UvcClass::try_new().ok_or(UvcUsbClassInitError::CameraAlreadyInUse)?;
         let control_interface = allocator.interface();
         let streaming_interface = allocator.interface();
         let interface_string = allocator.string();
@@ -167,14 +177,14 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
                 1,
             )
             .expect("failed to allocate UVC high-speed isochronous IN endpoint");
-        Self {
-            function: UvcClass::new(),
+        Ok(Self {
+            function,
             control_interface,
             streaming_interface,
             interface_string,
             endpoint,
             incomplete_count: 0,
-        }
+        })
     }
 
     pub fn set_cpu_metrics(&mut self, available: u8, generate: u8, submit: u8) {

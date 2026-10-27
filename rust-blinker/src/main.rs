@@ -64,7 +64,9 @@ fn main() -> ! {
     static mut USB_DEVICE: MaybeUninit<UsbDevice<'static, UsbBus<F407UsbHs>>> =
         MaybeUninit::uninit();
     let camera: &'static mut UvcUsbClass<'static, UsbBus<F407UsbHs>> = unsafe {
-        (*core::ptr::addr_of_mut!(CAMERA)).write(UvcUsbClass::new(bus));
+        (*core::ptr::addr_of_mut!(CAMERA)).write(
+            UvcUsbClass::new(bus).expect("UVC camera instance already in use"),
+        );
         (*core::ptr::addr_of_mut!(CAMERA)).assume_init_mut()
     };
     let usb: &'static mut UsbDevice<'static, UsbBus<F407UsbHs>> = unsafe {
