@@ -31,7 +31,6 @@ const MII_WRITE: u32 = 1 << 1;
 const MII_CLOCK_DIV102: u32 = 4 << 2;
 const BLINK_INTERVAL_MS: u32 = 500;
 const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
-const CORE_CLOCK_HZ: u64 = 168_000_000;
 static TICKS: AtomicU32 = AtomicU32::new(0);
 
 #[entry]
@@ -83,6 +82,7 @@ fn main() -> ! {
 
     let mut last_blink = 0;
     let mut last_cpu_sample = 0;
+    let mut last_cpu_sample_cycles = cycle_counter();
     loop {
         // Poll continuously: control transfers and each HS isochronous IN
         // completion must be serviced promptly while the camera is streaming.
@@ -101,13 +101,22 @@ fn main() -> ! {
         if now.wrapping_sub(last_cpu_sample) >= CPU_SAMPLE_INTERVAL_MS {
             last_cpu_sample = now;
             let (busy, generate, submit) = take_uvc_cycle_metrics();
+            let sample_cycles = cycle_counter();
+            let interval_cycles = sample_cycles.wrapping_sub(last_cpu_sample_cycles).max(1);
+            last_cpu_sample_cycles = sample_cycles;
             let busy_cycles = busy as u64;
-            let busy_percent = ((busy_cycles * 100) / CORE_CLOCK_HZ).min(100) as u8;
-            let generate_percent = (((generate as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
-            let submit_percent = (((submit as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
+            let denominator = interval_cycles as u64;
+            let busy_percent = ((busy_cycles * 100) / denominator).min(100) as u8;
+            let generate_percent = (((generate as u64) * 100) / denominator).min(100) as u8;
+            let submit_percent = (((submit as u64) * 100) / denominator).min(100) as u8;
             camera.set_cpu_metrics(100 - busy_percent, generate_percent, submit_percent);
         }
     }
+}
+
+#[inline(always)]
+fn cycle_counter() -> u32 {
+    unsafe { (0xE000_1004 as *const u32).read_volatile() }
 }
 
 #[inline]
