@@ -292,9 +292,6 @@ impl EndpointIn {
                 let dma_address = if let Some(address) = direct_dma_address {
                     address
                 } else {
-                    if buf.len() > dma.0.len() * core::mem::size_of::<u32>() {
-                        return Err(UsbError::BufferOverflow);
-                    }
                     let bytes = unsafe {
                         core::slice::from_raw_parts_mut(
                             dma.0.as_mut_ptr().cast::<u8>(),
