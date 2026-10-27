@@ -9,6 +9,21 @@ use core::sync::atomic::{AtomicU32, Ordering};
 #[cfg(not(feature = "camera-bw"))]
 use crate::palette::{UV_PALETTE, Y_HASH_TABLE};
 
+#[cfg(not(feature = "camera-bw"))]
+const fn make_duplicated_y_table() -> [u16; 256] {
+    let mut table = [0; 256];
+    let mut i = 0;
+    while i < table.len() {
+        let y = Y_HASH_TABLE[i] as u16;
+        table[i] = y | (y << 8);
+        i += 1;
+    }
+    table
+}
+
+#[cfg(not(feature = "camera-bw"))]
+const DUPLICATED_Y_TABLE: [u16; 256] = make_duplicated_y_table();
+
 pub const WIDTH: usize = 512;
 pub const HEIGHT: usize = 512;
 pub const Y_PLANE_BYTES: usize = WIDTH * HEIGHT;
@@ -56,9 +71,9 @@ static mut DEMO_CANVAS_TAIL: AlignedCanvas<CANVAS_TAIL_BYTES> =
     AlignedCanvas([0; CANVAS_TAIL_BYTES]);
 
 #[repr(C, align(4))]
-struct RowBuffers([u8; PAYLOAD_BYTES * 2]);
+struct RowBuffers([u8; WIDTH * 2]);
 #[link_section = ".ccmram.rows"]
-static mut ROW_BUFFERS: RowBuffers = RowBuffers([0; PAYLOAD_BYTES * 2]);
+static mut ROW_BUFFERS: RowBuffers = RowBuffers([0; WIDTH * 2]);
 
 fn write_canvas(index: usize, value: u8) {
     unsafe {
@@ -316,17 +331,27 @@ impl Nv12DemoImage {
                 written += run;
             } else {
                 let chroma_pos = pos - Y_PLANE_BYTES;
-                let source_row = (chroma_pos / WIDTH) as u16;
                 let x = chroma_pos % WIDTH;
-                let stage_start = cycle_counter();
-                self.prepare_uv_row(source_row);
-                record_render_cycles(stage_start, &UVC_DEBUG_RENDER_UV_CYCLES);
                 let run = (WIDTH - x).min(FRAME_BYTES - pos).min(out.len() - written);
-                unsafe {
+                #[cfg(feature = "camera-bw")]
+                {
+                    let source_row = (chroma_pos / WIDTH) as u16;
                     let stage_start = cycle_counter();
-                    crate::copy_words::copy_words(
-                        uv_row_ptr().add(x), out.as_mut_ptr().add(written), run,
-                    );
+                    self.prepare_uv_row(source_row);
+                    record_render_cycles(stage_start, &UVC_DEBUG_RENDER_UV_CYCLES);
+                    unsafe {
+                        let stage_start = cycle_counter();
+                        crate::copy_words::copy_words(
+                            uv_row_ptr().add(x), out.as_mut_ptr().add(written), run,
+                        );
+                        record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
+                    }
+                }
+                #[cfg(not(feature = "camera-bw"))]
+                unsafe {
+                    // Color canvas chroma is already packed in NV12 row order.
+                    let stage_start = cycle_counter();
+                    copy_canvas_range(chroma_pos, out.as_mut_ptr().add(written), run);
                     record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
                 }
                 pos += run;
@@ -371,8 +396,7 @@ impl Nv12DemoImage {
                 while i < chunk_pixels {
                     let pair = unsafe { source_pairs.add(i).read() };
                     let hash = pair as u8 ^ (pair >> 8) as u8;
-                    let y = Y_HASH_TABLE[hash as usize];
-                    unsafe { destination.add(i).write(u16::from_ne_bytes([y, y])) };
+                    unsafe { destination.add(i).write(DUPLICATED_Y_TABLE[hash as usize]) };
                     i += 1;
                 }
             }
@@ -381,6 +405,7 @@ impl Nv12DemoImage {
         self.cached_y_source_row = source_row;
     }
 
+    #[cfg(feature = "camera-bw")]
     fn prepare_uv_row(&mut self, source_row: u16) {
         if self.cached_uv_source_row == source_row {
             return;
@@ -404,9 +429,10 @@ unsafe fn y_row_ptr() -> *mut u8 {
     core::ptr::addr_of_mut!(ROW_BUFFERS.0).cast::<u8>()
 }
 
+#[cfg(feature = "camera-bw")]
 #[inline(always)]
 unsafe fn uv_row_ptr() -> *mut u8 {
-    core::ptr::addr_of_mut!(ROW_BUFFERS.0).cast::<u8>().add(PAYLOAD_BYTES)
+    core::ptr::addr_of_mut!(ROW_BUFFERS.0).cast::<u8>().add(WIDTH)
 }
 
 /// Copy an aligned region from the C-style main SRAM + CCM canvas split.
