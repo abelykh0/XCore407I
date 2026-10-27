@@ -199,7 +199,7 @@ impl EndpointIn {
         self.write_transfer(buf, 1, 1)
     }
 
-    /// Queue up to three high-speed isochronous packets as one transfer.
+    /// Queue up to two high-speed isochronous packets as one transfer.
     pub fn write_iso_batch(
         &self,
         buf: &[u8],
@@ -209,8 +209,8 @@ impl EndpointIn {
         #[cfg(feature = "hs")]
         {
             if !matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. })
-                || !(1..=3).contains(&packet_count)
-                || !(1..=3).contains(&transactions_per_microframe)
+                || !(1..=2).contains(&packet_count)
+                || !(1..=2).contains(&transactions_per_microframe)
                 || packet_count > transactions_per_microframe
             {
                 return Err(UsbError::Unsupported);
@@ -295,6 +295,9 @@ impl EndpointIn {
                     let Some(buffer) = dma.as_mut() else {
                         return Err(UsbError::BufferOverflow);
                     };
+                    if buf.len() > buffer.0.len() * core::mem::size_of::<u32>() {
+                        return Err(UsbError::BufferOverflow);
+                    }
                     let bytes = unsafe {
                         core::slice::from_raw_parts_mut(
                             buffer.0.as_mut_ptr().cast::<u8>(),
