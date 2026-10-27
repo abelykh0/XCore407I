@@ -460,16 +460,12 @@ type BoardUsbAllocator = UsbBusAllocator<BoardUsbBus>;
 
 #[inline(never)]
 pub fn usb_bus() -> &'static BoardUsbAllocator {
-    // DMA buffers for EP0 OUT (256 bytes), EP0 IN (64 bytes), and the UVC
-    // endpoint's two staged high-speed transactions. The video path normally
-    // DMA reads directly from the camera buffer, but retaining staging space
-    // keeps the endpoint's regular write path valid too.
+    // DMA buffers for EP0 OUT (256 bytes) and EP0 IN (64 bytes). The UVC
+    // isochronous endpoint submits directly from the camera buffer.
     const EP0_OUT_WORDS: usize = 256 / 4;
     const EP0_IN_WORDS: usize = 64 / 4;
-    const VIDEO_DMA_WORDS: usize =
-        (MAX_PACKET_SIZE as usize * ISO_PACKETS_PER_MICROFRAME as usize + 3) / 4;
-    static mut EP_MEMORY: [u32; EP0_OUT_WORDS + EP0_IN_WORDS + VIDEO_DMA_WORDS] =
-        [0; EP0_OUT_WORDS + EP0_IN_WORDS + VIDEO_DMA_WORDS];
+    static mut EP_MEMORY: [u32; EP0_OUT_WORDS + EP0_IN_WORDS] =
+        [0; EP0_OUT_WORDS + EP0_IN_WORDS];
     static mut BUS: MaybeUninit<BoardUsbAllocator> = MaybeUninit::uninit();
     let memory = unsafe { &mut *core::ptr::addr_of_mut!(EP_MEMORY) };
     let bus = synopsys_usb_otg::UsbBus::new(F407UsbHs, memory);

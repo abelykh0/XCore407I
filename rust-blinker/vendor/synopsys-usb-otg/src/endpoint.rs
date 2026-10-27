@@ -70,7 +70,7 @@ impl Endpoint {
 pub struct EndpointIn {
     common: Endpoint,
     #[cfg(feature = "internal-dma")]
-    dma_buffer: Mutex<RefCell<DmaTxBuffer>>,
+    dma_buffer: Mutex<RefCell<Option<DmaTxBuffer>>>,
 }
 
 #[cfg(feature = "internal-dma")]
@@ -80,12 +80,12 @@ struct DmaTxBuffer(&'static mut [u32]);
 impl EndpointIn {
     pub fn new<USB: UsbPeripheral>(
         descriptor: EndpointDescriptor,
-        #[cfg(feature = "internal-dma")] dma_buffer: &'static mut [u32],
+        #[cfg(feature = "internal-dma")] dma_buffer: Option<&'static mut [u32]>,
     ) -> EndpointIn {
         EndpointIn {
             common: Endpoint::new::<USB>(descriptor),
             #[cfg(feature = "internal-dma")]
-            dma_buffer: Mutex::new(RefCell::new(DmaTxBuffer(dma_buffer))),
+            dma_buffer: Mutex::new(RefCell::new(dma_buffer.map(DmaTxBuffer))),
         }
     }
 
@@ -287,19 +287,22 @@ impl EndpointIn {
 
         #[cfg(feature = "internal-dma")]
         {
-            critical_section::with(|cs| {
+            critical_section::with(|cs| -> Result<()> {
                 let mut dma = self.dma_buffer.borrow_ref_mut(cs);
                 let dma_address = if let Some(address) = direct_dma_address {
                     address
                 } else {
+                    let Some(buffer) = dma.as_mut() else {
+                        return Err(UsbError::BufferOverflow);
+                    };
                     let bytes = unsafe {
                         core::slice::from_raw_parts_mut(
-                            dma.0.as_mut_ptr().cast::<u8>(),
-                            dma.0.len() * core::mem::size_of::<u32>(),
+                            buffer.0.as_mut_ptr().cast::<u8>(),
+                            buffer.0.len() * core::mem::size_of::<u32>(),
                         )
                     };
                     bytes[..buf.len()].copy_from_slice(buf);
-                    dma.0.as_ptr()
+                    buffer.0.as_ptr()
                 };
                 // Ensure source data reaches SRAM before the OTG core is armed.
                 fence(Ordering::Release);
@@ -313,7 +316,8 @@ impl EndpointIn {
 
                 self.set_iso_frame(ep);
                 modify_reg!(endpoint_in, ep, DIEPCTL, CNAK: 1, EPENA: 1);
-            });
+                Ok(())
+            })?;
             return Ok(());
         }
 
