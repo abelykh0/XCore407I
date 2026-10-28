@@ -8,7 +8,8 @@ use cortex_m_rt::{entry, exception};
 use panic_halt as _;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::initialize_demo_canvas;
+use xcore407i_blinker::camera::{initialize_demo_canvas, update_clock_from_rtc};
+use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     configure_ulpi_pins, take_uvc_cycle_metrics, usb_bus, F407UsbHs, UvcUsbClass,
 };
@@ -39,6 +40,8 @@ fn main() -> ! {
     enable_fpu();
     enable_cycle_counter();
     initialize_demo_canvas();
+    let rtc_ready = rtc::initialize();
+    update_clock_from_rtc();
     configure_blinker_pins();
     unsafe {
         ETH_MACMIIAR.write_volatile(MII_CLOCK_DIV102);
@@ -84,6 +87,7 @@ fn main() -> ! {
 
     let mut last_blink = 0;
     let mut last_cpu_sample = 0;
+    let mut last_rtc_sample = 0;
     let mut last_cpu_sample_cycles = cycle_counter();
     loop {
         // Poll continuously: control transfers and each HS isochronous IN
@@ -98,6 +102,12 @@ fn main() -> ! {
                 led ^= 0x03;
                 phy_write(PHY_LED_CONTROL, led);
             }
+        }
+
+        if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
+            last_rtc_sample = now;
+            rtc::refresh_display_time();
+            update_clock_from_rtc();
         }
 
         if now.wrapping_sub(last_cpu_sample) >= CPU_SAMPLE_INTERVAL_MS {

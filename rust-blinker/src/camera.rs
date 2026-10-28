@@ -75,6 +75,7 @@ struct RowBuffers([u8; WIDTH * 2]);
 #[link_section = ".ccmram.rows"]
 static mut ROW_BUFFERS: RowBuffers = RowBuffers([0; WIDTH * 2]);
 static CAMERA_IN_USE: AtomicBool = AtomicBool::new(false);
+static CLOCK_VERSION: AtomicU32 = AtomicU32::new(0);
 
 fn write_canvas(index: usize, value: u8) {
     unsafe {
@@ -339,6 +340,51 @@ pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
     }
 }
 
+/// Update the top-center clock text directly in the source canvas.
+pub fn update_clock_from_rtc() {
+    let text = crate::rtc::display_time();
+    const CLOCK_ATTRIBUTE: u16 = 0x2a10;
+
+    #[cfg(not(feature = "camera-bw"))]
+    {
+        const CLOCK_CELL_X: usize = (CANVAS_WIDTH - 10 * 8) / 2 / 8;
+        draw_demo_text(CLOCK_CELL_X, 0, &text, CLOCK_ATTRIBUTE);
+    }
+
+    #[cfg(feature = "camera-bw")]
+    draw_clock_text_bw(&text, CLOCK_ATTRIBUTE);
+
+    CLOCK_VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(feature = "camera-bw")]
+fn draw_clock_text_bw(text: &[u8; 10], attribute: u16) {
+    use crate::font8x8::FONT8X8;
+
+    let left = (WIDTH - 10 * 16) / 2;
+    let foreground = (attribute >> 8) as u8 & 0x3f;
+    let background = attribute as u8 & 0x3f;
+    for (character_index, character) in text.iter().enumerate() {
+        let glyph = (*character as usize - 1) * 8;
+        for row in 0..8 {
+            let bits = FONT8X8[glyph + row];
+            for column in 0..8 {
+                let color = if bits & (0x80 >> column) != 0 {
+                    foreground
+                } else {
+                    background
+                };
+                let x = left + character_index * 16 + column * 2;
+                let y = row * 2;
+                set_demo_pixel(x, y, color);
+                set_demo_pixel(x + 1, y, color);
+                set_demo_pixel(x, y + 1, color);
+                set_demo_pixel(x + 1, y + 1, color);
+            }
+        }
+    }
+}
+
 #[cfg(feature = "camera-bw")]
 const GRAYSCALE: [u8; 64] = [
     0,6,12,18,61,67,73,79,122,128,134,140,183,189,195,201,
@@ -362,6 +408,7 @@ pub(crate) struct Nv12DemoImage {
     cpu_submit_percent: u8,
     cached_y_source_row: u16,
     cached_uv_source_row: u16,
+    cached_clock_version: u32,
 }
 
 impl Nv12DemoImage {
@@ -379,6 +426,7 @@ impl Nv12DemoImage {
             cpu_submit_percent: 0,
             cached_y_source_row: u16::MAX,
             cached_uv_source_row: u16::MAX,
+            cached_clock_version: CLOCK_VERSION.load(Ordering::Relaxed),
         })
     }
 
@@ -390,6 +438,7 @@ impl Nv12DemoImage {
         self.cpu_submit_percent = 0;
         self.cached_y_source_row = u16::MAX;
         self.cached_uv_source_row = u16::MAX;
+        self.cached_clock_version = CLOCK_VERSION.load(Ordering::Relaxed);
     }
 
     /// Set the estimated CPU percentage available outside measured UVC work.
@@ -533,6 +582,13 @@ impl Nv12DemoImage {
     }
 
     fn prepare_y_row(&mut self, source_row: u16) {
+        if source_row == 0 {
+            let clock_version = CLOCK_VERSION.load(Ordering::Relaxed);
+            if self.cached_clock_version != clock_version {
+                self.cached_clock_version = clock_version;
+                self.cached_y_source_row = u16::MAX;
+            }
+        }
         if self.cached_y_source_row == source_row {
             return;
         }
