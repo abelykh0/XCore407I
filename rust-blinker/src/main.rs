@@ -14,7 +14,7 @@ use xcore407i_blinker::usb_uvc::{
     configure_ulpi_pins, take_uvc_cycle_metrics, usb_bus, F407UsbHs, UvcUsbClass,
 };
 
-use xcore407i_blinker::vortex_demo;
+use xcore407i_blinker::rotozoom_demo;
 
 const RCC_AHB1ENR: *mut u32 = 0x4002_3830 as *mut u32;
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
@@ -110,6 +110,7 @@ fn main() -> ! {
             last_rtc_sample = now;
             rtc::refresh_display_time();
             update_clock_from_rtc();
+            rotozoom_demo::render_next();
         }
 
         if now.wrapping_sub(last_cpu_sample) >= CPU_SAMPLE_INTERVAL_MS {
@@ -126,7 +127,6 @@ fn main() -> ! {
             camera.set_cpu_metrics(100 - busy_percent, generate_percent, submit_percent);
         }
 
-        vortex_demo::render_next_frame();
     }
 }
 

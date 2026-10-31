@@ -7,4 +7,4 @@ mod palette;
 pub mod rtc;
 pub mod usb_uvc;
 pub mod uvc;
-pub mod vortex_demo;
+pub mod rotozoom_demo;
