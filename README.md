@@ -1,11 +1,10 @@
 # XCore407I
 
 Trying to implement something on USB HS.
-Achieved 512x384 uncompressed NV12 at 20 fps.
-Ideas:
-- increase packet size
-- increse # of packets per microframe (up to 3)
-- make DMA work
+Achieved 512x512 uncompressed NV12 at 25 fps (more, but I am ok wit 25 fps). 256x256 color or 512x256 black and white.
+
+TODO:
+move usb.poll to timer interrupt (probably need to NOT use systick)
 
 ![Development Board](doc/XCore407I.jpg)
 
