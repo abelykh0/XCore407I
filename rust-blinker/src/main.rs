@@ -10,7 +10,7 @@ use panic_halt as _;
 use stm32f4::stm32f407::interrupt;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::{initialize_demo_canvas, update_clock_from_rtc};
+use xcore407i_blinker::camera::{clear_demo_canvas, update_clock_from_rtc};
 use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     configure_ulpi_pins, usb_bus, F407UsbHs, UvcUsbClass,
@@ -45,8 +45,6 @@ const MII_WRITE: u32 = 1 << 1;
 // HCLK=168 MHz: STM32F4 MAC MDC divisor /102 (CR=100b).
 const MII_CLOCK_DIV102: u32 = 4 << 2;
 const BLINK_INTERVAL_MS: u32 = 500;
-const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
-const CORE_CLOCK_HZ: u64 = 168_000_000;
 
 // One timer interrupt per USB HS microframe (125 us, 8 kHz).
 const USB_POLL_TIMER_HZ: u32 = 8_000;
@@ -56,6 +54,9 @@ const TIM2_PRIORITY: u8 = 2;
 const SYSTICK_PRIORITY: u8 = 1;
 
 static TICKS: AtomicU32 = AtomicU32::new(0);
+
+const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
+const CORE_CLOCK_HZ: u64 = 168_000_000;
 static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
 
 type BoardUsbBus = UsbBus<F407UsbHs>;
@@ -75,7 +76,9 @@ fn main() -> ! {
     update_clock_from_rtc();
 
     enable_cycle_counter();
-    initialize_demo_canvas();
+    //initialize_demo_canvas();
+    clear_demo_canvas(0x10);
+
     configure_blinker_pins();
     unsafe {
         ETH_MACMIIAR.write_volatile(MII_CLOCK_DIV102);
@@ -155,6 +158,7 @@ fn main() -> ! {
         }
 
         rotozoom_demo::render_next();
+        //rotozoom_demo::render_next();
     }
 }
 

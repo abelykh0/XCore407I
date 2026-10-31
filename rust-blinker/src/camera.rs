@@ -107,6 +107,55 @@ fn canvas_read_chunk(offset: usize) -> (*const u8, usize) {
     }
 }
 
+/// Fill the entire canvas with one uniform palette color.
+///
+/// `color` is a palette index (0..63), matching `set_demo_pixel()`.
+/// In color mode the corresponding Cb/Cr pair is written for every pixel;
+/// in B/W mode the corresponding luma value is written for every pixel.
+pub fn clear_demo_canvas(color: u8) {
+    #[cfg(feature = "camera-bw")]
+    {
+        let value = GRAYSCALE[(color & 0x3f) as usize];
+        unsafe {
+            core::ptr::addr_of_mut!(DEMO_CANVAS.0)
+                .cast::<u8>()
+                .write_bytes(value, CANVAS_MAIN_BYTES);
+            core::ptr::addr_of_mut!(DEMO_CANVAS_TAIL.0)
+                .cast::<u8>()
+                .write_bytes(value, CANVAS_TAIL_BYTES);
+        }
+    }
+
+    #[cfg(not(feature = "camera-bw"))]
+    {
+        let [u, v] = UV_PALETTE[(color & 0x3f) as usize];
+        let pixel_count = CANVAS_WIDTH * CANVAS_HEIGHT;
+        let main_pixels = CANVAS_MAIN_BYTES / 2;
+        let tail_pixels = CANVAS_TAIL_BYTES / 2;
+
+        unsafe {
+            let main = core::ptr::addr_of_mut!(DEMO_CANVAS.0).cast::<u8>();
+            let tail = core::ptr::addr_of_mut!(DEMO_CANVAS_TAIL.0).cast::<u8>();
+
+            let mut i = 0;
+            while i < main_pixels {
+                main.add(i * 2).write(u);
+                main.add(i * 2 + 1).write(v);
+                i += 1;
+            }
+
+            i = 0;
+            while i < tail_pixels {
+                tail.add(i * 2).write(u);
+                tail.add(i * 2 + 1).write(v);
+                i += 1;
+            }
+        }
+
+        debug_assert_eq!(main_pixels + tail_pixels, pixel_count);
+    }
+}
+
 /// Initialize the demo chart in the compact canvas before USB streaming.
 pub fn initialize_demo_canvas() {
     #[cfg(not(feature = "camera-bw"))]
@@ -348,7 +397,7 @@ pub fn update_clock_from_rtc() {
     #[cfg(not(feature = "camera-bw"))]
     {
         const CLOCK_CELL_X: usize = (CANVAS_WIDTH - 10 * 8) / 2 / 8;
-        draw_demo_text(CLOCK_CELL_X, 0, &text, CLOCK_ATTRIBUTE);
+        draw_demo_text(CLOCK_CELL_X, CANVAS_HEIGHT / 8 - 1, &text, CLOCK_ATTRIBUTE);
     }
 
     #[cfg(feature = "camera-bw")]

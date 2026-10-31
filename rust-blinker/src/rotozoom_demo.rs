@@ -1,83 +1,104 @@
+
 use crate::camera;
 
 pub const WIDTH: usize = 256;
-pub const HEIGHT: usize = 256;
+pub const HEIGHT: usize = 256 - 8;
 
 struct RotozoomState {
     frame: usize,
     y: usize,
+
+    // Transformation coefficients, updated once per frame.
+    c_rot: f32,
+    s_rot: f32,
+    tx: f32,
 }
 
-static mut STATE: RotozoomState = RotozoomState { frame: 0, y: 0 };
-
-/// Renders the next scanline row, automatically tracking the current row and frame,
-/// and plotting each pixel using `set_demo_pixel`.
-pub fn render_next() {
-    let (frame, y) = unsafe {
-        let f = STATE.frame;
-        let y = STATE.y;
-
-        // Advance to the next row; wrap around and increment frame at the bottom of the screen
-        STATE.y += 1;
-        if STATE.y >= HEIGHT {
-            STATE.y = 0;
-            STATE.frame += 1;
+impl RotozoomState {
+    const fn new() -> Self {
+        Self {
+            frame: 0,
+            y: 0,
+            c_rot: 1.0,
+            s_rot: 0.0,
+            tx: 0.0,
         }
-        (f, y)
-    };
+    }
 
-    // Animation parameters derived from the current frame
-    let (sin_val, cos_val) = unsafe {
-        (
-            libm::sinf(frame as f32 / 50.0),
-            libm::cosf(frame as f32 / 100.0),
-        )
-    };
+    #[inline]
+    fn update_transform(&mut self) {
+        let frame = self.frame as f32;
 
-    let zoom = sin_val * 0.7 + 1.0;
-    let translation_x = cos_val * 100.0;
-    let angle = frame as f32 * 0.005;
+        let zoom = libm::sinf(frame / 50.0) * 0.7 + 1.0;
+        self.tx = libm::cosf(frame / 100.0) * 100.0;
 
-    #[cfg(target_os = "none")]
-    let (cos_a, sin_a) = (libm::cosf(angle), libm::sinf(angle));
-    #[cfg(not(target_os = "none"))]
-    let (cos_a, sin_a) = (angle.cos(), angle.sin());
+        let angle = frame * 0.005;
 
-    let c_rot = cos_a * zoom;
-    let s_rot = sin_a * zoom;
-
-    const COLS: f32 = WIDTH as f32;
-    const ROWS: f32 = HEIGHT as f32;
-    let cx = COLS / 2.0;
-    let cy = ROWS / 2.0;
-
-    let tx = translation_x;
-    let ty = 0.0;
-
-    let fy = y as f32 - cy;
-
-    // Compute and plot pixels for this single row directly
-    for x in 0..WIDTH {
-        let fx = x as f32 - cx;
-
-        let u = c_rot * fx - s_rot * fy + tx + cx;
-        let v = s_rot * fx + c_rot * fy + ty + cy;
-
-        let color = tex_fetch(u, v);
-        
-        camera::set_demo_pixel(x, y, color);
+        self.c_rot = libm::cosf(angle) * zoom;
+        self.s_rot = libm::sinf(angle) * zoom;
     }
 }
 
-/// Fetches a texel from a 256x256 canvas space using RGB222 (64 colors).
+static mut STATE: RotozoomState = RotozoomState::new();
+
+pub fn render_next() {
+    // This renderer is called from the main loop, not an interrupt.
+    let state = unsafe {
+        &mut *core::ptr::addr_of_mut!(STATE)
+    };
+
+    // Update animation parameters at the beginning of each frame.
+    if state.y == 0 {
+        state.update_transform();
+    }
+
+    let y = state.y;
+
+    const CX: f32 = WIDTH as f32 / 2.0;
+    const CY: f32 = HEIGHT as f32 / 2.0;
+
+    let fy = y as f32 - CY;
+
+    let c_rot = state.c_rot;
+    let s_rot = state.s_rot;
+
+    // Texture coordinate of the first pixel in this scanline.
+    let mut u = -c_rot * CX
+        - s_rot * fy
+        + state.tx
+        + CX;
+
+    let mut v = -s_rot * CX
+        + c_rot * fy
+        + CY;
+
+    // Render one scanline using incremental coordinate updates.
+    for x in 0..WIDTH {
+        let color = tex_fetch(u, v);
+
+        camera::set_demo_pixel(x, y, color);
+
+        u += c_rot;
+        v += s_rot;
+    }
+
+    // Advance scanline/frame state.
+    state.y += 1;
+
+    if state.y >= HEIGHT {
+        state.y = 0;
+        state.frame += 1;
+    }
+}
+
 #[inline(always)]
 fn tex_fetch(u: f32, v: f32) -> u8 {
     let x = (u as i32) & 0xFF;
     let y = (v as i32) & 0xFF;
 
-    let r = ((x >> 6) ^ (y >> 6)) & 0x3;
-    let g = (x >> 4) & 0x3;
-    let b = (y >> 4) & 0x3;
+    let r = ((x >> 4) ^ (y >> 4)) & 0x3;
+    let g = (x >> 2) & 0x3;
+    let b = (y >> 2) & 0x3;
 
     ((r << 4) | (g << 2) | b) as u8
 }
