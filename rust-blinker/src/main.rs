@@ -14,6 +14,8 @@ use xcore407i_blinker::usb_uvc::{
     configure_ulpi_pins, take_uvc_cycle_metrics, usb_bus, F407UsbHs, UvcUsbClass,
 };
 
+use xcore407i_blinker::vortex_demo;
+
 const RCC_AHB1ENR: *mut u32 = 0x4002_3830 as *mut u32;
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 const GPIOA_MODER: *mut u32 = 0x4002_0000 as *mut u32;
@@ -123,6 +125,8 @@ fn main() -> ! {
             let submit_percent = (((submit as u64) * 100) / denominator).min(100) as u8;
             camera.set_cpu_metrics(100 - busy_percent, generate_percent, submit_percent);
         }
+
+        vortex_demo::render_next_frame();
     }
 }
 

@@ -11,7 +11,7 @@
         "--target",
         "thumbv7em-none-eabihf",
         "--bin",
-        "xcore407i-blinker"
+        "xcore407i_blinker"
       ],
       "options": {
         "cwd": "${workspaceFolder}"
