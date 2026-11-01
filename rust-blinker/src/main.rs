@@ -20,27 +20,20 @@ use xcore407i_blinker::usb_uvc::{
 use xcore407i_blinker::rotozoom_demo::RotozoomState;
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
+
 // STM32F407 Ethernet MAC register offsets: MACMIIAR=0x10, MACMIIDR=0x14.
 const ETH_MACMIIAR: *mut u32 = 0x4002_8010 as *mut u32;
 const ETH_MACMIIDR: *mut u32 = 0x4002_8014 as *mut u32;
 
-// TIM2 is clocked from the APB1 timer clock. With PPRE1=/4, PCLK1=42 MHz
-// and the STM32F4 timer-clock multiplier makes TIM2CLK=84 MHz.
-const TIM2_BASE: usize = 0x4000_0000;
-const TIM2_CR1: *mut u32 = (TIM2_BASE + 0x00) as *mut u32;
-const TIM2_DIER: *mut u32 = (TIM2_BASE + 0x0C) as *mut u32;
-const TIM2_SR: *mut u32 = (TIM2_BASE + 0x10) as *mut u32;
-const TIM2_EGR: *mut u32 = (TIM2_BASE + 0x14) as *mut u32;
-const TIM2_CNT: *mut u32 = (TIM2_BASE + 0x24) as *mut u32;
-const TIM2_PSC: *mut u32 = (TIM2_BASE + 0x28) as *mut u32;
-const TIM2_ARR: *mut u32 = (TIM2_BASE + 0x2C) as *mut u32;
-
+// PHY configuration.
 const PHY_ADDRESS: u32 = 1;
 const PHY_LED_CONTROL: u8 = 0x18;
 const MII_BUSY: u32 = 1 << 0;
 const MII_WRITE: u32 = 1 << 1;
+
 // HCLK=168 MHz: STM32F4 MAC MDC divisor /102 (CR=100b).
 const MII_CLOCK_DIV102: u32 = 4 << 2;
+
 const BLINK_INTERVAL_MS: u32 = 500;
 
 // One timer interrupt per USB HS microframe (125 us, 8 kHz).
@@ -66,25 +59,29 @@ static CAMERA_PTR: AtomicPtr<BoardUvcClass> = AtomicPtr::new(ptr::null_mut());
 #[entry]
 fn main() -> ! {
     system_clock_168mhz();
+
     let mut core = cortex_m::Peripherals::take().unwrap();
     core.SCB.enable_fpu();
 
-    let device = pac::Peripherals::take().unwrap();
+    let mut device = pac::Peripherals::take().unwrap();
+
     let rtc_ready = rtc::initialize();
     update_clock_from_rtc();
 
     enable_cycle_counter(&mut core);
-    //initialize_demo_canvas();
+
+    // initialize_demo_canvas();
     clear_demo_canvas(0x10);
 
     configure_board_pins(
-        device.RCC,
+        &mut device.RCC,
         device.GPIOA,
         device.GPIOB,
         device.GPIOC,
         device.GPIOH,
         device.GPIOI,
     );
+
     unsafe {
         ETH_MACMIIAR.write_volatile(MII_CLOCK_DIV102);
         phy_write(PHY_LED_CONTROL, 0x38); // manual mode; both LEDs controllable
@@ -94,7 +91,9 @@ fn main() -> ! {
     core.SYST.set_clock_source(SystClkSource::Core);
     core.SYST.set_reload(168_000 - 1); // 1 ms at 168 MHz
     core.SYST.clear_current();
+
     configure_exception_priorities(&mut core.SCB);
+
     core.SYST.enable_interrupt();
     core.SYST.enable_counter();
 
@@ -109,7 +108,9 @@ fn main() -> ! {
 
     // Construct in place and publish raw pointers. No long-lived &mut reference
     // is kept in main; the TIM2 ISR creates the only mutable references.
-    let camera_ptr = unsafe { (*ptr::addr_of_mut!(CAMERA)).as_mut_ptr() };
+    let camera_ptr = unsafe {
+        (*ptr::addr_of_mut!(CAMERA)).as_mut_ptr()
+    };
 
     unsafe {
         camera_ptr.write(
@@ -117,7 +118,10 @@ fn main() -> ! {
         );
     }
 
-    let usb_ptr = unsafe { (*ptr::addr_of_mut!(USB_DEVICE)).as_mut_ptr() };
+    let usb_ptr = unsafe {
+        (*ptr::addr_of_mut!(USB_DEVICE)).as_mut_ptr()
+    };
+
     unsafe {
         usb_ptr.write(
             UsbDeviceBuilder::new(
@@ -136,7 +140,11 @@ fn main() -> ! {
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
     // Start only after both objects are fully initialized and published.
-    configure_usb_poll_timer(&mut core.NVIC);
+    configure_usb_poll_timer(
+        &device.RCC,
+        &device.TIM2,
+        &mut core.NVIC,
+    );
 
     let mut last_blink = 0;
     let mut last_rtc_sample = 0;
@@ -145,8 +153,10 @@ fn main() -> ! {
     loop {
         // USB polling and camera-class access now belong exclusively to TIM2.
         let now = TICKS.load(Ordering::Relaxed);
+
         if now.wrapping_sub(last_blink) >= BLINK_INTERVAL_MS {
             last_blink = now;
+
             unsafe {
                 let mut led = phy_read(PHY_LED_CONTROL);
                 led ^= 0x03;
@@ -167,13 +177,15 @@ fn main() -> ! {
 /// TIM2 fires at 8 kHz. This is the only place that calls UsbDevice::poll().
 #[interrupt]
 fn TIM2() {
-    unsafe {
-        // TIM2 update interrupt flag is write-zero-to-clear.
-        TIM2_SR.write_volatile(TIM2_SR.read_volatile() & !1);
-    }
+    // Obtain the TIM2 register block for interrupt-flag handling.
+    let tim2 = unsafe { &*pac::TIM2::ptr() };
+
+    // Clear the update interrupt flag.
+    tim2.sr().write(|w| w.uif().clear_bit());
 
     let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
     let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
+
     if usb_ptr.is_null() || camera_ptr.is_null() {
         return;
     }
@@ -186,18 +198,25 @@ fn TIM2() {
     let _ = usb.poll(&mut [camera]);
 
     /*
-    // CPU load reporting 
+    // CPU load reporting
     let now = TICKS.load(Ordering::Relaxed);
     let last = LAST_CPU_SAMPLE.load(Ordering::Relaxed);
+
     if now.wrapping_sub(last) >= CPU_SAMPLE_INTERVAL_MS {
         LAST_CPU_SAMPLE.store(now, Ordering::Relaxed);
 
         let (busy, generate, submit) = take_uvc_cycle_metrics();
+
         let busy_cycles = busy as u64;
         let busy_percent = ((busy_cycles * 100) / CORE_CLOCK_HZ).min(100) as u8;
         let generate_percent = (((generate as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
         let submit_percent = (((submit as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
-        camera.set_cpu_metrics(100 - busy_percent, generate_percent, submit_percent);
+
+        camera.set_cpu_metrics(
+            100 - busy_percent,
+            generate_percent,
+            submit_percent,
+        );
     }
     */
 }
@@ -224,31 +243,48 @@ fn configure_exception_priorities(scb: &mut SCB) {
 }
 
 /// Configure TIM2 for an exact 125 us update period and enable its NVIC line.
-fn configure_usb_poll_timer(nvic: &mut NVIC) {
-    // TIM2CLK=84 MHz, PSC=0, ARR=10499 => 8,000 updates/second.
+fn configure_usb_poll_timer(
+    rcc: &pac::RCC,
+    tim2: &pac::TIM2,
+    nvic: &mut NVIC,
+) {
+    // TIM2CLK = 84 MHz, PSC = 0, ARR = 10499 => 8,000 updates/second.
     let timer_ticks = 84_000_000 / USB_POLL_TIMER_HZ;
+
+    // Enable TIM2 on APB1.
+    rcc.apb1enr().modify(|_, w| w.tim2en().set_bit());
+
+    // Reset TIM2 to its known reset state.
+    rcc.apb1rstr().modify(|_, w| w.tim2rst().set_bit());
+    rcc.apb1rstr().modify(|_, w| w.tim2rst().clear_bit());
+
+    // Stop timer and disable update interrupt while configuring.
+    tim2.cr1().write(|w| w.cen().clear_bit());
+    tim2.dier().write(|w| w.uie().clear_bit());
+
+    // PSC and CNT are zero after the peripheral reset.
+    // ARR = 10499 gives a 125 us update period at 84 MHz.
+    tim2.arr().write(|w| unsafe {
+        w.arr().bits(timer_ticks - 1)
+    });
+
+    // Generate an update event to load the prescaler and auto-reload.
+    tim2.egr().write(|w| w.ug().set_bit());
+
+    // Clear the update flag generated by UG.
+    tim2.sr().write(|w| w.uif().clear_bit());
+
+    // Configure NVIC priority and clear any pending interrupt.
     unsafe {
-        // Enable TIM2 on APB1.
-        RCC_APB1ENR.write_volatile(RCC_APB1ENR.read_volatile() | 1);
-        let _ = RCC_APB1ENR.read_volatile();
-
-        TIM2_CR1.write_volatile(0);
-        TIM2_DIER.write_volatile(0);
-        TIM2_PSC.write_volatile(0);
-        TIM2_ARR.write_volatile(timer_ticks - 1);
-        TIM2_CNT.write_volatile(0);
-        TIM2_EGR.write_volatile(1); // latch PSC/ARR immediately
-        TIM2_SR.write_volatile(0); // clear update flag from UG
-
-        // Cortex-M's NVIC API accepts the hardware-encoded priority byte.
         nvic.set_priority(interrupt::TIM2, TIM2_PRIORITY << 4);
-        NVIC::unpend(interrupt::TIM2);
-
-        // Update interrupt only. Start timer after enabling the NVIC line.
-        TIM2_DIER.write_volatile(1);
         NVIC::unmask(interrupt::TIM2);
-        TIM2_CR1.write_volatile(1); // CEN
     }
+
+    NVIC::unpend(interrupt::TIM2);
+
+    // Enable update interrupt and start the timer.
+    tim2.dier().write(|w| w.uie().set_bit());
+    tim2.cr1().write(|w| w.cen().set_bit());
 }
 
 fn enable_cycle_counter(core: &mut cortex_m::Peripherals) {
@@ -272,22 +308,31 @@ fn system_clock_168mhz() {
 
     unsafe {
         // The board has the 8 MHz HSE crystal used by the original firmware.
-        RCC_APB1ENR.write_volatile(RCC_APB1ENR.read_volatile() | (1 << 28)); // PWR clock
-        PWR_CR.write_volatile((PWR_CR.read_volatile() & !(3 << 14)) | (3 << 14)); // scale 1
-        FLASH_ACR.write_volatile((1 << 10) | (1 << 9) | (1 << 8) | 5); // caches + 5 WS
+        RCC_APB1ENR.write_volatile(RCC_APB1ENR.read_volatile() | (1 << 28));
+        PWR_CR.write_volatile(
+            (PWR_CR.read_volatile() & !(3 << 14)) | (3 << 14)
+        ); // scale 1
+
+        FLASH_ACR.write_volatile((1 << 10) | (1 << 9) | (1 << 8) | 5);
+        // caches + 5 WS
 
         RCC_CR.write_volatile(RCC_CR.read_volatile() | (1 << 16)); // HSEON
         while RCC_CR.read_volatile() & (1 << 17) == 0 {}
 
-        // PLLM=4, PLLN=168, PLLP=/2, PLL source=HSE, PLLQ=7 => 168/48 MHz.
+        // PLLM=4, PLLN=168, PLLP=/2, PLL source=HSE, PLLQ=7.
         RCC_PLLCFGR.write_volatile(4 | (168 << 6) | (1 << 22) | (7 << 24));
+
         RCC_CR.write_volatile(RCC_CR.read_volatile() | (1 << 24)); // PLLON
         while RCC_CR.read_volatile() & (1 << 25) == 0 {}
 
         // HCLK=/1, APB1=/4, APB2=/2, then switch SYSCLK to PLL.
         let cfgr = RCC_CFGR.read_volatile();
-        let cfgr = (cfgr & !((0xf << 4) | (7 << 10) | (7 << 13) | 3)) | (5 << 10) | (4 << 13);
+        let cfgr = (cfgr & !((0xf << 4) | (7 << 10) | (7 << 13) | 3))
+            | (5 << 10)
+            | (4 << 13);
+
         RCC_CFGR.write_volatile(cfgr | 2);
+
         while RCC_CFGR.read_volatile() & (3 << 2) != (2 << 2) {}
     }
 }
@@ -298,18 +343,18 @@ fn system_clock_168mhz() {
 /// pins are intentionally dropped after configuration; their hardware state
 /// remains configured for the peripheral.
 fn configure_board_pins(
-    mut rcc: pac::RCC,
+    rcc: &mut pac::RCC,
     gpioa: pac::GPIOA,
     gpiob: pac::GPIOB,
     gpioc: pac::GPIOC,
     gpioh: pac::GPIOH,
     gpioi: pac::GPIOI,
 ) {
-    let a = gpioa.split(&mut rcc);
-    let b = gpiob.split(&mut rcc);
-    let c = gpioc.split(&mut rcc);
-    let h = gpioh.split(&mut rcc);
-    let i = gpioi.split(&mut rcc);
+    let a = gpioa.split(rcc);
+    let b = gpiob.split(rcc);
+    let c = gpioc.split(rcc);
+    let h = gpioh.split(rcc);
+    let i = gpioi.split(rcc);
 
     // Enable Ethernet MAC clock (AHB1ENR bit 25) for MDIO/MDC.
     unsafe {
@@ -341,18 +386,36 @@ fn configure_board_pins(
 }
 
 unsafe fn phy_read(reg: u8) -> u16 {
-    while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
-    ETH_MACMIIAR
-        .write_volatile((PHY_ADDRESS << 11) | ((reg as u32) << 6) | MII_CLOCK_DIV102 | MII_BUSY);
-    while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
-    ETH_MACMIIDR.read_volatile() as u16
+    unsafe {
+        while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
+
+        ETH_MACMIIAR.write_volatile(
+            (PHY_ADDRESS << 11)
+                | ((reg as u32) << 6)
+                | MII_CLOCK_DIV102
+                | MII_BUSY,
+        );
+
+        while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
+
+        ETH_MACMIIDR.read_volatile() as u16
+    }
 }
 
 unsafe fn phy_write(reg: u8, value: u16) {
-    while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
-    ETH_MACMIIDR.write_volatile(value as u32);
-    ETH_MACMIIAR.write_volatile(
-        (PHY_ADDRESS << 11) | ((reg as u32) << 6) | MII_CLOCK_DIV102 | MII_WRITE | MII_BUSY,
-    );
-    while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
+    unsafe {
+        while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
+
+        ETH_MACMIIDR.write_volatile(value as u32);
+
+        ETH_MACMIIAR.write_volatile(
+            (PHY_ADDRESS << 11)
+                | ((reg as u32) << 6)
+                | MII_CLOCK_DIV102
+                | MII_WRITE
+                | MII_BUSY,
+        );
+
+        while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
+    }
 }
