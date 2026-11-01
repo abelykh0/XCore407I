@@ -17,7 +17,7 @@ use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
-use xcore407i_blinker::rotozoom_demo;
+use xcore407i_blinker::rotozoom_demo::RotozoomState;
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 // STM32F407 Ethernet MAC register offsets: MACMIIAR=0x10, MACMIIDR=0x14.
@@ -140,6 +140,7 @@ fn main() -> ! {
 
     let mut last_blink = 0;
     let mut last_rtc_sample = 0;
+    let mut rotozoom = RotozoomState::new();
 
     loop {
         // USB polling and camera-class access now belong exclusively to TIM2.
@@ -159,8 +160,7 @@ fn main() -> ! {
             update_clock_from_rtc();
         }
 
-        rotozoom_demo::render_next();
-        //rotozoom_demo::render_next();
+        rotozoom.render_next();
     }
 }
 

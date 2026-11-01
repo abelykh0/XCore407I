@@ -1,10 +1,9 @@
-
 use crate::camera;
 
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 256 - 8;
 
-struct RotozoomState {
+pub struct RotozoomState {
     frame: usize,
     y: usize,
 
@@ -15,7 +14,7 @@ struct RotozoomState {
 }
 
 impl RotozoomState {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             frame: 0,
             y: 0,
@@ -37,57 +36,49 @@ impl RotozoomState {
         self.c_rot = libm::cosf(angle) * zoom;
         self.s_rot = libm::sinf(angle) * zoom;
     }
-}
 
-static mut STATE: RotozoomState = RotozoomState::new();
+    pub fn render_next(&mut self) {
+        // Update animation parameters at the beginning of each frame.
+        if self.y == 0 {
+            self.update_transform();
+        }
 
-pub fn render_next() {
-    // This renderer is called from the main loop, not an interrupt.
-    let state = unsafe {
-        &mut *core::ptr::addr_of_mut!(STATE)
-    };
+        let y = self.y;
 
-    // Update animation parameters at the beginning of each frame.
-    if state.y == 0 {
-        state.update_transform();
-    }
+        const CX: f32 = WIDTH as f32 / 2.0;
+        const CY: f32 = HEIGHT as f32 / 2.0;
 
-    let y = state.y;
+        let fy = y as f32 - CY;
 
-    const CX: f32 = WIDTH as f32 / 2.0;
-    const CY: f32 = HEIGHT as f32 / 2.0;
+        let c_rot = self.c_rot;
+        let s_rot = self.s_rot;
 
-    let fy = y as f32 - CY;
+        // Texture coordinate of the first pixel in this scanline.
+        let mut u = -c_rot * CX
+            - s_rot * fy
+            + self.tx
+            + CX;
 
-    let c_rot = state.c_rot;
-    let s_rot = state.s_rot;
+        let mut v = -s_rot * CX
+            + c_rot * fy
+            + CY;
 
-    // Texture coordinate of the first pixel in this scanline.
-    let mut u = -c_rot * CX
-        - s_rot * fy
-        + state.tx
-        + CX;
+        // Render one scanline using incremental coordinate updates.
+        for x in 0..WIDTH {
+            let color = tex_fetch(u, v);
+            camera::set_demo_pixel(x, y, color);
 
-    let mut v = -s_rot * CX
-        + c_rot * fy
-        + CY;
+            u += c_rot;
+            v += s_rot;
+        }
 
-    // Render one scanline using incremental coordinate updates.
-    for x in 0..WIDTH {
-        let color = tex_fetch(u, v);
+        // Advance scanline/frame state.
+        self.y += 1;
 
-        camera::set_demo_pixel(x, y, color);
-
-        u += c_rot;
-        v += s_rot;
-    }
-
-    // Advance scanline/frame state.
-    state.y += 1;
-
-    if state.y >= HEIGHT {
-        state.y = 0;
-        state.frame += 1;
+        if self.y >= HEIGHT {
+            self.y = 0;
+            self.frame += 1;
+        }
     }
 }
 
