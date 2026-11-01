@@ -4,25 +4,22 @@
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
-use cortex_m::peripheral::syst::SystClkSource;
+use cortex_m::peripheral::{scb::SystemHandler, syst::SystClkSource, NVIC, SCB};
 use cortex_m_rt::{entry, exception};
 use panic_halt as _;
+use stm32f4xx_hal::gpio::{GpioExt, Speed};
 use stm32f4::stm32f407::interrupt;
+use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
 use xcore407i_blinker::camera::{clear_demo_canvas, update_clock_from_rtc};
 use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
-    configure_ulpi_pins, usb_bus, F407UsbHs, UvcUsbClass,
+    usb_bus, F407UsbHs, UvcUsbClass,
 };
 use xcore407i_blinker::rotozoom_demo;
 
-const RCC_AHB1ENR: *mut u32 = 0x4002_3830 as *mut u32;
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
-const GPIOA_MODER: *mut u32 = 0x4002_0000 as *mut u32;
-const GPIOA_AFRL: *mut u32 = 0x4002_0020 as *mut u32;
-const GPIOC_MODER: *mut u32 = 0x4002_0800 as *mut u32;
-const GPIOC_AFRL: *mut u32 = 0x4002_0820 as *mut u32;
 // STM32F407 Ethernet MAC register offsets: MACMIIAR=0x10, MACMIIDR=0x14.
 const ETH_MACMIIAR: *mut u32 = 0x4002_8010 as *mut u32;
 const ETH_MACMIIDR: *mut u32 = 0x4002_8014 as *mut u32;
@@ -48,8 +45,6 @@ const BLINK_INTERVAL_MS: u32 = 500;
 
 // One timer interrupt per USB HS microframe (125 us, 8 kHz).
 const USB_POLL_TIMER_HZ: u32 = 8_000;
-const TIM2_IRQ_NUMBER: usize = 28;
-const OTG_HS_IRQ_NUMBER: usize = 77;
 const TIM2_PRIORITY: u8 = 2;
 const SYSTICK_PRIORITY: u8 = 1;
 
@@ -71,31 +66,38 @@ static CAMERA_PTR: AtomicPtr<BoardUvcClass> = AtomicPtr::new(ptr::null_mut());
 #[entry]
 fn main() -> ! {
     system_clock_168mhz();
-    enable_fpu();
+    let mut core = cortex_m::Peripherals::take().unwrap();
+    core.SCB.enable_fpu();
+
+    let device = pac::Peripherals::take().unwrap();
     let rtc_ready = rtc::initialize();
     update_clock_from_rtc();
 
-    enable_cycle_counter();
+    enable_cycle_counter(&mut core);
     //initialize_demo_canvas();
     clear_demo_canvas(0x10);
 
-    configure_blinker_pins();
+    configure_board_pins(
+        device.RCC,
+        device.GPIOA,
+        device.GPIOB,
+        device.GPIOC,
+        device.GPIOH,
+        device.GPIOI,
+    );
     unsafe {
         ETH_MACMIIAR.write_volatile(MII_CLOCK_DIV102);
         phy_write(PHY_LED_CONTROL, 0x38); // manual mode; both LEDs controllable
     }
 
-    let mut core = cortex_m::Peripherals::take().unwrap();
-
     // Keep the 1 ms application timebase. It is independent of USB polling.
     core.SYST.set_clock_source(SystClkSource::Core);
     core.SYST.set_reload(168_000 - 1); // 1 ms at 168 MHz
     core.SYST.clear_current();
-    configure_exception_priorities();
+    configure_exception_priorities(&mut core.SCB);
     core.SYST.enable_interrupt();
     core.SYST.enable_counter();
 
-    unsafe { configure_ulpi_pins() };
     let bus = usb_bus().expect("USB bus initialization failed");
 
     // The large endpoint buffers remain in their existing DMA-visible SRAM
@@ -134,7 +136,7 @@ fn main() -> ! {
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
     // Start only after both objects are fully initialized and published.
-    configure_usb_poll_timer();
+    configure_usb_poll_timer(&mut core.NVIC);
 
     let mut last_blink = 0;
     let mut last_rtc_sample = 0;
@@ -202,39 +204,27 @@ fn TIM2() {
 
 /// Set a simple preemption-priority grouping and the system-handler priorities.
 /// STM32F407 implements four priority bits, stored in the upper nibble.
-fn configure_exception_priorities() {
+fn configure_exception_priorities(scb: &mut SCB) {
     const SCB_AIRCR: *mut u32 = 0xE000_ED0C as *mut u32;
-    const SCB_SHPR3: *mut u32 = 0xE000_ED20 as *mut u32;
 
     unsafe {
         // PRIGROUP=0: all implemented priority bits are preemption priority.
         let aircr = SCB_AIRCR.read_volatile();
         SCB_AIRCR.write_volatile((aircr & !(7 << 8)) | (0x5FA << 16));
 
-        // SysTick is priority 2 (byte 3 of SHPR3, upper nibble implemented).
-        let shpr3 = SCB_SHPR3.read_volatile();
-        SCB_SHPR3.write_volatile(
-            (shpr3 & 0x00FF_FFFF) | ((SYSTICK_PRIORITY as u32) << 28),
-        );
+        // Cortex-M API handles the system-handler priority register layout.
+        scb.set_priority(SystemHandler::SysTick, SYSTICK_PRIORITY << 4);
 
         // This Synopsys driver is polled; it does not provide an OTG_HS NVIC
         // handler. Keep OTG_HS disabled so the core's GINT output cannot vector
         // into the default handler. UsbBus::poll reads and services GINTSTS.
-        let otg_word = OTG_HS_IRQ_NUMBER / 32;
-        let otg_bit = 1u32 << (OTG_HS_IRQ_NUMBER % 32);
-        let icer = (0xE000_E180 + otg_word * 4) as *mut u32;
-        let icpr = (0xE000_E280 + otg_word * 4) as *mut u32;
-        icer.write_volatile(otg_bit);
-        icpr.write_volatile(otg_bit);
+        NVIC::mask(interrupt::OTG_HS);
+        NVIC::unpend(interrupt::OTG_HS);
     }
 }
 
 /// Configure TIM2 for an exact 125 us update period and enable its NVIC line.
-fn configure_usb_poll_timer() {
-    const NVIC_ISER0: *mut u32 = 0xE000_E100 as *mut u32;
-    const NVIC_ICPR0: *mut u32 = 0xE000_E280 as *mut u32;
-    const NVIC_IPR: *mut u8 = 0xE000_E400 as *mut u8;
-
+fn configure_usb_poll_timer(nvic: &mut NVIC) {
     // TIM2CLK=84 MHz, PSC=0, ARR=10499 => 8,000 updates/second.
     let timer_ticks = 84_000_000 / USB_POLL_TIMER_HZ;
     unsafe {
@@ -250,37 +240,22 @@ fn configure_usb_poll_timer() {
         TIM2_EGR.write_volatile(1); // latch PSC/ARR immediately
         TIM2_SR.write_volatile(0); // clear update flag from UG
 
-        // Four priority bits on STM32F407; priority 1 = 0x10.
-        NVIC_IPR.add(TIM2_IRQ_NUMBER).write_volatile(TIM2_PRIORITY << 4);
-        NVIC_ICPR0.write_volatile(1 << TIM2_IRQ_NUMBER);
+        // Cortex-M's NVIC API accepts the hardware-encoded priority byte.
+        nvic.set_priority(interrupt::TIM2, TIM2_PRIORITY << 4);
+        NVIC::unpend(interrupt::TIM2);
 
         // Update interrupt only. Start timer after enabling the NVIC line.
         TIM2_DIER.write_volatile(1);
-        NVIC_ISER0.write_volatile(1 << TIM2_IRQ_NUMBER);
+        NVIC::unmask(interrupt::TIM2);
         TIM2_CR1.write_volatile(1); // CEN
     }
 }
 
-#[inline]
-fn enable_fpu() {
-    // CP10/CP11 full access, equivalent to the C startup's FPU enable.
-    const CPACR: *mut u32 = 0xE000_ED88 as *mut u32;
-    unsafe {
-        CPACR.write_volatile(CPACR.read_volatile() | (0xFu32 << 20));
-        cortex_m::asm::dsb();
-        cortex_m::asm::isb();
-    }
-}
-
-fn enable_cycle_counter() {
-    const DEMCR: *mut u32 = 0xE000_EDFC as *mut u32;
-    const DWT_CTRL: *mut u32 = 0xE000_1000 as *mut u32;
-    const DWT_CYCCNT: *mut u32 = 0xE000_1004 as *mut u32;
-    unsafe {
-        DEMCR.write_volatile(DEMCR.read_volatile() | (1 << 24));
-        DWT_CYCCNT.write_volatile(0);
-        DWT_CTRL.write_volatile(DWT_CTRL.read_volatile() | 1);
-    }
+fn enable_cycle_counter(core: &mut cortex_m::Peripherals) {
+    // DWT access is provided by cortex-m; global trace must be enabled first.
+    core.DCB.enable_trace();
+    core.DWT.set_cycle_count(0);
+    core.DWT.enable_cycle_counter();
 }
 
 #[exception]
@@ -317,18 +292,52 @@ fn system_clock_168mhz() {
     }
 }
 
-fn configure_blinker_pins() {
+/// Configure the Ethernet MDIO/MDC and USB3300 ULPI pin muxes.
+///
+/// The HAL owns the GPIO register layout and alternate-function mapping. The
+/// pins are intentionally dropped after configuration; their hardware state
+/// remains configured for the peripheral.
+fn configure_board_pins(
+    mut rcc: pac::RCC,
+    gpioa: pac::GPIOA,
+    gpiob: pac::GPIOB,
+    gpioc: pac::GPIOC,
+    gpioh: pac::GPIOH,
+    gpioi: pac::GPIOI,
+) {
+    let a = gpioa.split(&mut rcc);
+    let b = gpiob.split(&mut rcc);
+    let c = gpioc.split(&mut rcc);
+    let h = gpioh.split(&mut rcc);
+    let i = gpioi.split(&mut rcc);
+
+    // Enable Ethernet MAC clock (AHB1ENR bit 25) for MDIO/MDC.
     unsafe {
-        // Ethernet MAC, GPIOA and GPIOC clocks.
-        RCC_AHB1ENR.write_volatile(RCC_AHB1ENR.read_volatile() | (1 << 0) | (1 << 2) | (1 << 25));
-        // PA2 = ETH_MDIO, PC1 = ETH_MDC (alternate function 11).
-        GPIOA_MODER
-            .write_volatile((GPIOA_MODER.read_volatile() & !(3 << (2 * 2))) | (2 << (2 * 2)));
-        GPIOA_AFRL
-            .write_volatile((GPIOA_AFRL.read_volatile() & !(0xf << (2 * 4))) | (11 << (2 * 4)));
-        GPIOC_MODER.write_volatile((GPIOC_MODER.read_volatile() & !(3 << 2)) | (2 << 2));
-        GPIOC_AFRL.write_volatile((GPIOC_AFRL.read_volatile() & !(0xf << 4)) | (11 << 4));
+        let rcc = &*pac::RCC::ptr();
+        rcc.ahb1enr().modify(|r, w| w.bits(r.bits() | (1 << 25)));
     }
+
+    // Ethernet: PA2 = ETH_MDIO, PC1 = ETH_MDC (AF11).
+    let _eth_mdio = a.pa2.into_alternate::<11>();
+    let _eth_mdc = c.pc1.into_alternate::<11>();
+
+    // USB3300 ULPI: all data/control pins use AF10 except PA4 SOF (AF12).
+    // The original firmware selected very-high GPIO speed and no pull resistors.
+    let _ulpi_pins = (
+        a.pa3.into_alternate::<10>().speed(Speed::VeryHigh),  // D0
+        a.pa5.into_alternate::<10>().speed(Speed::VeryHigh),  // CLK
+        a.pa4.into_alternate::<12>().speed(Speed::VeryHigh),  // SOF
+        b.pb0.into_alternate::<10>().speed(Speed::VeryHigh),  // D1
+        b.pb1.into_alternate::<10>().speed(Speed::VeryHigh),  // D2
+        b.pb10.into_alternate::<10>().speed(Speed::VeryHigh), // D3
+        b.pb11.into_alternate::<10>().speed(Speed::VeryHigh), // D4
+        b.pb12.into_alternate::<10>().speed(Speed::VeryHigh), // D5
+        b.pb13.into_alternate::<10>().speed(Speed::VeryHigh), // D6
+        b.pb5.into_alternate::<10>().speed(Speed::VeryHigh),  // D7
+        c.pc0.into_alternate::<10>().speed(Speed::VeryHigh),  // STP
+        h.ph4.into_alternate::<10>().speed(Speed::VeryHigh),  // NXT
+        i.pi11.into_alternate::<10>().speed(Speed::VeryHigh), // DIR
+    );
 }
 
 unsafe fn phy_read(reg: u8) -> u16 {

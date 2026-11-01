@@ -54,7 +54,7 @@ pub static UVC_DEBUG_RENDER_OVERLAY_CYCLES: AtomicU32 = AtomicU32::new(0);
 
 #[inline(always)]
 fn cycle_counter() -> u32 {
-    unsafe { (0xE000_1004 as *const u32).read_volatile() }
+    cortex_m::peripheral::DWT::cycle_count()
 }
 
 #[inline(always)]

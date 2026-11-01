@@ -52,7 +52,7 @@ pub fn take_uvc_cycle_metrics() -> (u32, u32, u32) {
 
 #[inline(always)]
 fn cycle_counter() -> u32 {
-    unsafe { (0xE000_1004 as *const u32).read_volatile() }
+    cortex_m::peripheral::DWT::cycle_count()
 }
 
 #[inline(always)]
@@ -87,58 +87,6 @@ unsafe impl UsbPeripheral for F407UsbHs {
 
     fn phy_type(&self) -> PhyType {
         PhyType::ExternalHighSpeed
-    }
-}
-
-/// Configure the exact ULPI pin map used by `Core/Src/usb_otg.c`.
-///
-/// # Safety
-/// The caller must run this during early boot before the OTG_HS peripheral is
-/// enabled and must ensure this pin assignment is not shared with another
-/// active peripheral.
-pub unsafe fn configure_ulpi_pins() {
-    const RCC_AHB1ENR: *mut u32 = 0x4002_3830 as *mut u32;
-    unsafe {
-        // GPIOA/B/C/H/I clocks.
-        RCC_AHB1ENR.write_volatile(
-            RCC_AHB1ENR.read_volatile() | (1 << 0) | (1 << 1) | (1 << 2) | (1 << 7) | (1 << 8),
-        );
-    }
-    // (GPIO base, pin number, alternate function)
-    let pins = [
-        (0x4002_0000, 3, 10),  // PA3 ULPI D0
-        (0x4002_0000, 5, 10),  // PA5 ULPI CLK
-        (0x4002_0000, 4, 12),  // PA4 SOF
-        (0x4002_0400, 0, 10),  // PB0 ULPI D1
-        (0x4002_0400, 1, 10),  // PB1 ULPI D2
-        (0x4002_0400, 10, 10), // PB10 ULPI D3
-        (0x4002_0400, 11, 10), // PB11 ULPI D4
-        (0x4002_0400, 12, 10), // PB12 ULPI D5
-        (0x4002_0400, 13, 10), // PB13 ULPI D6
-        (0x4002_0400, 5, 10),  // PB5 ULPI D7
-        (0x4002_0800, 0, 10),  // PC0 ULPI STP
-        (0x4002_1c00, 4, 10),  // PH4 ULPI NXT
-        (0x4002_2000, 11, 10), // PI11 ULPI DIR
-    ];
-    for (base, pin, af) in pins {
-        unsafe { configure_alternate_pin(base, pin, af) };
-    }
-}
-
-unsafe fn configure_alternate_pin(base: usize, pin: u32, af: u32) {
-    let moder = (base as *mut u32).add(0);
-    let otyper = (base as *mut u32).add(1);
-    let ospeedr = (base as *mut u32).add(2);
-    let pupdr = (base as *mut u32).add(3);
-    let afr = (base as *mut u32).add(8 + (pin / 8) as usize);
-    let shift = pin * 2;
-    let af_shift = (pin % 8) * 4;
-    unsafe {
-        moder.write_volatile((moder.read_volatile() & !(3 << shift)) | (2 << shift));
-        otyper.write_volatile(otyper.read_volatile() & !(1 << pin));
-        ospeedr.write_volatile((ospeedr.read_volatile() & !(3 << shift)) | (3 << shift));
-        pupdr.write_volatile(pupdr.read_volatile() & !(3 << shift));
-        afr.write_volatile((afr.read_volatile() & !(0xf << af_shift)) | (af << af_shift));
     }
 }
 
