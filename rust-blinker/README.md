@@ -1,24 +1,9 @@
 # XCore407I Rust `no_std` blinker
 
-This is the standalone Rust firmware project for the Waveshare XCore407I with
-an STM32F407IGT6. It retains the Ethernet LED blinker and now includes a
-generated 512x512 NV12 color-bar image and a `no_std` UVC 1.1 class layer,
-matching the original project's static video mode.
-
-The board's Ethernet connector indicators are controlled over the STM32
-Ethernet MAC's MDIO/MDC interface; they are not directly connected to MCU GPIO
-pins. The `camera` module generates the frame on demand, so it does not reserve
-the 384 KiB needed for a full NV12 image in SRAM.
-
-The firmware now runs the Ethernet PHY blinker while polling the OTG-HS device
-controller. `usb_uvc` supplies a custom F407 `UsbPeripheral` adapter for the
-USB3300 ULPI pins and a `usb-device` UVC class. The camera advertises a single
-512x512 NV12 frame at 12 fps, handles 26- and 34-byte Probe/Commit requests, and
-sends the compact demo image over high-speed isochronous IN endpoint `0x81`
-(two 1024-byte transactions per microframe). Build with
-`--features uvc-single-transaction` for the one-transaction fallback. The host
-should identify it as a USB video
-class camera; the development USB ID is `1209:4071`.
+Experimental Rust-based USB 2.0 High-Speed UVC camera running on an STM32F407. Implements real-time video generation and isochronous USB streaming 
+using three 768-byte transactions per 125 µs microframe (2,304 bytes per microframe). USB polling is driven by a hardware timer interrupt at 8 kHz. 
+Image data is rendered directly into a custom canvas and streamed without a full-frame copy. Supports 256×256 color and 512×256 monochrome rendering modes. 
+Current prototype achieves 25 FPS.
 
 ## Build
 
