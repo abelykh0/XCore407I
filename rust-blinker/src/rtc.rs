@@ -1,18 +1,10 @@
 //! STM32F407 RTC initialization and cached 24-hour clock display.
+//!
+//! Register access goes through the STM32F407 PAC. The RTC remains backed by
+//! LSE and the backup-domain calendar is only initialized on first use.
 
 use core::sync::atomic::{AtomicU32, Ordering};
-
-const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
-const RCC_BDCR: *mut u32 = 0x4002_3870 as *mut u32;
-const PWR_CR: *mut u32 = 0x4000_7000 as *mut u32;
-
-const RTC_BASE: usize = 0x4000_2800;
-const RTC_TR: *mut u32 = (RTC_BASE + 0x00) as *mut u32;
-const RTC_DR: *mut u32 = (RTC_BASE + 0x04) as *mut u32;
-const RTC_CR: *mut u32 = (RTC_BASE + 0x08) as *mut u32;
-const RTC_ISR: *mut u32 = (RTC_BASE + 0x0c) as *mut u32;
-const RTC_PRER: *mut u32 = (RTC_BASE + 0x10) as *mut u32;
-const RTC_WPR: *mut u32 = (RTC_BASE + 0x24) as *mut u32;
+use stm32f4::stm32f407::{PWR, RCC, RTC};
 
 const PWR_CLOCK_ENABLE: u32 = 1 << 28;
 const PWR_BACKUP_WRITE_ENABLE: u32 = 1 << 8;
@@ -32,61 +24,82 @@ static DISPLAY_HHMMSS: AtomicU32 = AtomicU32::new(0);
 /// Start the LSE-backed RTC and initialize it to 00:00:00 only if its calendar
 /// has never been initialized. Existing backup-domain time is preserved.
 pub fn initialize() -> bool {
-    modify(RCC_APB1ENR, |value| value | PWR_CLOCK_ENABLE);
-    modify(PWR_CR, |value| value | PWR_BACKUP_WRITE_ENABLE);
+    // The PWR peripheral must be clocked before DBP can be changed.
+    let rcc = unsafe { &*RCC::ptr() };
+    let pwr = unsafe { &*PWR::ptr() };
+    let rtc = unsafe { &*RTC::ptr() };
 
-    if read(RTC_ISR) & RTC_CALENDAR_INITIALIZED == 0 {
-        let mut bdcr = read(RCC_BDCR);
+    rcc.apb1enr().modify(|r, w| unsafe {
+        w.bits(r.bits() | PWR_CLOCK_ENABLE)
+    });
+    pwr.cr().modify(|r, w| unsafe {
+        w.bits(r.bits() | PWR_BACKUP_WRITE_ENABLE)
+    });
+
+    if rtc.isr().read().bits() & RTC_CALENDAR_INITIALIZED == 0 {
+        let mut bdcr = rcc.bdcr().read().bits();
         let clock_source = bdcr & RTC_CLOCK_SELECT_MASK;
         if clock_source != 0 && clock_source != RTC_CLOCK_SELECT_LSE {
             return false;
         }
 
         bdcr |= RTC_LSE_ENABLE;
-        write(RCC_BDCR, bdcr);
+        rcc.bdcr().write(|w| unsafe { w.bits(bdcr) });
+
         let mut timeout = 100_000_000u32;
-        while read(RCC_BDCR) & RTC_LSE_READY == 0 && timeout != 0 {
+        while rcc.bdcr().read().bits() & RTC_LSE_READY == 0 && timeout != 0 {
             timeout -= 1;
         }
-        if read(RCC_BDCR) & RTC_LSE_READY == 0 {
+        if rcc.bdcr().read().bits() & RTC_LSE_READY == 0 {
             return false;
         }
 
-        bdcr = read(RCC_BDCR);
-        bdcr = (bdcr & !RTC_CLOCK_SELECT_MASK) | RTC_CLOCK_SELECT_LSE | RTC_CLOCK_ENABLE;
-        write(RCC_BDCR, bdcr);
+        bdcr = rcc.bdcr().read().bits();
+        bdcr = (bdcr & !RTC_CLOCK_SELECT_MASK)
+            | RTC_CLOCK_SELECT_LSE
+            | RTC_CLOCK_ENABLE;
+        rcc.bdcr().write(|w| unsafe { w.bits(bdcr) });
 
         // Unlock the RTC write-protected registers and enter initialization mode.
-        write(RTC_WPR, 0xca);
-        write(RTC_WPR, 0x53);
-        modify(RTC_ISR, |value| value | RTC_INIT);
+        rtc.wpr().write(|w| unsafe { w.bits(0xca) });
+        rtc.wpr().write(|w| unsafe { w.bits(0x53) });
+        rtc.isr().modify(|r, w| unsafe {
+            w.bits(r.bits() | RTC_INIT)
+        });
+
         let mut timeout = 1_000_000u32;
-        while read(RTC_ISR) & RTC_INIT_READY == 0 && timeout != 0 {
+        while rtc.isr().read().bits() & RTC_INIT_READY == 0 && timeout != 0 {
             timeout -= 1;
         }
-        if read(RTC_ISR) & RTC_INIT_READY == 0 {
-            write(RTC_WPR, 0xff);
+        if rtc.isr().read().bits() & RTC_INIT_READY == 0 {
+            rtc.wpr().write(|w| unsafe { w.bits(0xff) });
             return false;
         }
 
-        write(RTC_PRER, (127 << 16) | 255);
-        modify(RTC_CR, |value| value & !RTC_24_HOUR_FORMAT);
+        rtc.prer().write(|w| unsafe { w.bits((127 << 16) | 255) });
+        rtc.cr().modify(|r, w| unsafe {
+            w.bits(r.bits() & !RTC_24_HOUR_FORMAT)
+        });
         // Match the C reference's first-use clock setting, midnight.
-        write(RTC_TR, 0);
+        rtc.tr().write(|w| unsafe { w.bits(0) });
         // 2000-01-01 is Saturday (RTC weekday encoding: Monday = 1).
-        write(RTC_DR, (6 << 13) | (1 << 8) | 1);
-        modify(RTC_ISR, |value| value & !RTC_INIT);
-        write(RTC_WPR, 0xff);
+        rtc.dr().write(|w| unsafe { w.bits((6 << 13) | (1 << 8) | 1) });
+        rtc.isr().modify(|r, w| unsafe {
+            w.bits(r.bits() & !RTC_INIT)
+        });
+        rtc.wpr().write(|w| unsafe { w.bits(0xff) });
     }
 
     // On a CPU reset the RTC shadow registers may need resynchronization even
     // though the backup-powered calendar itself kept running.
-    modify(RTC_ISR, |value| value & !RTC_SHADOW_SYNC);
+    rtc.isr().modify(|r, w| unsafe {
+        w.bits(r.bits() & !RTC_SHADOW_SYNC)
+    });
     let mut timeout = 1_000_000u32;
-    while read(RTC_ISR) & RTC_SHADOW_SYNC == 0 && timeout != 0 {
+    while rtc.isr().read().bits() & RTC_SHADOW_SYNC == 0 && timeout != 0 {
         timeout -= 1;
     }
-    if read(RTC_ISR) & RTC_SHADOW_SYNC == 0 {
+    if rtc.isr().read().bits() & RTC_SHADOW_SYNC == 0 {
         return false;
     }
 
@@ -96,10 +109,11 @@ pub fn initialize() -> bool {
 
 /// Refresh the overlay's cached time. Call this about once per second.
 pub fn refresh_display_time() {
-    let time = read(RTC_TR);
+    let rtc = unsafe { &*RTC::ptr() };
+    let time = rtc.tr().read().bits();
     // Reading the date after the time completes the RTC shadow-register
     // sequence and keeps subsequent reads synchronized to a calendar second.
-    let _date = read(RTC_DR);
+    let _date = rtc.dr().read().bits();
 
     let Some(hours) = decode_bcd((time >> 16) & 0x3f) else {
         return;
@@ -147,19 +161,4 @@ fn decode_bcd(value: u32) -> Option<u8> {
         return None;
     }
     Some(tens * 10 + units)
-}
-
-#[inline(always)]
-fn read(address: *mut u32) -> u32 {
-    unsafe { address.read_volatile() }
-}
-
-#[inline(always)]
-fn write(address: *mut u32, value: u32) {
-    unsafe { address.write_volatile(value) }
-}
-
-#[inline(always)]
-fn modify(address: *mut u32, f: impl FnOnce(u32) -> u32) {
-    write(address, f(read(address)));
 }
