@@ -104,7 +104,7 @@ fn main() -> ! {
     // allocation. The UsbDevice itself remains in CCM as in the original code.
     static mut CAMERA: MaybeUninit<BoardUvcClass> = MaybeUninit::uninit();
 
-    #[link_section = ".ccmram.usb_device"]
+    #[unsafe(link_section = ".ccmram.usb_device")]
     static mut USB_DEVICE: MaybeUninit<BoardUsbDevice> = MaybeUninit::uninit();
 
     // Construct in place and publish raw pointers. No long-lived &mut reference

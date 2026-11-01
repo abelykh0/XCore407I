@@ -27,17 +27,17 @@ static UVC_SUBMIT_CYCLES: AtomicU32 = AtomicU32::new(0);
 
 // Keep these debugger-visible counters while investigating high-bandwidth
 // streaming. They separate packet generation, FIFO submission, and USB XFRC.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_GENERATED_BATCHES: AtomicU32 = AtomicU32::new(0);
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_SUBMITTED_BATCHES: AtomicU32 = AtomicU32::new(0);
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_SUBMIT_ERRORS: AtomicU32 = AtomicU32::new(0);
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_IN_COMPLETIONS: AtomicU32 = AtomicU32::new(0);
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_INCOMPLETE_EVENTS: AtomicU32 = AtomicU32::new(0);
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_INCOMPLETE_RECOVERIES: AtomicU32 = AtomicU32::new(0);
 
 /// Return and clear the measured cycle count spent generating/submitting UVC

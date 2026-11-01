@@ -50,7 +50,7 @@ rust_copy_words_asm:
     .unreq count
 "#, options(raw));
 
-extern "C" {
+unsafe extern "C" {
     fn rust_copy_words_asm(src: *const u32, dst: *mut u32, words: u32);
 }
 

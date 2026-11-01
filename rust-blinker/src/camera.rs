@@ -43,13 +43,13 @@ pub const CANVAS_BYTES: usize = WIDTH * CANVAS_HEIGHT;
 pub const CANVAS_TAIL_BYTES: usize = 19_200;
 pub const CANVAS_MAIN_BYTES: usize = CANVAS_BYTES - CANVAS_TAIL_BYTES;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_RENDER_Y_CYCLES: AtomicU32 = AtomicU32::new(0);
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_RENDER_UV_CYCLES: AtomicU32 = AtomicU32::new(0);
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_RENDER_COPY_CYCLES: AtomicU32 = AtomicU32::new(0);
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static UVC_DEBUG_RENDER_OVERLAY_CYCLES: AtomicU32 = AtomicU32::new(0);
 
 #[inline(always)]
@@ -66,13 +66,13 @@ fn record_render_cycles(start: u32, counter: &AtomicU32) {
 struct AlignedCanvas<const N: usize>([u8; N]);
 
 static mut DEMO_CANVAS: AlignedCanvas<CANVAS_MAIN_BYTES> = AlignedCanvas([0; CANVAS_MAIN_BYTES]);
-#[link_section = ".ccmram.canvas"]
+#[unsafe(link_section = ".ccmram.canvas")]
 static mut DEMO_CANVAS_TAIL: AlignedCanvas<CANVAS_TAIL_BYTES> =
     AlignedCanvas([0; CANVAS_TAIL_BYTES]);
 
 #[repr(C, align(4))]
 struct RowBuffers([u8; WIDTH * 2]);
-#[link_section = ".ccmram.rows"]
+#[unsafe(link_section = ".ccmram.rows")]
 static mut ROW_BUFFERS: RowBuffers = RowBuffers([0; WIDTH * 2]);
 static CAMERA_IN_USE: AtomicBool = AtomicBool::new(false);
 static CLOCK_VERSION: AtomicU32 = AtomicU32::new(0);
