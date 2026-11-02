@@ -199,7 +199,9 @@ fn main() -> ! {
             update_clock_from_rtc();
         }
 
-        if USB_HOST_TASK_PENDING.swap(false, Ordering::AcqRel) {\n            unsafe { tusb::tuh_task_ext(0, false); }\n        }
+        if USB_HOST_TASK_PENDING.swap(false, Ordering::AcqRel) {
+            unsafe { tusb::tuh_task_ext(0, false); }
+        }
 
         let status = USB_FS_STATUS.swap(0, Ordering::AcqRel);
         let message: &[u8] = match status {
@@ -313,9 +315,8 @@ fn configure_usb_host_task_timer(
     tim3: &pac::TIM3,
     nvic: &mut NVIC,
 ) {
-    // TIM3CLK = 84 MHz (APB1 prescaler is /4, timer clock is doubled).
-    // 84 MHz / 84,000 = 1,000 Hz.
-    const TIMER_TICKS: u32 = 84_000;
+    // TIM3CLK = 84 MHz (SYSCLK=168 MHz, APB1=/4, timer clock doubled).
+    // PSC=83 divides 84 MHz to 1 MHz; ARR=999 gives a 1 kHz update rate.
 
     rcc.apb1enr().modify(|_, w| w.tim3en().set_bit());
 
@@ -324,8 +325,8 @@ fn configure_usb_host_task_timer(
 
     tim3.cr1().write(|w| w.cen().clear_bit());
     tim3.dier().write(|w| w.uie().clear_bit());
-    tim3.psc().write(|w| unsafe { w.psc().bits(0) });
-    tim3.arr().write(|w| unsafe { w.arr().bits(TIMER_TICKS - 1) });
+    tim3.psc().write(|w| unsafe { w.psc().bits(83) });
+    tim3.arr().write(|w| unsafe { w.arr().bits(999) });
     tim3.egr().write(|w| w.ug().set_bit());
     tim3.sr().write(|w| w.uif().clear_bit());
 
