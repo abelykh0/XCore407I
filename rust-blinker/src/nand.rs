@@ -159,6 +159,12 @@ fn read_status() -> Result<u8, Error> {
 fn program_page(page: u32) -> Result<(), Error> {
     write_cmd(CMD_PROGRAM);
     row_address(page);
+
+    // K9F1G08U0E specifies tADL >= 100 ns from the final address
+    // WE rising edge to the first data WE rising edge. Do not rely on
+    // the current FSMC timing configuration to provide that margin.
+    cortex_m::asm::delay(1_000);
+
     for i in 0..PAGE_BYTES {
         write_data((i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5);
     }
