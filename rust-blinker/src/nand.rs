@@ -192,6 +192,52 @@ fn verify_page(page: u32) -> Result<(), Error> {
     Ok(())
 }
 
+fn hex_digit(value: u8) -> u8 {
+    b"0123456789ABCDEF"[(value & 0x0F) as usize]
+}
+
+fn show_hex_bytes(prefix: &[u8], bytes: &[u8]) {
+    let mut line = [b' '; 32];
+    let mut pos = 0;
+    for &ch in prefix {
+        if pos < line.len() { line[pos] = ch; pos += 1; }
+    }
+    for (index, &byte) in bytes.iter().enumerate() {
+        if pos + 3 > line.len() { break; }
+        if index != 0 { line[pos] = b' '; pos += 1; }
+        line[pos] = hex_digit(byte >> 4);
+        line[pos + 1] = hex_digit(byte);
+        pos += 2;
+    }
+    show_usb_status(&line);
+}
+
+/// Capture independent program status and raw data/spare reads before verify.
+/// Each call advances to a new diagnostic text row on the camera canvas.
+fn show_program_diagnostics(page: u32) -> Result<(), Error> {
+    // Read the status register immediately after program completion, before
+    // issuing any other NAND command. Bit 7=1 means not write-protected;
+    // bit 0=1 means program/erase failure.
+    let status = read_status()?;
+    let mut status_line = *b"STATUS: 00 WP:0 FAIL:0";
+    status_line[8] = hex_digit(status >> 4);
+    status_line[9] = hex_digit(status);
+    status_line[15] = if status & 0x80 != 0 { b'1' } else { b'0' };
+    status_line[23] = if status & 0x01 != 0 { b'1' } else { b'0' };
+    show_usb_status(&status_line);
+
+    // Read the first 16 programmed bytes from column zero.
+    let mut data = [0u8; 16];
+    read_page(page, 0, &mut data)?;
+    show_hex_bytes(b"DATA0:", &data);
+
+    // Read 16 bytes at the beginning of the spare area (column 2048).
+    let mut spare = [0u8; 16];
+    read_page(page, PAGE_BYTES as u16, &mut spare)?;
+    show_hex_bytes(b"SPARE:", &spare);
+    Ok(())
+}
+
 fn configure_fsmc() {
     unsafe {
         let rcc_ahb3enr = 0x4002_3838 as *mut u32;
@@ -301,6 +347,11 @@ pub fn run_test() {
         return;
     }
     show_usb_status(b"NAND: PROGRAM OK");
+
+    if let Err(e) = show_program_diagnostics(page) {
+        report_error(e);
+        return;
+    }
 
     if let Err(e) = verify_page(page) {
         report_error(e);
