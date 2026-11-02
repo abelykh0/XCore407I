@@ -377,6 +377,8 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
     let mut locks = locks_before;
     let mut text = [b' '; 32];
     let mut used = 0usize;
+    let mut emulator_input = [0u8; 32];
+    let mut emulator_used = 0usize;
 
     let previous = unsafe { PREVIOUS_KEYS };
     let mut current = [0u8; 6];
@@ -404,6 +406,7 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
 
         if let Some(ch) = key_to_ascii(key, shift, locks & 0x02 != 0, locks & 0x01 != 0, control_or_alt) {
             append_keyboard_char(&mut text, &mut used, ch);
+            append_keyboard_char(&mut emulator_input, &mut emulator_used, ch);
         } else if let Some(label) = special_key_label(key, locks & 0x01 != 0) {
             if used != 0 { append_keyboard_char(&mut text, &mut used, b' '); }
             append_keyboard_text(&mut text, &mut used, label);
@@ -439,15 +442,18 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
 
     if used != 0 {
         show_keyboard_input(&text[..used]);
-        // Keep the latest decoded keyboard batch for the emulator main loop.
+    }
+
+    // Only decoded key bytes go to the emulator; display labels are not BK input.
+    if emulator_used != 0 {
         unsafe {
             ptr::copy_nonoverlapping(
-                text.as_ptr(),
+                emulator_input.as_ptr(),
                 core::ptr::addr_of_mut!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
-                used,
+                emulator_used,
             );
         }
-        KEYBOARD_INPUT_LEN.store(used as u8, Ordering::Release);
+        KEYBOARD_INPUT_LEN.store(emulator_used as u8, Ordering::Release);
     }
 }
 
