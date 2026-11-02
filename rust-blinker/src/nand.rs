@@ -161,6 +161,7 @@ struct ProgramTrace {
     writes: u16,
     first: u8,
     last: u8,
+    ecc: u32,
     saw_busy: bool,
     saw_ready: bool,
 }
@@ -178,15 +179,32 @@ fn program_page(page: u32) -> Result<ProgramTrace, Error> {
         writes: 0,
         first: 0,
         last: 0,
+        ecc: 0,
         saw_busy: false,
         saw_ready: false,
     };
+    // Enable bank-2 ECC for one 2 KiB data block. ECCPS=011 selects 2048
+    // bytes. Command/address accesses use the attribute window and are not
+    // included; only accesses through DATA_ADDR feed the ECC accumulator.
+    let pcr2 = (FSMC_BASE + 0x60) as *mut u32;
+    unsafe {
+        let pcr = read_volatile(pcr2);
+        write_volatile(pcr2, (pcr & !(0x3 << 16)) | (3 << 16) | (1 << 6));
+    }
     for i in 0..PAGE_BYTES {
         let value = (i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5;
         if i == 0 { trace.first = value; }
         trace.last = value;
         write_data(value);
         trace.writes += 1;
+    }
+
+    // Capture ECC after exactly 2048 data writes, then disable ECC to clear
+    // the accumulator before the next operation.
+    trace.ecc = unsafe { read_volatile((FSMC_BASE + 0x54) as *const u32) };
+    unsafe {
+        let pcr = read_volatile(pcr2);
+        write_volatile(pcr2, pcr & !(1 << 6));
     }
 
     write_cmd(CMD_PROGRAM_CONFIRM);
@@ -246,6 +264,13 @@ fn show_program_trace(trace: ProgramTrace) {
     line[26] = hex_digit(trace.last >> 4);
     line[27] = hex_digit(trace.last);
     show_usb_status(&line);
+
+    let mut ecc = *b"ECC:00000000";
+    for shift in (0..8).rev() {
+        let index = 4 + (7 - shift);
+        ecc[index] = hex_digit((trace.ecc >> (shift * 4)) as u8);
+    }
+    show_usb_status(&ecc);
 
     let mut rb = *b"RB BUSY:0 READY:0";
     rb[8] = if trace.saw_busy { b'1' } else { b'0' };
