@@ -219,11 +219,11 @@ fn show_program_diagnostics(page: u32) -> Result<(), Error> {
     // issuing any other NAND command. Bit 7=1 means not write-protected;
     // bit 0=1 means program/erase failure.
     let status = read_status()?;
-    let mut status_line = *b"STATUS: 00 WP:0 FAIL:0";
+    let mut status_line = *b"STATUS: 00 WP:0 FAIL:0 ";
     status_line[8] = hex_digit(status >> 4);
     status_line[9] = hex_digit(status);
     status_line[15] = if status & 0x80 != 0 { b'1' } else { b'0' };
-    status_line[23] = if status & 0x01 != 0 { b'1' } else { b'0' };
+    status_line[21] = if status & 0x01 != 0 { b'1' } else { b'0' };
     show_usb_status(&status_line);
 
     // Read the first 16 programmed bytes from column zero.
