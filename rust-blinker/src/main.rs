@@ -81,10 +81,35 @@ fn main() -> ! {
         device.GPIOI,
     );
 
-    // Enable the OTG_FS peripheral clock; OTG_HS remains owned by the UVC driver.
+    // Start the 1 ms timebase before TinyUSB initialization. TinyUSB's
+    // no-RTOS port uses this clock during controller initialization.
+    core.SYST.set_clock_source(SystClkSource::Core);
+    core.SYST.set_reload(168_000 - 1); // 1 ms at 168 MHz
+    core.SYST.clear_current();
+    configure_exception_priorities(&mut core.SCB);
+    core.SYST.enable_interrupt();
+    core.SYST.enable_counter();
+
+    // Enable and reset OTG_FS before handing it to TinyUSB. OTG_HS remains
+    // owned by the UVC driver and is not reset here.
     unsafe {
-        const RCC_AHB2ENR: *mut u32 = 0x4002_384c as *mut u32;
+        const RCC_AHB2ENR: *mut u32 = 0x4002_3834 as *mut u32;
+        const RCC_AHB2RSTR: *mut u32 = 0x4002_382c as *mut u32;
         RCC_AHB2ENR.write_volatile(RCC_AHB2ENR.read_volatile() | (1 << 7));
+        let _ = RCC_AHB2ENR.read_volatile(); // complete the clock-enable write
+
+        RCC_AHB2RSTR.write_volatile(RCC_AHB2RSTR.read_volatile() | (1 << 7));
+        for _ in 0..16 { core::arch::asm!("nop"); }
+        RCC_AHB2RSTR.write_volatile(RCC_AHB2RSTR.read_volatile() & !(1 << 7));
+        let _ = RCC_AHB2RSTR.read_volatile();
+    }
+
+    // Prepare the OTG_FS interrupt while keeping it masked until TinyUSB has
+    // initialized the host controller and installed its interrupt sources.
+    unsafe {
+        core.NVIC.set_priority(interrupt::OTG_FS, 0x3 << 4);
+        NVIC::unpend(interrupt::OTG_FS);
+        NVIC::mask(interrupt::OTG_FS);
     }
 
     // Initialize TinyUSB host on root-hub port 0 (OTG_FS).
@@ -95,19 +120,10 @@ fn main() -> ! {
     };
     if unsafe { tusb::tuh_rhport_init(0, &rh_init) } {
         USB_FS_STATUS.store(1, Ordering::Release);
+        unsafe { NVIC::unmask(interrupt::OTG_FS); }
     } else {
         USB_FS_STATUS.store(2, Ordering::Release);
     }
-
-    // Keep the 1 ms application timebase. It is independent of USB polling.
-    core.SYST.set_clock_source(SystClkSource::Core);
-    core.SYST.set_reload(168_000 - 1); // 1 ms at 168 MHz
-    core.SYST.clear_current();
-
-    configure_exception_priorities(&mut core.SCB);
-
-    core.SYST.enable_interrupt();
-    core.SYST.enable_counter();
 
     let bus = usb_bus().expect("USB bus initialization failed");
 
