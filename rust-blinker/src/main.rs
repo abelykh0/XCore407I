@@ -94,7 +94,7 @@ fn main() -> ! {
     // owned by the UVC driver and is not reset here.
     unsafe {
         const RCC_AHB2ENR: *mut u32 = 0x4002_3834 as *mut u32;
-        const RCC_AHB2RSTR: *mut u32 = 0x4002_382c as *mut u32;
+        const RCC_AHB2RSTR: *mut u32 = 0x4002_3814 as *mut u32;
         RCC_AHB2ENR.write_volatile(RCC_AHB2ENR.read_volatile() | (1 << 7));
         let _ = RCC_AHB2ENR.read_volatile(); // complete the clock-enable write
 
