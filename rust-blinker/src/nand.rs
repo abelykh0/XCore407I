@@ -169,7 +169,7 @@ fn verify_page(page: u32) -> Result<(), Error> {
     write_addr((page >> 8) as u8);
     write_addr((page >> 16) as u8);
     write_cmd(CMD_READSTART);
-    wait_ready_status()?;
+    wait_ready_rb()?;
 
     for i in 0..PAGE_BYTES {
         let actual = read_data();
@@ -251,7 +251,7 @@ pub fn run_test() {
 
     // Reset the device and wait until it is ready.
     write_cmd(CMD_RESET);
-    if let Err(e) = wait_ready() {
+    if let Err(e) = wait_ready_status() {
         report_error(e);
         return;
     }
