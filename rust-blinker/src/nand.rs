@@ -75,7 +75,6 @@ fn row_address(page: u32) {
     write_addr(0); // column high
     write_addr(page as u8);
     write_addr((page >> 8) as u8);
-    write_addr((page >> 16) as u8);
 }
 
 fn read_page(page: u32, column: u16, out: &mut [u8]) -> Result<(), Error> {
@@ -84,7 +83,6 @@ fn read_page(page: u32, column: u16, out: &mut [u8]) -> Result<(), Error> {
     write_addr((column >> 8) as u8);
     write_addr(page as u8);
     write_addr((page >> 8) as u8);
-    write_addr((page >> 16) as u8);
     write_cmd(CMD_READSTART);
     wait_ready()?;
     for byte in out {
@@ -118,7 +116,6 @@ fn erase_block(block: u32) -> Result<(), Error> {
     write_cmd(CMD_ERASE);
     write_addr(page as u8);
     write_addr((page >> 8) as u8);
-    write_addr((page >> 16) as u8);
     write_cmd(CMD_ERASE_CONFIRM);
     wait_ready()?;
     if read_status()? & 0x01 != 0 {
