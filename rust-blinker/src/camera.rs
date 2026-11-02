@@ -389,6 +389,40 @@ pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
     }
 }
 
+/// Draw a persistent status message after a USB keyboard is enumerated.
+///
+/// The USB FS host layer should call this from its keyboard-connected event.
+/// Text is drawn into the compact canvas and therefore works in color and
+/// monochrome modes without changing the UVC packetizer.
+pub fn show_keyboard_connected() {
+    use crate::font8x8::FONT8X8;
+
+    const MESSAGE: &[u8] = b"USB KEYBOARD CONNECTED";
+    const START_X: usize = 2;
+    const START_Y: usize = 2;
+    const FOREGROUND: u8 = 63;
+    const BACKGROUND: u8 = 0;
+
+    for (character_index, character) in MESSAGE.iter().enumerate() {
+        let glyph = (*character as usize - 1) * 8;
+        for row in 0..8 {
+            let bits = FONT8X8[glyph + row];
+            for column in 0..8 {
+                let color = if bits & (0x80 >> column) != 0 {
+                    FOREGROUND
+                } else {
+                    BACKGROUND
+                };
+                set_demo_pixel(
+                    START_X + character_index * 8 + column,
+                    START_Y * 8 + row,
+                    color,
+                );
+            }
+        }
+    }
+}
+
 /// Update the top-center clock text directly in the source canvas.
 pub fn update_clock_from_rtc() {
     let text = crate::rtc::display_time();
