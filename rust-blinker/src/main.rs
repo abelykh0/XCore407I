@@ -170,7 +170,8 @@ fn main() -> ! {
             update_clock_from_rtc();
         }
 
-        rotozoom.render_next();
+        // Keyboard status will be rendered by the USB FS host connection callback.
+        // rotozoom.render_next();
     }
 }
 
