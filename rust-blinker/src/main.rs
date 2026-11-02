@@ -19,6 +19,7 @@ use xcore407i_blinker::usb_uvc::{
 };
 use xcore407i_blinker::rotozoom_demo::RotozoomState;
 
+const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
 const BLINK_INTERVAL_MS: u32 = 500;
 
@@ -337,12 +338,6 @@ fn configure_board_pins(
     let c = gpioc.split(rcc);
     let h = gpioh.split(rcc);
     let i = gpioi.split(rcc);
-
-    // Enable Ethernet MAC clock (AHB1ENR bit 25) for MDIO/MDC.
-    unsafe {
-        let rcc = &*pac::RCC::ptr();
-        rcc.ahb1enr().modify(|r, w| w.bits(r.bits() | (1 << 25)));
-    }
 
     // USB FS host data pins use the internal PHY (AF10).
     let _usb_fs_pins = (
