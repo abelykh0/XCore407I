@@ -189,7 +189,7 @@ fn program_page(page: u32) -> Result<ProgramTrace, Error> {
     let pcr2 = (FSMC_BASE + 0x60) as *mut u32;
     unsafe {
         let pcr = read_volatile(pcr2);
-        write_volatile(pcr2, (pcr & !(0x3 << 16)) | (3 << 16) | (1 << 6));
+        write_volatile(pcr2, (pcr & !(0x7 << 17)) | (3 << 17) | (1 << 6));
     }
     for i in 0..PAGE_BYTES {
         let value = (i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5;
