@@ -13,6 +13,7 @@ use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
 use xcore407i_blinker::camera::{clear_demo_canvas, show_usb_status, update_clock_from_rtc};
+use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
@@ -30,6 +31,7 @@ static TICKS: AtomicU32 = AtomicU32::new(0);
 const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
 const CORE_CLOCK_HZ: u64 = 168_000_000;
 static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
+static USB_FS_STATUS: AtomicU32 = AtomicU32::new(0);
 
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
@@ -56,7 +58,7 @@ fn main() -> ! {
 
     // initialize_demo_canvas();
     clear_demo_canvas(0x10);
-    show_usb_status(b"USB FS: HOST DRIVER NOT READY");
+    show_usb_status(b"USB FS: INIT");
 
     configure_board_pins(
         &mut device.RCC,
@@ -66,6 +68,20 @@ fn main() -> ! {
         device.GPIOH,
         device.GPIOI,
     );
+
+    // Enable the OTG_FS peripheral clock; OTG_HS remains owned by the UVC driver.
+    unsafe {
+        const RCC_AHB2ENR: *mut u32 = 0x4002_384c as *mut u32;
+        RCC_AHB2ENR.write_volatile(RCC_AHB2ENR.read_volatile() | (1 << 7));
+    }
+
+    // Initialize TinyUSB host on root-hub port 0 (OTG_FS).
+    show_usb_status(b"USB FS: HOST INIT");
+    if unsafe { tusb::tuh_init(0) } {
+        USB_FS_STATUS.store(1, Ordering::Release);
+    } else {
+        USB_FS_STATUS.store(2, Ordering::Release);
+    }
 
     // Keep the 1 ms application timebase. It is independent of USB polling.
     core.SYST.set_clock_source(SystClkSource::Core);
@@ -138,9 +154,49 @@ fn main() -> ! {
             update_clock_from_rtc();
         }
 
-        // Keyboard status will be rendered by the USB FS host connection callback.
+        unsafe { tusb::tuh_task_ext(0, false); }
+
+        let status = USB_FS_STATUS.swap(0, Ordering::AcqRel);
+        let message: &[u8] = match status {
+            1 => b"USB FS: WAITING FOR DEVICE",
+            2 => b"USB FS: HOST INIT FAILED",
+            3 => b"USB FS: DEVICE ENUMERATED",
+            4 => b"USB FS: KEYBOARD MOUNTED",
+            5 => b"USB FS: KEYBOARD REMOVED",
+            6 => b"USB FS: KEY REPORT RECEIVED",
+            _ => b"",
+        };
+        if !message.is_empty() { show_usb_status(message); }
+
         // rotozoom.render_next();
     }
+}
+
+
+#[interrupt]
+fn OTG_FS() {
+    unsafe { tusb::hcd_int_handler(0, true); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tuh_mount_cb(_dev_addr: u8) { USB_FS_STATUS.store(3, Ordering::Release); }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tuh_umount_cb(_dev_addr: u8) { USB_FS_STATUS.store(5, Ordering::Release); }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tuh_hid_mount_cb(dev_addr: u8, instance: u8, _desc: *const u8, _len: u16) {
+    USB_FS_STATUS.store(4, Ordering::Release);
+    unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tuh_hid_umount_cb(_dev_addr: u8, _instance: u8) { USB_FS_STATUS.store(5, Ordering::Release); }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tuh_hid_report_received_cb(dev_addr: u8, instance: u8, _report: *const u8, _len: u16) {
+    USB_FS_STATUS.store(6, Ordering::Release);
+    unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
 }
 
 /// TIM2 fires at 8 kHz. This is the only place that calls UsbDevice::poll().
