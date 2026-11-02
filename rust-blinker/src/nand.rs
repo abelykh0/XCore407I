@@ -140,8 +140,7 @@ fn erase_block(block: u32) -> Result<(), Error> {
 }
 
 fn read_status() -> Result<u8, Error> {
-    // Call only after wait_ready() has observed R/B high. Read the status byte
-    // directly; calling wait_ready() after 0x70 would issue another command.
+    // Call only after wait_ready_rb() has observed R/B high.
     write_cmd(CMD_STATUS);
     Ok(read_data())
 }
@@ -150,7 +149,6 @@ fn program_page(page: u32) -> Result<(), Error> {
     write_cmd(CMD_PROGRAM);
     row_address(page);
     for i in 0..PAGE_BYTES {
-        // Deterministic nontrivial pattern, different in every byte position.
         write_data((i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5);
     }
     write_cmd(CMD_PROGRAM_CONFIRM);
@@ -183,36 +181,17 @@ fn verify_page(page: u32) -> Result<(), Error> {
 
 fn configure_fsmc() {
     unsafe {
-        // AHB3 FSMC clock.
         let rcc_ahb3enr = 0x4002_3838 as *mut u32;
         write_volatile(rcc_ahb3enr, read_volatile(rcc_ahb3enr) | 1);
-
-        // Disable bank while programming timing and control registers.
         let pcr2 = (FSMC_BASE + 0x60) as *mut u32;
         write_volatile(pcr2, 0);
-
-        // Conservative asynchronous NAND timings at 168 MHz HCLK.
-        // PMEM/PATT fields: setup=4, wait=8, hold=4, Hi-Z=2 HCLK cycles.
         let timing = 4 | (8 << 8) | (4 << 16) | (2 << 24);
         write_volatile((FSMC_BASE + 0x68) as *mut u32, timing);
         write_volatile((FSMC_BASE + 0x6C) as *mut u32, timing);
-
-        // NAND bank 2, 8-bit bus, CLE/ALE timing margins, no hardware ECC.
-        // PBKEN=1, PTYP=1 (NAND), PWID=00 (8-bit), TCLR=2, TAR=2.
         let control = (1 << 2) | (1 << 3) | (2 << 9) | (2 << 13);
         write_volatile(pcr2, control);
         let _ = read_volatile(pcr2);
     }
-}
-
-fn emit_hex(prefix: &[u8], value: u8) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut line = [b' '; 32];
-    let len = prefix.len().min(26);
-    line[..len].copy_from_slice(&prefix[..len]);
-    line[len] = HEX[(value >> 4) as usize];
-    line[len + 1] = HEX[(value & 0x0F) as usize];
-    show_usb_status(&line[..len + 2]);
 }
 
 fn report_error(error: Error) {
@@ -249,7 +228,6 @@ pub fn run_test() {
     show_usb_status(b"NAND: FSMC INIT");
     configure_fsmc();
 
-    // Reset the device and wait until it is ready.
     write_cmd(CMD_RESET);
     if let Err(e) = wait_ready_status() {
         report_error(e);
@@ -258,20 +236,22 @@ pub fn run_test() {
 
     let mut id = [0u8; 5];
     read_id(&mut id);
-    emit_hex(b"NAND ID0: ", id[0]);
-    emit_hex(b"NAND ID1: ", id[1]);
-    emit_hex(b"NAND ID2: ", id[2]);
-    emit_hex(b"NAND ID3: ", id[3]);
-    emit_hex(b"NAND ID4: ", id[4]);
+
+    // One compact status row: ID0 through ID4, in byte order.
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut id_line = *b"ID0..4: 00 00 00 00 00";
+    for (index, value) in id.iter().copied().enumerate() {
+        let offset = 8 + index * 3;
+        id_line[offset] = HEX[(value >> 4) as usize];
+        id_line[offset + 1] = HEX[(value & 0x0F) as usize];
+    }
+    show_usb_status(&id_line);
 
     if id[0] != 0xEC || id[1] != 0xF1 {
         report_error(Error::WrongId);
         return;
     }
 
-    // Samsung specifies 1,024 blocks, 64 pages/block, 2,048+64 bytes/page.
-    // Never erase block 0; scan the remaining blocks for untouched factory
-    // markers in the first two pages before selecting a test block.
     let mut selected = None;
     for block in 1..BLOCK_COUNT {
         match block_is_good(block) {
