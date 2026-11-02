@@ -3,7 +3,7 @@
 
 use core::mem::MaybeUninit;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, Ordering};
 use cortex_m::peripheral::{scb::SystemHandler, syst::SystClkSource, NVIC, SCB};
 use cortex_m_rt::{entry, exception};
 use panic_halt as _;
@@ -48,6 +48,14 @@ static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
 static USB_FS_STATUS: AtomicU32 = AtomicU32::new(0);
 // TIM3 schedules TinyUSB host work; the actual task runs in thread context.
 static USB_HOST_TASK_PENDING: AtomicBool = AtomicBool::new(false);
+
+// HID boot-keyboard state. TinyUSB invokes HID callbacks from tuh_task_ext(),
+// so these non-atomic key snapshots are only accessed serially there.
+static mut PREVIOUS_KEYS: [u8; 6] = [0; 6];
+static KEYBOARD_LOCKS: AtomicU8 = AtomicU8::new(0);
+static KEYBOARD_DEVICE: AtomicU8 = AtomicU8::new(0);
+static KEYBOARD_INSTANCE: AtomicU8 = AtomicU8::new(0);
+static mut KEYBOARD_LED_REPORT: u8 = 0;
 
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
@@ -210,9 +218,10 @@ fn main() -> ! {
             3 => b"USB FS: DEVICE ENUMERATED",
             4 => b"USB FS: KEYBOARD MOUNTED",
             5 => b"USB FS: KEYBOARD REMOVED",
-            6 => b"USB FS: KEY REPORT RECEIVED",
+            6 => b"USB FS: KEYBOARD INPUT",
             7 => b"USB FS: DEVICE DESCRIPTOR",
             8 => b"USB FS: CONFIG DESCRIPTOR",
+            9 => b"USB FS: BOOT PROTOCOL FAILED",
             _ => b"",
         };
         if !message.is_empty() { show_usb_status(message); }
@@ -246,17 +255,216 @@ pub extern "C" fn tuh_umount_cb(_dev_addr: u8) { USB_FS_STATUS.store(5, Ordering
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tuh_hid_mount_cb(dev_addr: u8, instance: u8, _desc: *const u8, _len: u16) {
+    KEYBOARD_DEVICE.store(dev_addr, Ordering::Release);
+    KEYBOARD_INSTANCE.store(instance, Ordering::Release);
+    KEYBOARD_LOCKS.store(0, Ordering::Release);
+    unsafe {
+        PREVIOUS_KEYS = [0; 6];
+        KEYBOARD_LED_REPORT = 0;
+    }
     USB_FS_STATUS.store(4, Ordering::Release);
-    unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
+
+    // TinyUSB normally selects boot protocol for boot keyboards during
+    // enumeration (CFG_TUH_HID_SET_PROTOCOL_ON_ENUM). Verify that before
+    // interpreting reports as the standard 8-byte boot-keyboard packet.
+    if unsafe { tusb::tuh_hid_get_protocol(dev_addr, instance) } != 0 {
+        // Request boot protocol; the completion callback starts reception.
+        if !unsafe { tusb::tuh_hid_set_protocol(dev_addr, instance, 0) } {
+            USB_FS_STATUS.store(9, Ordering::Release);
+        }
+    } else {
+        unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tuh_hid_umount_cb(_dev_addr: u8, _instance: u8) { USB_FS_STATUS.store(5, Ordering::Release); }
+pub extern "C" fn tuh_hid_umount_cb(dev_addr: u8, instance: u8) {
+    if KEYBOARD_DEVICE.load(Ordering::Acquire) == dev_addr
+        && KEYBOARD_INSTANCE.load(Ordering::Acquire) == instance
+    {
+        KEYBOARD_DEVICE.store(0, Ordering::Release);
+        KEYBOARD_INSTANCE.store(0, Ordering::Release);
+        KEYBOARD_LOCKS.store(0, Ordering::Release);
+        unsafe { PREVIOUS_KEYS = [0; 6]; }
+    }
+    USB_FS_STATUS.store(5, Ordering::Release);
+}
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tuh_hid_report_received_cb(dev_addr: u8, instance: u8, _report: *const u8, _len: u16) {
-    USB_FS_STATUS.store(6, Ordering::Release);
+pub extern "C" fn tuh_hid_set_protocol_complete_cb(_dev_addr: u8, _instance: u8, protocol: u8) {
+    if protocol == 0 {
+        unsafe { tusb::tuh_hid_receive_report(
+            KEYBOARD_DEVICE.load(Ordering::Acquire),
+            KEYBOARD_INSTANCE.load(Ordering::Acquire),
+        ); }
+    } else {
+        USB_FS_STATUS.store(9, Ordering::Release);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tuh_hid_report_received_cb(
+    dev_addr: u8,
+    instance: u8,
+    report: *const u8,
+    len: u16,
+) {
+    if len >= 8 && !report.is_null() {
+        let bytes = unsafe { core::slice::from_raw_parts(report, len as usize) };
+        process_boot_keyboard_report(dev_addr, instance, bytes);
+    }
+    // Re-arm the interrupt-IN endpoint after every completed report.
     unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
+}
+
+/// Process an 8-byte USB HID boot-keyboard report:
+/// [modifier, reserved, key1..key6].
+fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
+    if KEYBOARD_DEVICE.load(Ordering::Acquire) != dev_addr
+        || KEYBOARD_INSTANCE.load(Ordering::Acquire) != instance
+    {
+        return;
+    }
+
+    let modifiers = report[0];
+    let shift = modifiers & 0x22 != 0;
+    let control_or_alt = modifiers & 0xcc != 0;
+    let locks_before = KEYBOARD_LOCKS.load(Ordering::Acquire);
+    let mut locks = locks_before;
+    let mut text = [b' '; 32];
+    let mut used = 0usize;
+
+    let previous = unsafe { PREVIOUS_KEYS };
+    let mut current = [0u8; 6];
+    current.copy_from_slice(&report[2..8]);
+
+    for &key in current.iter() {
+        if key == 0 || previous.contains(&key) {
+            continue;
+        }
+
+        // HID keyboard usages for the three toggle keys.
+        match key {
+            0x39 => locks ^= 0x02, // Caps Lock
+            0x53 => locks ^= 0x01, // Num Lock
+            0x47 => locks ^= 0x04, // Scroll Lock
+            _ => {}
+        }
+
+        if let Some(ch) = key_to_ascii(key, shift, locks & 0x02 != 0, locks & 0x01 != 0, control_or_alt) {
+            append_keyboard_char(&mut text, &mut used, ch);
+        } else if let Some(label) = special_key_label(key) {
+            if used != 0 { append_keyboard_char(&mut text, &mut used, b' '); }
+            append_keyboard_text(&mut text, &mut used, label);
+        }
+    }
+
+    unsafe { PREVIOUS_KEYS = current; }
+
+    if locks != locks_before {
+        KEYBOARD_LOCKS.store(locks, Ordering::Release);
+        // HID LED output bits: Num=bit0, Caps=bit1, Scroll=bit2.
+        // SET_REPORT is asynchronous; the one-byte buffer is static and
+        // remains valid until TinyUSB completes the control transfer.
+        unsafe {
+            KEYBOARD_LED_REPORT = locks & 0x07;
+            let led_report = core::ptr::addr_of_mut!(KEYBOARD_LED_REPORT);
+            let _ = tusb::tuh_hid_set_report(
+                dev_addr, instance, 0, 2, led_report, 1,
+            );
+        }
+        append_keyboard_text(&mut text, &mut used, match locks & 0x07 {
+            0 => b" [LOCKS OFF]",
+            1 => b" [NUM]",
+            2 => b" [CAPS]",
+            3 => b" [CAPS+NUM]",
+            4 => b" [SCROLL]",
+            5 => b" [NUM+SCR]",
+            6 => b" [CAPS+SCR]",
+            _ => b" [ALL LOCKS]",
+        });
+    }
+
+    if used != 0 {
+        show_usb_status(&text[..used]);
+    }
+}
+
+fn append_keyboard_char(out: &mut [u8; 32], used: &mut usize, ch: u8) {
+    if *used < out.len() {
+        out[*used] = ch;
+        *used += 1;
+    }
+}
+
+fn append_keyboard_text(out: &mut [u8; 32], used: &mut usize, text: &[u8]) {
+    for &ch in text {
+        append_keyboard_char(out, used, ch);
+    }
+}
+
+fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: bool) -> Option<u8> {
+    if control_or_alt { return None; }
+
+    match key {
+        0x04..=0x1d => {
+            let lower = b'a' + (key - 0x04);
+            Some(if shift ^ caps { lower - 32 } else { lower })
+        }
+        0x1e..=0x27 => {
+            const NORMAL: &[u8; 10] = b"1234567890";
+            const SHIFTED: &[u8; 10] = b"!@#$%^&*()";
+            let i = (key - 0x1e) as usize;
+            Some(if shift { SHIFTED[i] } else { NORMAL[i] })
+        }
+        0x2c => Some(b' '),
+        0x2d => Some(if shift { b'_' } else { b'-' }),
+        0x2e => Some(if shift { b'+' } else { b'=' }),
+        0x2f => Some(if shift { b'{' } else { b'[' }),
+        0x30 => Some(if shift { b'}' } else { b']' }),
+        0x31 => Some(if shift { b'|' } else { b'\\' }),
+        0x33 => Some(if shift { b':' } else { b';' }),
+        0x34 => Some(if shift { b'"' } else { b'\'' }),
+        0x35 => Some(if shift { b'~' } else { b'`' }),
+        0x36 => Some(if shift { b'<' } else { b',' }),
+        0x37 => Some(if shift { b'>' } else { b'.' }),
+        0x38 => Some(if shift { b'?' } else { b'/' }),
+        0x54 => Some(b'/'),
+        0x55 => Some(b'*'),
+        0x56 => Some(b'-'),
+        0x57 => Some(b'+'),
+        0x58 => Some(b'\n'),
+        0x59..=0x61 if num => Some(b'1' + (key - 0x59)),
+        0x62 if num => Some(b'0'),
+        0x63 if num => Some(b'.'),
+        _ => None,
+    }
+}
+
+fn special_key_label(key: u8) -> Option<&'static [u8]> {
+    match key {
+        0x28 => Some(b"[ENTER]"),
+        0x29 => Some(b"[ESC]"),
+        0x2a => Some(b"[BACKSPACE]"),
+        0x2b => Some(b"[TAB]"),
+        0x39 => Some(b"[CAPS]"),
+        0x46 => Some(b"[PRTSC]"),
+        0x47 => Some(b"[SCROLL]"),
+        0x48 => Some(b"[PAUSE]"),
+        0x49 => Some(b"[INS]"),
+        0x4a => Some(b"[HOME]"),
+        0x4b => Some(b"[PGUP]"),
+        0x4c => Some(b"[DEL]"),
+        0x4d => Some(b"[END]"),
+        0x4e => Some(b"[PGDN]"),
+        0x4f => Some(b"[RIGHT]"),
+        0x50 => Some(b"[LEFT]"),
+        0x51 => Some(b"[DOWN]"),
+        0x52 => Some(b"[UP]"),
+        0x53 => Some(b"[NUM]"),
+        0x65 => Some(b"[MENU]"),
+        _ => None,
+    }
 }
 
 /// TIM2 fires at 8 kHz. This is the only place that calls UsbDevice::poll().
