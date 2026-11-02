@@ -1,6 +1,6 @@
 #![no_std]
 
-pub mod bk_video;
+pub mod bk_screen;
 pub mod camera;
 mod copy_words;
 mod font8x8;
