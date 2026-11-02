@@ -12,7 +12,7 @@ use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::{clear_demo_canvas, update_clock_from_rtc};
+use xcore407i_blinker::camera::{clear_demo_canvas, show_usb_status, update_clock_from_rtc};
 use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
@@ -56,6 +56,7 @@ fn main() -> ! {
 
     // initialize_demo_canvas();
     clear_demo_canvas(0x10);
+    show_usb_status(b"USB FS: HOST DRIVER NOT READY");
 
     configure_board_pins(
         &mut device.RCC,
