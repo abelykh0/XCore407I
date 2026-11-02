@@ -34,8 +34,6 @@
 int busreset( p )
 register pdp_regs *p;
 {
-	fputc('*', stderr);
-	fflush(stderr);
 	q_reset();
 	p->psw = 0200; 
 	return OK;
