@@ -61,14 +61,23 @@ fn read_data() -> u8 {
     unsafe { read_volatile(DATA_ADDR) }
 }
 
-fn wait_ready() -> Result<(), Error> {
+fn wait_ready_rb() -> Result<(), Error> {
     // Do not issue 0x70 here: that changes the NAND's output mux to the status
-    // register and destroys the pending page-data read stream. Poll the
-    // physical active-low R/B signal instead. PD6 is also FSMC_NWAIT; IDR
-    // continues to sample the pad while the pin is in alternate-function mode.
+    // register and destroys the pending page-data read stream. Poll R/B.
     for _ in 0..TIMEOUT {
-        let rb_high = unsafe { read_volatile(GPIOD_IDR) } & NAND_RB_MASK != 0;
-        if rb_high {
+        if unsafe { read_volatile(GPIOD_IDR) } & NAND_RB_MASK != 0 {
+            return Ok(());
+        }
+        core::hint::spin_loop();
+    }
+    Err(Error::Timeout)
+}
+
+fn wait_ready_status() -> Result<(), Error> {
+    // Safe after RESET: there is no page-data stream to preserve.
+    for _ in 0..TIMEOUT {
+        write_cmd(CMD_STATUS);
+        if read_data() & 0x40 != 0 {
             return Ok(());
         }
         core::hint::spin_loop();
@@ -90,7 +99,7 @@ fn read_page(page: u32, column: u16, out: &mut [u8]) -> Result<(), Error> {
     write_addr(page as u8);
     write_addr((page >> 8) as u8);
     write_cmd(CMD_READSTART);
-    wait_ready()?;
+    wait_ready_rb()?;
     for byte in out {
         *byte = read_data();
     }
@@ -123,7 +132,7 @@ fn erase_block(block: u32) -> Result<(), Error> {
     write_addr(page as u8);
     write_addr((page >> 8) as u8);
     write_cmd(CMD_ERASE_CONFIRM);
-    wait_ready()?;
+    wait_ready_rb()?;
     if read_status()? & 0x01 != 0 {
         return Err(Error::EraseFailed);
     }
@@ -145,7 +154,7 @@ fn program_page(page: u32) -> Result<(), Error> {
         write_data((i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5);
     }
     write_cmd(CMD_PROGRAM_CONFIRM);
-    wait_ready()?;
+    wait_ready_rb()?;
     if read_status()? & 0x01 != 0 {
         return Err(Error::ProgramFailed);
     }
@@ -160,7 +169,7 @@ fn verify_page(page: u32) -> Result<(), Error> {
     write_addr((page >> 8) as u8);
     write_addr((page >> 16) as u8);
     write_cmd(CMD_READSTART);
-    wait_ready()?;
+    wait_ready_status()?;
 
     for i in 0..PAGE_BYTES {
         let actual = read_data();
