@@ -389,19 +389,20 @@ pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
     }
 }
 
-/// Draw a USB diagnostic message in canvas text row 31.
-///
-/// The canvas has 32 character rows. Rows 0..30 are left untouched for the
-/// application image; row 31 is reserved for USB status. The message is
-/// clipped to 32 characters so it fits both the 256-pixel color canvas and
-/// the 512-pixel monochrome canvas. Call from the main loop, not an ISR.
+/// Draw a USB diagnostic message at the next text row, starting at the
+/// top-left corner (X=0, Y=0). Successive messages advance down the canvas
+/// and wrap to row zero after the last row. Call from the main loop, not an ISR.
+static USB_STATUS_ROW: AtomicU32 = AtomicU32::new(0);
+
 pub fn show_usb_status(message: &[u8]) {
     use crate::font8x8::FONT8X8;
 
-    const TEXT_ROW: usize = 31;
     const MAX_CHARS: usize = 32;
     const FOREGROUND: u8 = 63;
     const BACKGROUND: u8 = 0;
+    const TEXT_ROWS: usize = CANVAS_HEIGHT / 8;
+
+    let text_row = USB_STATUS_ROW.fetch_add(1, Ordering::Relaxed) as usize % TEXT_ROWS;
 
     for character_index in 0..MAX_CHARS {
         let character = message.get(character_index).copied().unwrap_or(b' ');
@@ -420,7 +421,7 @@ pub fn show_usb_status(message: &[u8]) {
                 };
                 set_demo_pixel(
                     character_index * 8 + column,
-                    TEXT_ROW * 8 + row,
+                    text_row * 8 + row,
                     color,
                 );
             }
