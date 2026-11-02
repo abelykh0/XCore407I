@@ -12,7 +12,7 @@ use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::{clear_demo_canvas, show_keyboard_input, show_usb_status, update_clock_from_rtc};
+use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_keyboard_input, show_usb_status, update_clock_from_rtc};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
@@ -345,6 +345,13 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
 
     for &key in current.iter() {
         if key == 0 || previous.contains(&key) {
+            continue;
+        }
+
+        // F1 requests a camera mode change. The camera applies it at the
+        // next UVC frame boundary and clears the canvas in the new format.
+        if key == 0x3a {
+            request_camera_mode_toggle();
             continue;
         }
 
