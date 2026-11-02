@@ -1,3 +1,11 @@
+use core::sync::atomic::{AtomicU8, Ordering};
+
+static BK_VERTICAL_SHIFT: AtomicU8 = AtomicU8::new(0);
+
+fn shifted_row(vram_y: usize) -> usize {
+    (vram_y + 256 - BK_VERTICAL_SHIFT.load(Ordering::Acquire) as usize) & 0xff
+}
+
 //! BK-0010 screen adapter translated from the original BkScreen.cpp.
 //!
 //! It writes directly to the existing camera canvas; no second framebuffer
@@ -15,7 +23,7 @@ impl BkScreen {
     pub fn ll_byte(&self, addr: u32, mode_register: u8) -> Option<u8> {
         if !(VIDEO_START..=VIDEO_END).contains(&addr) { return None; }
         let offset = (addr - VIDEO_START) as usize;
-        let y = offset / BYTES_PER_ROW;
+        let y = shifted_row(offset / BYTES_PER_ROW);
         let byte_x = offset % BYTES_PER_ROW;
         let mut result = 0u8;
         if mode_register == 0 {
@@ -48,7 +56,7 @@ impl BkScreen {
     pub fn sl_byte(&self, addr: u32, byte: u8, mode_register: u8) -> bool {
         if !(VIDEO_START..=VIDEO_END).contains(&addr) { return false; }
         let offset = (addr - VIDEO_START) as usize;
-        let y = offset / BYTES_PER_ROW;
+        let y = shifted_row(offset / BYTES_PER_ROW);
         let byte_x = offset % BYTES_PER_ROW;
         if mode_register == 0 {
             let x = byte_x * 8;
@@ -94,6 +102,13 @@ pub extern "C" fn bk_video_read_byte(addr: u32, mode: u8, value: *mut u8) -> i32
 #[unsafe(no_mangle)]
 pub extern "C" fn bk_video_write_byte(addr: u32, mode: u8, value: u8) -> i32 {
     if BkScreen.sl_byte(addr, value, mode) { 0 } else { 2 }
+}
+
+/// Apply the BK hardware vertical-roll register (port 0177664).
+#[unsafe(no_mangle)]
+pub extern "C" fn bk_video_shift_changed(shift: u8) {
+    let previous = BK_VERTICAL_SHIFT.swap(shift, Ordering::AcqRel);
+    crate::camera::rotate_bk_canvas_rows(shift.wrapping_sub(previous) as usize);
 }
 
 /// Keep the camera canvas interpretation aligned with BK RAM[0x0020].
