@@ -17,9 +17,6 @@ tinyusb-sys = { path = "vendors/tinyusb-sys", default-features = false, features
 [features]
 # Keep a one-packet-per-microframe UVC mode available for host compatibility.
 uvc-single-transaction = []
-# Interpret the existing compact source canvas as monochrome luma. The UVC
-# stream remains 512x512 in both modes.
-camera-bw = []
 
 [patch.crates-io]
 usb-device = { path = "vendor/usb-device" }
