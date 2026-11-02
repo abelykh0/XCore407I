@@ -172,11 +172,7 @@ fn program_page(page: u32) -> Result<(), Error> {
 
 fn verify_page(page: u32) -> Result<(), Error> {
     write_cmd(CMD_READ0);
-    write_addr(0);
-    write_addr(0);
-    write_addr(page as u8);
-    write_addr((page >> 8) as u8);
-    write_addr((page >> 16) as u8);
+    row_address(page);
     write_cmd(CMD_READSTART);
     wait_ready_rb()?;
 
