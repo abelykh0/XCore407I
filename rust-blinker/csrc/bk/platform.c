@@ -144,8 +144,8 @@ int ll_word(pdp_regs *p, c_addr addr, d_word *word)
     }
     if (addr >= MONITOR_BASE) {
         uint32_t offset = addr - MONITOR_BASE;
-        uint8_t lo = offset < MONITOR_SIZE ? monitor_rom[offset] : 0;
-        uint8_t hi = offset + 1u < MONITOR_SIZE ? monitor_rom[offset + 1u] : 0;
+        uint8_t lo = (monitor_rom != NULL && offset < MONITOR_SIZE) ? monitor_rom[offset] : 0;
+        uint8_t hi = (monitor_rom != NULL && offset + 1u < MONITOR_SIZE) ? monitor_rom[offset + 1u] : 0;
         *word = (d_word)((uint16_t)lo | ((uint16_t)hi << 8));
         return OK;
     }
