@@ -235,7 +235,46 @@ unsafe fn copy_row_to_canvas(source: *const u8, row: usize) {
     }
 }
 
-/// Reverse a range of canvas rows in place, using the FPU-backed word copier.
+/// Copy one canvas row directly to another, splitting at the SRAM/CCM
+/// boundary independently for source and destination.
+unsafe fn copy_canvas_row(src_row: usize, dst_row: usize) {
+    let mut src_offset = src_row * WIDTH;
+    let mut dst_offset = dst_row * WIDTH;
+    let mut remaining = WIDTH;
+    while remaining != 0 {
+        let (source, src_available) = if src_offset < CANVAS_MAIN_BYTES {
+            (
+                core::ptr::addr_of!(DEMO_CANVAS.0).cast::<u8>().add(src_offset),
+                CANVAS_MAIN_BYTES - src_offset,
+            )
+        } else {
+            let offset = src_offset - CANVAS_MAIN_BYTES;
+            (
+                core::ptr::addr_of!(DEMO_CANVAS_TAIL.0).cast::<u8>().add(offset),
+                CANVAS_TAIL_BYTES - offset,
+            )
+        };
+        let (destination, dst_available) = if dst_offset < CANVAS_MAIN_BYTES {
+            (
+                core::ptr::addr_of_mut!(DEMO_CANVAS.0).cast::<u8>().add(dst_offset),
+                CANVAS_MAIN_BYTES - dst_offset,
+            )
+        } else {
+            let offset = dst_offset - CANVAS_MAIN_BYTES;
+            (
+                core::ptr::addr_of_mut!(DEMO_CANVAS_TAIL.0).cast::<u8>().add(offset),
+                CANVAS_TAIL_BYTES - offset,
+            )
+        };
+        let run = remaining.min(src_available).min(dst_available);
+        crate::copy_words::copy_words(source, destination, run);
+        src_offset += run;
+        dst_offset += run;
+        remaining -= run;
+    }
+}
+
+/// Reverse a range of canvas rows in place, using one temporary row.
 /// A row may straddle the SRAM/CCM boundary, so copies are split as needed.
 unsafe fn reverse_canvas_rows(first: usize, end: usize, temporary: *mut u8) {
     let mut left = first;
@@ -246,10 +285,8 @@ unsafe fn reverse_canvas_rows(first: usize, end: usize, temporary: *mut u8) {
             break;
         }
         copy_canvas_row_to(left, temporary);
-        // Move the right row to the left, then restore the saved left row.
-        let mut right_row = [0u8; WIDTH];
-        copy_canvas_row_to(right, right_row.as_mut_ptr());
-        copy_row_to_canvas(right_row.as_ptr(), left);
+        // The rows are disjoint, so the optimized copier can move them directly.
+        copy_canvas_row(right, left);
         copy_row_to_canvas(temporary, right);
         left += 1;
     }
