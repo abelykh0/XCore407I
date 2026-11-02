@@ -49,15 +49,19 @@ pub fn camera_mode() -> CameraMode {
     }
 }
 
+pub fn request_camera_mode(mode: CameraMode) {
+    PENDING_CAMERA_MODE.store(mode as u32, Ordering::Release);
+}
+
 pub fn request_camera_mode_toggle() {
     let current = PENDING_CAMERA_MODE.load(Ordering::Acquire);
     let base = if current != u32::MAX { current } else { ACTIVE_CAMERA_MODE.load(Ordering::Acquire) };
     let next = if base == CameraMode::Color as u32 {
-        CameraMode::Monochrome as u32
+        CameraMode::Monochrome
     } else {
-        CameraMode::Color as u32
+        CameraMode::Color
     };
-    PENDING_CAMERA_MODE.store(next, Ordering::Release);
+    request_camera_mode(next);
 }
 
 fn apply_pending_camera_mode() -> bool {
