@@ -470,7 +470,14 @@ pub fn run_test() {
     }
     show_usb_status(b"NAND: ERASE OK");
 
-    let page = block * PAGES_PER_BLOCK;
+    // Keep the same erased block but program page 2 instead of page 0.
+    // This changes the NAND row address without changing block selection.
+    let page = block * PAGES_PER_BLOCK + 2;
+    let mut page_line = *b"TEST PAGE: 0000";
+    for shift in (0..4).rev() {
+        page_line[11 + (3 - shift)] = hex_digit((page >> (shift * 4)) as u8);
+    }
+    show_usb_status(&page_line);
     let trace = match program_page(page) {
         Ok(trace) => trace,
         Err(e) => {
