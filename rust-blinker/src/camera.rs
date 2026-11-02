@@ -484,9 +484,13 @@ pub fn update_clock_from_rtc() {
 fn draw_clock_text_bw(text: &[u8; 10], attribute: u16) {
     use crate::font8x8::FONT8X8;
 
-    let left = (WIDTH - 10 * 16) / 2;
+    // B/W mode has a 512x256 one-byte-per-pixel canvas. Draw native 8x8
+    // glyphs centered horizontally in the final (31st) text row.
+    let left = (CANVAS_WIDTH - text.len() * 8) / 2;
+    let top = CANVAS_HEIGHT - 8;
     let foreground = (attribute >> 8) as u8 & 0x3f;
     let background = attribute as u8 & 0x3f;
+
     for (character_index, character) in text.iter().enumerate() {
         let glyph = (*character as usize - 1) * 8;
         for row in 0..8 {
@@ -497,12 +501,7 @@ fn draw_clock_text_bw(text: &[u8; 10], attribute: u16) {
                 } else {
                     background
                 };
-                let x = left + character_index * 16 + column * 2;
-                let y = row * 2;
-                set_demo_pixel(x, y, color);
-                set_demo_pixel(x + 1, y, color);
-                set_demo_pixel(x, y + 1, color);
-                set_demo_pixel(x + 1, y + 1, color);
+                set_demo_pixel(left + character_index * 8 + column, top + row, color);
             }
         }
     }
