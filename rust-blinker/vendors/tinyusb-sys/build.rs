@@ -68,6 +68,7 @@ fn main() {
     build
         .include("tinyusb/src")
         .include("tinyusb/hw/mcu/st/cmsis_device_f4/Include")
+        .include("../../../Drivers/CMSIS/Include")
         .define("STM32F407xx", None)
         .include(&out_dir)
         .compile("tinyusb");
@@ -91,6 +92,7 @@ fn main() {
         ])
         .clang_arg("-Itinyusb/src")
         .clang_arg("-Itinyusb/hw/mcu/st/cmsis_device_f4/Include")
+        .clang_arg("-I../../../Drivers/CMSIS/Include")
         .clang_arg("-DSTM32F407xx")
         .clang_args(&include_paths)
         .generate()
