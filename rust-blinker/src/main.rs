@@ -375,7 +375,7 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
             KEYBOARD_LED_REPORT = locks & 0x07;
             let led_report = core::ptr::addr_of_mut!(KEYBOARD_LED_REPORT);
             let _ = tusb::tuh_hid_set_report(
-                dev_addr, instance, 0, 2, led_report, 1,
+                dev_addr, instance, 0, 2, led_report.cast(), 1,
             );
         }
         append_keyboard_text(&mut text, &mut used, match locks & 0x07 {
