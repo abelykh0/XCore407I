@@ -441,7 +441,7 @@ pub fn show_keyboard_input(message: &[u8]) {
     const MAX_CHARS: usize = 32;
     const FOREGROUND: u8 = 63;
     const BACKGROUND: u8 = 0;
-    const TEXT_ROW: usize = CANVAS_HEIGHT / 8 - 1;
+    const TEXT_ROW: usize = CANVAS_HEIGHT / 8 - 2;
 
     for &character in message {
         let column = KEYBOARD_TEXT_COLUMN.fetch_add(1, Ordering::Relaxed) as usize % MAX_CHARS;
