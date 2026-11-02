@@ -17,11 +17,8 @@ use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
-use xcore407i_blinker::rotozoom_demo::RotozoomState;
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
-
-const BLINK_INTERVAL_MS: u32 = 500;
 
 // One timer interrupt per USB HS microframe (125 us, 8 kHz).
 const USB_POLL_TIMER_HZ: u32 = 8_000;
@@ -128,23 +125,11 @@ fn main() -> ! {
         &mut core.NVIC,
     );
 
-    let mut last_blink = 0;
     let mut last_rtc_sample = 0;
-    let mut rotozoom = RotozoomState::new();
 
     loop {
         // USB polling and camera-class access now belong exclusively to TIM2.
         let now = TICKS.load(Ordering::Relaxed);
-
-        if now.wrapping_sub(last_blink) >= BLINK_INTERVAL_MS {
-            last_blink = now;
-
-            unsafe {
-                let mut led = phy_read(PHY_LED_CONTROL);
-                led ^= 0x03;
-                phy_write(PHY_LED_CONTROL, led);
-            }
-        }
 
         if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
             last_rtc_sample = now;
