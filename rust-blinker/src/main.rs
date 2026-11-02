@@ -28,6 +28,18 @@ const SYSTICK_PRIORITY: u8 = 1;
 
 static TICKS: AtomicU32 = AtomicU32::new(0);
 
+// TinyUSB's no-RTOS time source. SysTick increments TICKS once per millisecond.
+#[unsafe(no_mangle)]
+pub extern "C" fn tusb_time_millis_api() -> u32 {
+    TICKS.load(Ordering::Relaxed)
+}
+
+// DWC2 STM32 clock setup reads this CMSIS system-clock symbol.
+// system_clock_168mhz() configures SYSCLK to 168 MHz before USB initialization.
+#[unsafe(no_mangle)]
+pub static SystemCoreClock: u32 = 168_000_000;
+
+
 const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
 const CORE_CLOCK_HZ: u64 = 168_000_000;
 static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
