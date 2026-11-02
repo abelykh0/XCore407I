@@ -363,7 +363,8 @@ fn configure_fsmc() {
         let timing = 4 | (8 << 8) | (4 << 16) | (2 << 24);
         write_volatile((FSMC_BASE + 0x68) as *mut u32, timing);
         write_volatile((FSMC_BASE + 0x6C) as *mut u32, timing);
-        let control = (1 << 2) | (1 << 3) | (2 << 9) | (2 << 13);
+        // Enable FSMC NAND NWAIT handling (PD6 / AF12) for bank 2.
+        let control = (1 << 1) | (1 << 2) | (1 << 3) | (2 << 9) | (2 << 13);
         write_volatile(pcr2, control);
         let _ = read_volatile(pcr2);
     }
