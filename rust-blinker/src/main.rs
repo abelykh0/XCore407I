@@ -358,7 +358,7 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
 
         if let Some(ch) = key_to_ascii(key, shift, locks & 0x02 != 0, locks & 0x01 != 0, control_or_alt) {
             append_keyboard_char(&mut text, &mut used, ch);
-        } else if let Some(label) = special_key_label(key) {
+        } else if let Some(label) = special_key_label(key, locks & 0x01 != 0) {
             if used != 0 { append_keyboard_char(&mut text, &mut used, b' '); }
             append_keyboard_text(&mut text, &mut used, label);
         }
@@ -446,7 +446,7 @@ fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: boo
     }
 }
 
-fn special_key_label(key: u8) -> Option<&'static [u8]> {
+fn special_key_label(key: u8, num: bool) -> Option<&'static [u8]> {
     match key {
         0x28 => Some(b"[ENTER]"),
         0x29 => Some(b"[ESC]"),
@@ -467,6 +467,29 @@ fn special_key_label(key: u8) -> Option<&'static [u8]> {
         0x51 => Some(b"[DOWN]"),
         0x52 => Some(b"[UP]"),
         0x53 => Some(b"[NUM]"),
+        0x59 if !num => Some(b"[KP-END]"),
+        0x5a if !num => Some(b"[KP-DOWN]"),
+        0x5b if !num => Some(b"[KP-PGDN]"),
+        0x5c if !num => Some(b"[KP-LEFT]"),
+        0x5d if !num => Some(b"[KP5]"),
+        0x5e if !num => Some(b"[KP-RIGHT]"),
+        0x5f if !num => Some(b"[KP-HOME]"),
+        0x60 if !num => Some(b"[KP-UP]"),
+        0x61 if !num => Some(b"[KP-PGUP]"),
+        0x62 if !num => Some(b"[KP-INS]"),
+        0x63 if !num => Some(b"[KP-DEL]"),
+        0x3a => Some(b"[F1]"),
+        0x3b => Some(b"[F2]"),
+        0x3c => Some(b"[F3]"),
+        0x3d => Some(b"[F4]"),
+        0x3e => Some(b"[F5]"),
+        0x3f => Some(b"[F6]"),
+        0x40 => Some(b"[F7]"),
+        0x41 => Some(b"[F8]"),
+        0x42 => Some(b"[F9]"),
+        0x43 => Some(b"[F10]"),
+        0x44 => Some(b"[F11]"),
+        0x45 => Some(b"[F12]"),
         0x65 => Some(b"[MENU]"),
         _ => None,
     }
