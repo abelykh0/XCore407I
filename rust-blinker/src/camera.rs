@@ -6,10 +6,8 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-#[cfg(not(feature = "camera-bw"))]
 use crate::palette::{UV_PALETTE, Y_HASH_TABLE};
 
-#[cfg(not(feature = "camera-bw"))]
 const fn make_duplicated_y_table() -> [u16; 256] {
     let mut table = [0; 256];
     let mut i = 0;
@@ -20,9 +18,59 @@ const fn make_duplicated_y_table() -> [u16; 256] {
     }
     table
 }
-
-#[cfg(not(feature = "camera-bw"))]
 const DUPLICATED_Y_TABLE: [u16; 256] = make_duplicated_y_table();
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum CameraMode {
+    Color = 0,
+    Monochrome = 1,
+}
+
+static ACTIVE_CAMERA_MODE: AtomicU32 = AtomicU32::new(CameraMode::Color as u32);
+static PENDING_CAMERA_MODE: AtomicU32 = AtomicU32::new(u32::MAX);
+
+#[inline]
+pub fn camera_mode() -> CameraMode {
+    if ACTIVE_CAMERA_MODE.load(Ordering::Acquire) == CameraMode::Monochrome as u32 {
+        CameraMode::Monochrome
+    } else {
+        CameraMode::Color
+    }
+}
+
+pub fn request_camera_mode_toggle() {
+    let current = PENDING_CAMERA_MODE.load(Ordering::Acquire);
+    let base = if current != u32::MAX { current } else { ACTIVE_CAMERA_MODE.load(Ordering::Acquire) };
+    let next = if base == CameraMode::Color as u32 {
+        CameraMode::Monochrome as u32
+    } else {
+        CameraMode::Color as u32
+    };
+    PENDING_CAMERA_MODE.store(next, Ordering::Release);
+}
+
+fn apply_pending_camera_mode() -> bool {
+    let requested = PENDING_CAMERA_MODE.swap(u32::MAX, Ordering::AcqRel);
+    if requested == u32::MAX || requested == ACTIVE_CAMERA_MODE.load(Ordering::Acquire) {
+        return false;
+    }
+    ACTIVE_CAMERA_MODE.store(requested, Ordering::Release);
+    clear_demo_canvas(0);
+    USB_STATUS_ROW.store(0, Ordering::Relaxed);
+    KEYBOARD_TEXT_COLUMN.store(0, Ordering::Relaxed);
+    CLOCK_VERSION.fetch_add(1, Ordering::Relaxed);
+    true
+}
+
+#[inline]
+pub const fn canvas_width_for(mode: CameraMode) -> usize {
+    match mode { CameraMode::Color => WIDTH / 2, CameraMode::Monochrome => WIDTH }
+}
+#[inline]
+pub fn canvas_width() -> usize { canvas_width_for(camera_mode()) }
+#[inline]
+pub const fn canvas_height() -> usize { HEIGHT / 2 }
 
 pub const WIDTH: usize = 512;
 pub const HEIGHT: usize = 512;
@@ -34,10 +82,6 @@ pub const UVC_HEADER_BYTES: usize = 4;
 pub const PAYLOAD_BYTES: usize = WIDTH * 3 / 2;
 pub const TRANSFER_BYTES: usize = UVC_HEADER_BYTES + PAYLOAD_BYTES;
 
-#[cfg(feature = "camera-bw")]
-pub const CANVAS_WIDTH: usize = WIDTH;
-#[cfg(not(feature = "camera-bw"))]
-pub const CANVAS_WIDTH: usize = WIDTH / 2;
 pub const CANVAS_HEIGHT: usize = HEIGHT / 2;
 pub const CANVAS_BYTES: usize = WIDTH * CANVAS_HEIGHT;
 pub const CANVAS_TAIL_BYTES: usize = 19_200;
@@ -113,46 +157,24 @@ fn canvas_read_chunk(offset: usize) -> (*const u8, usize) {
 /// In color mode the corresponding Cb/Cr pair is written for every pixel;
 /// in B/W mode the corresponding luma value is written for every pixel.
 pub fn clear_demo_canvas(color: u8) {
-    #[cfg(feature = "camera-bw")]
-    {
-        let value = GRAYSCALE[(color & 0x3f) as usize];
+    let mode = camera_mode();
+    let value = color & 0x3f;
+    if mode == CameraMode::Monochrome {
+        let luma = GRAYSCALE[value as usize];
         unsafe {
-            core::ptr::addr_of_mut!(DEMO_CANVAS.0)
-                .cast::<u8>()
-                .write_bytes(value, CANVAS_MAIN_BYTES);
-            core::ptr::addr_of_mut!(DEMO_CANVAS_TAIL.0)
-                .cast::<u8>()
-                .write_bytes(value, CANVAS_TAIL_BYTES);
+            core::ptr::addr_of_mut!(DEMO_CANVAS.0).cast::<u8>().write_bytes(luma, CANVAS_MAIN_BYTES);
+            core::ptr::addr_of_mut!(DEMO_CANVAS_TAIL.0).cast::<u8>().write_bytes(luma, CANVAS_TAIL_BYTES);
         }
-    }
-
-    #[cfg(not(feature = "camera-bw"))]
-    {
-        let [u, v] = UV_PALETTE[(color & 0x3f) as usize];
-        let pixel_count = CANVAS_WIDTH * CANVAS_HEIGHT;
+    } else {
+        let [u, v] = UV_PALETTE[value as usize];
         let main_pixels = CANVAS_MAIN_BYTES / 2;
         let tail_pixels = CANVAS_TAIL_BYTES / 2;
-
         unsafe {
             let main = core::ptr::addr_of_mut!(DEMO_CANVAS.0).cast::<u8>();
             let tail = core::ptr::addr_of_mut!(DEMO_CANVAS_TAIL.0).cast::<u8>();
-
-            let mut i = 0;
-            while i < main_pixels {
-                main.add(i * 2).write(u);
-                main.add(i * 2 + 1).write(v);
-                i += 1;
-            }
-
-            i = 0;
-            while i < tail_pixels {
-                tail.add(i * 2).write(u);
-                tail.add(i * 2 + 1).write(v);
-                i += 1;
-            }
+            for i in 0..main_pixels { main.add(i * 2).write(u); main.add(i * 2 + 1).write(v); }
+            for i in 0..tail_pixels { tail.add(i * 2).write(u); tail.add(i * 2 + 1).write(v); }
         }
-
-        debug_assert_eq!(main_pixels + tail_pixels, pixel_count);
     }
 }
 
@@ -376,13 +398,14 @@ fn draw_demo_color_label(x: usize, y: usize, color: u8) {
 /// Change one logical color pixel. Every source pixel expands to a 2x2 block
 /// in the 512x512 NV12 stream, as in the original C color mode.
 pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
-    if x < CANVAS_WIDTH && y < CANVAS_HEIGHT {
-        #[cfg(feature = "camera-bw")]
-        write_canvas(y * CANVAS_WIDTH + x, GRAYSCALE[(color & 0x3f) as usize]);
-        #[cfg(not(feature = "camera-bw"))]
-        {
+    let mode = camera_mode();
+    let width = canvas_width_for(mode);
+    if x < width && y < CANVAS_HEIGHT {
+        if mode == CameraMode::Monochrome {
+            write_canvas(y * width + x, GRAYSCALE[(color & 0x3f) as usize]);
+        } else {
             let uv = UV_PALETTE[(color & 0x3f) as usize];
-            let offset = (y * CANVAS_WIDTH + x) * 2;
+            let offset = (y * width + x) * 2;
             write_canvas(offset, uv[0]);
             write_canvas(offset + 1, uv[1]);
         }
@@ -400,14 +423,14 @@ static KEYBOARD_TEXT_COLUMN: AtomicU32 = AtomicU32::new(0);
 pub fn show_usb_status(message: &[u8]) {
     use crate::font8x8::FONT8X8;
 
-    const MAX_CHARS: usize = CANVAS_WIDTH / 8;
+    let max_chars = canvas_width() / 8;
     const FOREGROUND: u8 = 63;
     const BACKGROUND: u8 = 0;
     const TEXT_ROWS: usize = CANVAS_HEIGHT / 8;
 
     let text_row = USB_STATUS_ROW.fetch_add(1, Ordering::Relaxed) as usize % TEXT_ROWS;
 
-    for character_index in 0..MAX_CHARS {
+    for character_index in 0..max_chars {
         let character = message.get(character_index).copied().unwrap_or(b' ');
         // The font table uses one-based character indices. Restrict input to
         // printable ASCII to keep arbitrary diagnostic strings in bounds.
@@ -438,13 +461,13 @@ pub fn show_usb_status(message: &[u8]) {
 pub fn show_keyboard_input(message: &[u8]) {
     use crate::font8x8::FONT8X8;
 
-    const MAX_CHARS: usize = CANVAS_WIDTH / 8;
+    let max_chars = canvas_width() / 8;
     const FOREGROUND: u8 = 63;
     const BACKGROUND: u8 = 0;
     const TEXT_ROW: usize = CANVAS_HEIGHT / 8 - 2;
 
     for &character in message {
-        let column = KEYBOARD_TEXT_COLUMN.fetch_add(1, Ordering::Relaxed) as usize % MAX_CHARS;
+        let column = KEYBOARD_TEXT_COLUMN.fetch_add(1, Ordering::Relaxed) as usize % max_chars;
         let character = if (1..=128).contains(&character) { character } else { b'?' };
         let glyph = (character as usize - 1) * 8;
 
@@ -468,29 +491,21 @@ pub fn update_clock_from_rtc() {
     let text = crate::rtc::display_time();
     const CLOCK_ATTRIBUTE: u16 = 0x2a10;
 
-    #[cfg(not(feature = "camera-bw"))]
-    {
-        const CLOCK_CELL_X: usize = (CANVAS_WIDTH - 10 * 8) / 2 / 8;
-        draw_demo_text(CLOCK_CELL_X, CANVAS_HEIGHT / 8 - 1, &text, CLOCK_ATTRIBUTE);
-    }
-
-    #[cfg(feature = "camera-bw")]
-    draw_clock_text_bw(&text, CLOCK_ATTRIBUTE);
+    let width = canvas_width();
+    let left = (width - text.len() * 8) / 2;
+    let top = CANVAS_HEIGHT - 8;
+    let foreground = (CLOCK_ATTRIBUTE >> 8) as u8 & 0x3f;
+    let background = CLOCK_ATTRIBUTE as u8 & 0x3f;
+    draw_text_pixels(&text, left, top, foreground, background);
 
     CLOCK_VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
-#[cfg(feature = "camera-bw")]
-fn draw_clock_text_bw(text: &[u8; 10], attribute: u16) {
+fn draw_text_pixels(text: &[u8; 10], left: usize, top: usize, foreground: u8, background: u8) {
     use crate::font8x8::FONT8X8;
 
     // B/W mode has a 512x256 one-byte-per-pixel canvas. Draw native 8x8
     // glyphs centered horizontally in the final (31st) text row.
-    let left = (CANVAS_WIDTH - text.len() * 8) / 2;
-    let top = CANVAS_HEIGHT - 8;
-    let foreground = (attribute >> 8) as u8 & 0x3f;
-    let background = attribute as u8 & 0x3f;
-
     for (character_index, character) in text.iter().enumerate() {
         let glyph = (*character as usize - 1) * 8;
         for row in 0..8 {
@@ -507,7 +522,6 @@ fn draw_clock_text_bw(text: &[u8; 10], attribute: u16) {
     }
 }
 
-#[cfg(feature = "camera-bw")]
 const GRAYSCALE: [u8; 64] = [
     0,6,12,18,61,67,73,79,122,128,134,140,183,189,195,201,
     18,24,30,36,79,85,91,97,140,146,152,158,201,207,213,219,
@@ -587,6 +601,7 @@ impl Nv12DemoImage {
         out: &mut [u8],
         max_transfer_bytes: usize,
     ) -> Option<Packet> {
+        if self.offset == 0 { apply_pending_camera_mode(); }
         if out.len() < UVC_HEADER_BYTES {
             return None;
         }
@@ -649,6 +664,7 @@ impl Nv12DemoImage {
     /// Color doubles both axes from 256x256 UV pairs; BW doubles the 512x256
     /// luma canvas vertically and uses neutral chroma.
     fn fill_nv12(&mut self, offset: usize, out: &mut [u8]) {
+        let mode = camera_mode();
         let mut pos = offset;
         let mut written = 0;
         while written < out.len() && pos < FRAME_BYTES {
@@ -675,26 +691,22 @@ impl Nv12DemoImage {
                 let chroma_pos = pos - Y_PLANE_BYTES;
                 let x = chroma_pos % WIDTH;
                 let run = (WIDTH - x).min(FRAME_BYTES - pos).min(out.len() - written);
-                #[cfg(feature = "camera-bw")]
-                {
+                if mode == CameraMode::Monochrome {
                     let source_row = (chroma_pos / WIDTH) as u16;
                     let stage_start = cycle_counter();
                     self.prepare_uv_row(source_row);
                     record_render_cycles(stage_start, &UVC_DEBUG_RENDER_UV_CYCLES);
                     unsafe {
                         let stage_start = cycle_counter();
-                        crate::copy_words::copy_words(
-                            uv_row_ptr().add(x), out.as_mut_ptr().add(written), run,
-                        );
+                        crate::copy_words::copy_words(uv_row_ptr().add(x), out.as_mut_ptr().add(written), run);
                         record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
                     }
-                }
-                #[cfg(not(feature = "camera-bw"))]
-                unsafe {
-                    // Color canvas chroma is already packed in NV12 row order.
-                    let stage_start = cycle_counter();
-                    copy_canvas_range(chroma_pos, out.as_mut_ptr().add(written), run);
-                    record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
+                } else {
+                    unsafe {
+                        let stage_start = cycle_counter();
+                        copy_canvas_range(chroma_pos, out.as_mut_ptr().add(written), run);
+                        record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
+                    }
                 }
                 pos += run;
                 written += run;
@@ -714,32 +726,24 @@ impl Nv12DemoImage {
         if self.cached_y_source_row == source_row {
             return;
         }
-        #[cfg(feature = "camera-bw")]
-        let source_bytes_per_pixel = 1;
-        #[cfg(not(feature = "camera-bw"))]
-        let source_bytes_per_pixel = 2;
-
-        let row_offset = source_row as usize * CANVAS_WIDTH * source_bytes_per_pixel;
+        let mode = camera_mode();
+        let source_bytes_per_pixel = if mode == CameraMode::Monochrome { 1 } else { 2 };
+        let source_width = canvas_width_for(mode);
+        let row_offset = source_row as usize * source_width * source_bytes_per_pixel;
         let mut pixel_x = 0;
-        while pixel_x < CANVAS_WIDTH {
+        while pixel_x < source_width {
             let byte_offset = row_offset + pixel_x * source_bytes_per_pixel;
             let (source, available_bytes) = canvas_read_chunk(byte_offset);
-            let chunk_pixels = (CANVAS_WIDTH - pixel_x)
-                .min(available_bytes / source_bytes_per_pixel);
+            let chunk_pixels = (source_width - pixel_x).min(available_bytes / source_bytes_per_pixel);
             let mut i = 0;
-            #[cfg(feature = "camera-bw")]
-            {
-                // BW canvas already has the output width; only rows are doubled.
+            if mode == CameraMode::Monochrome {
                 let destination = unsafe { y_row_ptr().add(pixel_x) };
                 while i < chunk_pixels {
                     let y = unsafe { source.add(i).read() };
                     unsafe { destination.add(i).write(y) };
                     i += 1;
                 }
-            }
-            #[cfg(not(feature = "camera-bw"))]
-            {
-                // Canvas chunk starts and each color pixel are 16-bit aligned.
+            } else {
                 let source_pairs = source.cast::<u16>();
                 let destination = unsafe { y_row_ptr().cast::<u16>().add(pixel_x) };
                 while i < chunk_pixels {
@@ -754,20 +758,14 @@ impl Nv12DemoImage {
         self.cached_y_source_row = source_row;
     }
 
-    #[cfg(feature = "camera-bw")]
     fn prepare_uv_row(&mut self, source_row: u16) {
         if self.cached_uv_source_row == source_row {
             return;
         }
-        #[cfg(feature = "camera-bw")]
-        unsafe { uv_row_ptr().write_bytes(128, WIDTH) };
-        #[cfg(not(feature = "camera-bw"))]
-        unsafe {
-            copy_canvas_range(
-                source_row as usize * WIDTH,
-                uv_row_ptr(),
-                WIDTH,
-            );
+        if camera_mode() == CameraMode::Monochrome {
+            unsafe { uv_row_ptr().write_bytes(128, WIDTH) };
+        } else {
+            unsafe { copy_canvas_range(source_row as usize * WIDTH, uv_row_ptr(), WIDTH) };
         }
         self.cached_uv_source_row = source_row;
     }
@@ -778,14 +776,12 @@ unsafe fn y_row_ptr() -> *mut u8 {
     core::ptr::addr_of_mut!(ROW_BUFFERS.0).cast::<u8>()
 }
 
-#[cfg(feature = "camera-bw")]
 #[inline(always)]
 unsafe fn uv_row_ptr() -> *mut u8 {
     core::ptr::addr_of_mut!(ROW_BUFFERS.0).cast::<u8>().add(WIDTH)
 }
 
 /// Copy an aligned region from the C-style main SRAM + CCM canvas split.
-#[cfg(not(feature = "camera-bw"))]
 unsafe fn copy_canvas_range(mut offset: usize, mut destination: *mut u8, mut bytes: usize) {
     while bytes != 0 {
         let (source, available) = if offset < CANVAS_MAIN_BYTES {
