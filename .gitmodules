@@ -1,0 +1,3 @@
+[submodule "rust-blinker/vendors/tinyusb-sys/tinyusb"]
+	path = rust-blinker/vendors/tinyusb-sys/tinyusb
+	url = https://github.com/hathach/tinyusb.git
