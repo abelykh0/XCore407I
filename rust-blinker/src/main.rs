@@ -485,6 +485,7 @@ fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: boo
             Some(if shift { SHIFTED[i] } else { NORMAL[i] })
         }
         0x28 => Some(b'\n'), // BK OnKey maps Enter to 0x0A.
+        0x2a => Some(0x18), // BK OnKey maps Backspace to 0x18.
         0x2c => Some(b' '),
         0x2d => Some(if shift { b'_' } else { b'-' }),
         0x2e => Some(if shift { b'+' } else { b'=' }),
