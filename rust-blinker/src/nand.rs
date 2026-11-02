@@ -63,9 +63,20 @@ fn read_data() -> u8 {
 
 fn wait_ready_rb() -> Result<(), Error> {
     // Do not issue 0x70 here: that changes the NAND's output mux to the status
-    // register and destroys the pending page-data read stream. Poll R/B.
+    // register and destroys the pending page-data read stream.
+    //
+    // R/B is normally high while idle. Waiting only for high can therefore
+    // return immediately, before the NAND has even entered its busy interval.
+    // First observe the low-going busy edge, then wait for the high-going
+    // ready edge. Page read (tR), program (tPROG), and erase (tBERS) all assert
+    // R/B low, so this also prevents reading stale data from the previous
+    // operation.
+    let mut saw_busy = false;
     for _ in 0..TIMEOUT {
-        if unsafe { read_volatile(GPIOD_IDR) } & NAND_RB_MASK != 0 {
+        let ready = unsafe { read_volatile(GPIOD_IDR) } & NAND_RB_MASK != 0;
+        if !ready {
+            saw_busy = true;
+        } else if saw_busy {
             return Ok(());
         }
         core::hint::spin_loop();
