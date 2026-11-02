@@ -378,16 +378,17 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
                 dev_addr, instance, 0, 2, led_report.cast(), 1,
             );
         }
-        append_keyboard_text(&mut text, &mut used, match locks & 0x07 {
-            0 => b" [LOCKS OFF]",
-            1 => b" [NUM]",
-            2 => b" [CAPS]",
-            3 => b" [CAPS+NUM]",
-            4 => b" [SCROLL]",
-            5 => b" [NUM+SCR]",
-            6 => b" [CAPS+SCR]",
-            _ => b" [ALL LOCKS]",
-        });
+        let event: &[u8] = match locks & 0x07 {
+            0 => b"USB KEYBOARD: LOCKS OFF",
+            1 => b"USB KEYBOARD: NUM LOCK",
+            2 => b"USB KEYBOARD: CAPS LOCK",
+            3 => b"USB KEYBOARD: CAPS + NUM LOCK",
+            4 => b"USB KEYBOARD: SCROLL LOCK",
+            5 => b"USB KEYBOARD: NUM + SCROLL LOCK",
+            6 => b"USB KEYBOARD: CAPS + SCROLL LOCK",
+            _ => b"USB KEYBOARD: ALL LOCKS",
+        };
+        show_usb_status(event);
     }
 
     if used != 0 {
