@@ -15,6 +15,7 @@ use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
 use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, service_camera_mode_change, show_usb_status};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
+use xcore407i_blinker::nand;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
@@ -89,14 +90,14 @@ fn main() -> ! {
 
     enable_cycle_counter(&mut core);
 
-    // Initialize the BK platform with the original embedded ROM images.
-    unsafe {
-        bk_platform_init(
-            xcore407i_blinker::rom::MONITOR_ROM.as_ptr(),
-            xcore407i_blinker::rom::BASIC_ROM.as_ptr(),
-            xcore407i_blinker::rom::BASIC_ROM.len() as u32,
-        );
-    }
+    // BK emulator initialization is temporarily disabled for the NAND test.
+    // unsafe {
+    //     bk_platform_init(
+    //         xcore407i_blinker::rom::MONITOR_ROM.as_ptr(),
+    //         xcore407i_blinker::rom::BASIC_ROM.as_ptr(),
+    //         xcore407i_blinker::rom::BASIC_ROM.len() as u32,
+    //     );
+    // }
 
     // initialize_demo_canvas();
     clear_demo_canvas(0x10);
@@ -107,9 +108,15 @@ fn main() -> ! {
         device.GPIOA,
         device.GPIOB,
         device.GPIOC,
+        device.GPIOD,
+        device.GPIOE,
         device.GPIOH,
         device.GPIOI,
     );
+
+    // Destructive one-block NAND test; only a block with intact factory
+    // bad-block markers is selected. The BK emulator remains disabled.
+    nand::run_test();
 
     // Start the 1 ms timebase before TinyUSB initialization. TinyUSB's
     // no-RTOS port uses this clock during controller initialization.
@@ -216,22 +223,21 @@ fn main() -> ! {
     // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
 
     loop {
-        // Execute one original PDP-11 instruction per main-loop iteration.
-        unsafe { bk_loop(); }
-
-        // Deliver keyboard characters in main context, not from a TinyUSB callback.
-        let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
-        if input_len > 0 {
-            let mut buffer = [0u8; 32];
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
-                    buffer.as_mut_ptr(),
-                    input_len as usize,
-                );
-                sendInput(buffer.as_mut_ptr(), input_len);
-            }
-        }
+        // BK instruction execution and keyboard forwarding are temporarily
+        // disabled while the NAND bring-up test is active.
+        // unsafe { bk_loop(); }
+        // let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
+        // if input_len > 0 {
+        //     let mut buffer = [0u8; 32];
+        //     unsafe {
+        //         ptr::copy_nonoverlapping(
+        //             core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
+        //             buffer.as_mut_ptr(),
+        //             input_len as usize,
+        //         );
+        //         sendInput(buffer.as_mut_ptr(), input_len);
+        //     }
+        // }
 
         // Canvas clearing is deferred to thread context; TIM2 emits black
         // frames until the new mode's canvas has been cleared.
@@ -787,14 +793,38 @@ fn configure_board_pins(
     gpioa: pac::GPIOA,
     gpiob: pac::GPIOB,
     gpioc: pac::GPIOC,
+    gpiod: pac::GPIOD,
+    gpioe: pac::GPIOE,
     gpioh: pac::GPIOH,
     gpioi: pac::GPIOI,
 ) {
     let a = gpioa.split(rcc);
     let b = gpiob.split(rcc);
     let c = gpioc.split(rcc);
+    let d = gpiod.split(rcc);
+    let e = gpioe.split(rcc);
     let h = gpioh.split(rcc);
     let i = gpioi.split(rcc);
+
+    // XCore407I NAND flash uses FSMC AF12. CLE=A17 (PD12), ALE=A16 (PD11),
+    // NCE2=PD7, NWAIT=PD6, NWE=PD5, NOE=PD4, D0..D3=PD14/15/0/1,
+    // and D4..D7=PE7..PE10.
+    let _nand_pins = (
+        d.pd0.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd1.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd4.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd5.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd6.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd7.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd11.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd12.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd14.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd15.into_alternate::<12>().speed(Speed::VeryHigh),
+        e.pe7.into_alternate::<12>().speed(Speed::VeryHigh),
+        e.pe8.into_alternate::<12>().speed(Speed::VeryHigh),
+        e.pe9.into_alternate::<12>().speed(Speed::VeryHigh),
+        e.pe10.into_alternate::<12>().speed(Speed::VeryHigh),
+    );
 
     // USB FS host data pins use the internal PHY (AF10).
     let _usb_fs_pins = (
