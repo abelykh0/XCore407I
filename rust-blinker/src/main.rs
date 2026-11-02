@@ -19,20 +19,6 @@ use xcore407i_blinker::usb_uvc::{
 };
 use xcore407i_blinker::rotozoom_demo::RotozoomState;
 
-const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
-
-// STM32F407 Ethernet MAC register offsets: MACMIIAR=0x10, MACMIIDR=0x14.
-const ETH_MACMIIAR: *mut u32 = 0x4002_8010 as *mut u32;
-const ETH_MACMIIDR: *mut u32 = 0x4002_8014 as *mut u32;
-
-// PHY configuration.
-const PHY_ADDRESS: u32 = 1;
-const PHY_LED_CONTROL: u8 = 0x18;
-const MII_BUSY: u32 = 1 << 0;
-const MII_WRITE: u32 = 1 << 1;
-
-// HCLK=168 MHz: STM32F4 MAC MDC divisor /102 (CR=100b).
-const MII_CLOCK_DIV102: u32 = 4 << 2;
 
 const BLINK_INTERVAL_MS: u32 = 500;
 
@@ -81,11 +67,6 @@ fn main() -> ! {
         device.GPIOH,
         device.GPIOI,
     );
-
-    unsafe {
-        ETH_MACMIIAR.write_volatile(MII_CLOCK_DIV102);
-        phy_write(PHY_LED_CONTROL, 0x38); // manual mode; both LEDs controllable
-    }
 
     // Keep the 1 ms application timebase. It is independent of USB polling.
     core.SYST.set_clock_source(SystClkSource::Core);
@@ -363,9 +344,31 @@ fn configure_board_pins(
         rcc.ahb1enr().modify(|r, w| w.bits(r.bits() | (1 << 25)));
     }
 
-    // Ethernet: PA2 = ETH_MDIO, PC1 = ETH_MDC (AF11).
-    let _eth_mdio = a.pa2.into_alternate::<11>();
-    let _eth_mdc = c.pc1.into_alternate::<11>();
+    // USB FS host data pins use the internal PHY (AF10).
+    let _usb_fs_pins = (
+        a.pa11.into_alternate::<10>().speed(Speed::VeryHigh), // OTG_FS_DM
+        a.pa12.into_alternate::<10>().speed(Speed::VeryHigh), // OTG_FS_DP
+    );
+
+    // XCore407I schematic: PC1 is FS_VBUSEN / OTG_PWR_OUT. The FS port's
+    // MIC2025/75 power switch is enabled by driving EN low. PC1 is also
+    // routed as Ethernet MDC on this board, so Ethernet MDIO management is
+    // intentionally disabled while USB FS host VBUS is enabled.
+    unsafe {
+        const GPIOC_BASE: usize = 0x4002_0800;
+        let bsrr = (GPIOC_BASE + 0x18) as *mut u32;
+        let moder = GPIOC_BASE as *mut u32;
+        let otyper = (GPIOC_BASE + 0x04) as *mut u32;
+        let ospeedr = (GPIOC_BASE + 0x08) as *mut u32;
+        let pupdr = (GPIOC_BASE + 0x0c) as *mut u32;
+
+        // Drive low before switching the pin from its reset input state.
+        bsrr.write_volatile(1 << (1 + 16));
+        moder.write_volatile((moder.read_volatile() & !(0b11 << 2)) | (0b01 << 2));
+        otyper.write_volatile(otyper.read_volatile() & !(1 << 1));
+        ospeedr.write_volatile(ospeedr.read_volatile() & !(0b11 << 2));
+        pupdr.write_volatile(pupdr.read_volatile() & !(0b11 << 2));
+    }
 
     // USB3300 ULPI: all data/control pins use AF10 except PA4 SOF (AF12).
     // The original firmware selected very-high GPIO speed and no pull resistors.
@@ -386,37 +389,3 @@ fn configure_board_pins(
     );
 }
 
-unsafe fn phy_read(reg: u8) -> u16 {
-    unsafe {
-        while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
-
-        ETH_MACMIIAR.write_volatile(
-            (PHY_ADDRESS << 11)
-                | ((reg as u32) << 6)
-                | MII_CLOCK_DIV102
-                | MII_BUSY,
-        );
-
-        while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
-
-        ETH_MACMIIDR.read_volatile() as u16
-    }
-}
-
-unsafe fn phy_write(reg: u8, value: u16) {
-    unsafe {
-        while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
-
-        ETH_MACMIIDR.write_volatile(value as u32);
-
-        ETH_MACMIIAR.write_volatile(
-            (PHY_ADDRESS << 11)
-                | ((reg as u32) << 6)
-                | MII_CLOCK_DIV102
-                | MII_WRITE
-                | MII_BUSY,
-        );
-
-        while ETH_MACMIIAR.read_volatile() & MII_BUSY != 0 {}
-    }
-}
