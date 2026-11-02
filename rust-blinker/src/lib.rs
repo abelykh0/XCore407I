@@ -2,6 +2,7 @@
 
 pub mod bk_screen;
 pub mod camera;
+pub mod nand;
 mod copy_words;
 mod font8x8;
 mod palette;
