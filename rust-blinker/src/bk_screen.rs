@@ -1,3 +1,8 @@
+//! BK-0010 screen adapter translated from the original BkScreen.cpp.
+//!
+//! It writes directly to the existing camera canvas; no second framebuffer
+//! or shadow video-memory buffer is allocated.
+
 use core::sync::atomic::{AtomicU8, Ordering};
 
 static BK_VERTICAL_SHIFT: AtomicU8 = AtomicU8::new(0);
@@ -5,11 +10,6 @@ static BK_VERTICAL_SHIFT: AtomicU8 = AtomicU8::new(0);
 fn shifted_row(vram_y: usize) -> usize {
     (vram_y + 256 - BK_VERTICAL_SHIFT.load(Ordering::Acquire) as usize) & 0xff
 }
-
-//! BK-0010 screen adapter translated from the original BkScreen.cpp.
-//!
-//! It writes directly to the existing camera canvas; no second framebuffer
-//! or shadow video-memory buffer is allocated.
 
 pub const VIDEO_START: u32 = 0x4000;
 pub const VIDEO_END: u32 = 0x7fff;
