@@ -164,6 +164,8 @@ fn main() -> ! {
             4 => b"USB FS: KEYBOARD MOUNTED",
             5 => b"USB FS: KEYBOARD REMOVED",
             6 => b"USB FS: KEY REPORT RECEIVED",
+            7 => b"USB FS: DEVICE DESCRIPTOR",
+            8 => b"USB FS: CONFIG DESCRIPTOR",
             _ => b"",
         };
         if !message.is_empty() { show_usb_status(message); }
@@ -176,6 +178,17 @@ fn main() -> ! {
 #[interrupt]
 fn OTG_FS() {
     unsafe { tusb::hcd_int_handler(0, true); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tuh_enum_descriptor_device_cb(_dev_addr: u8, _desc: *const tusb::tusb_desc_device_t) {
+    USB_FS_STATUS.store(7, Ordering::Release);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn tuh_enum_descriptor_configuration_cb(_dev_addr: u8, _cfg_index: u8, _desc: *const tusb::tusb_desc_configuration_t) -> bool {
+    USB_FS_STATUS.store(8, Ordering::Release);
+    true
 }
 
 #[unsafe(no_mangle)]
