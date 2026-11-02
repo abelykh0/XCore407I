@@ -67,7 +67,8 @@ fn main() {
     add_all_c_files_in_dir(&mut build, "tinyusb/src");
     build
         .include("tinyusb/src")
-        .include("tinyusb/hw/mcu/st/cmsis_device_f1/Include")
+        .include("tinyusb/hw/mcu/st/cmsis_device_f4/Include")
+        .define("STM32F407xx", None)
         .include(&out_dir)
         .compile("tinyusb");
 
@@ -89,6 +90,8 @@ fn main() {
             "-fshort-enums",
         ])
         .clang_arg("-Itinyusb/src")
+        .clang_arg("-Itinyusb/hw/mcu/st/cmsis_device_f4/Include")
+        .clang_arg("-DSTM32F407xx")
         .clang_args(&include_paths)
         .generate()
         .expect("Unable to generate bindings");
