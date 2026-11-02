@@ -265,24 +265,11 @@ fn show_register(label: &[u8], address: usize) {
 }
 
 fn show_bus_configuration() {
+    // Keep only values that are still relevant to the write-path diagnosis.
     show_register(b"PCR2:", FSMC_BASE + 0x60);
-    show_register(b"PMEM2:", FSMC_BASE + 0x68);
-    show_register(b"PATT2:", FSMC_BASE + 0x6C);
-    show_register(b"SR2:", FSMC_BASE + 0x64);
-    show_register(b"GPIOD MOD:", 0x4002_0C00);
-    show_register(b"GPIOD AFRL:", 0x4002_0C20);
-    show_register(b"GPIOD AFRH:", 0x4002_0C24);
-    show_register(b"GPIOE MOD:", 0x4002_1000);
-    show_register(b"GPIOE AFRL:", 0x4002_1020);
-    show_register(b"GPIOE AFRH:", 0x4002_1024);
     show_register(b"RCC AHB1ENR:", 0x4002_3830);
     show_register(b"RCC AHB3ENR:", 0x4002_3838);
     show_register(b"GPIOD IDR:", 0x4002_0C10);
-    show_register(b"GPIOD ODR:", 0x4002_0C14);
-    show_register(b"GPIOE IDR:", 0x4002_1010);
-    show_register(b"GPIOE ODR:", 0x4002_1014);
-    show_register(b"GPIOD OSPEED:", 0x4002_0C08);
-    show_register(b"GPIOE OSPEED:", 0x4002_1008);
 }
 
 fn configure_fsmc() {
