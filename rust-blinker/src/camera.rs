@@ -393,6 +393,9 @@ pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
 /// top-left corner (X=0, Y=0). Successive messages advance down the canvas
 /// and wrap to row zero after the last row. Call from the main loop, not an ISR.
 static USB_STATUS_ROW: AtomicU32 = AtomicU32::new(0);
+// Keyboard input is appended on a dedicated line; ordinary status messages
+// continue to consume their own rows.
+static KEYBOARD_TEXT_COLUMN: AtomicU32 = AtomicU32::new(0);
 
 pub fn show_usb_status(message: &[u8]) {
     use crate::font8x8::FONT8X8;
@@ -424,6 +427,32 @@ pub fn show_usb_status(message: &[u8]) {
                     text_row * 8 + row,
                     color,
                 );
+            }
+        }
+    }
+}
+
+/// Append keyboard input to one persistent canvas row instead of allocating a
+/// new status row for every key report. When the line fills, overwrite it from
+/// the beginning; a single key press never advances the row.
+pub fn show_keyboard_input(message: &[u8]) {
+    use crate::font8x8::FONT8X8;
+
+    const MAX_CHARS: usize = 32;
+    const FOREGROUND: u8 = 63;
+    const BACKGROUND: u8 = 0;
+    const TEXT_ROW: usize = CANVAS_HEIGHT / 8 - 1;
+
+    for &character in message {
+        let column = KEYBOARD_TEXT_COLUMN.fetch_add(1, Ordering::Relaxed) as usize % MAX_CHARS;
+        let character = if (1..=128).contains(&character) { character } else { b'?' };
+        let glyph = (character as usize - 1) * 8;
+
+        for row in 0..8 {
+            let bits = FONT8X8[glyph + row];
+            for x in 0..8 {
+                let color = if bits & (0x80 >> x) != 0 { FOREGROUND } else { BACKGROUND };
+                set_demo_pixel(column * 8 + x, TEXT_ROW * 8 + row, color);
             }
         }
     }
