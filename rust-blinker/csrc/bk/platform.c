@@ -6,13 +6,12 @@
  */
 #include <stdint.h>
 #include <stddef.h>
-#include "defines.h"
+#include "platform.h"
 
 #define RAM_AVAILABLE 0x4000u
 #define MONITOR_BASE  0x8000u
 #define MONITOR_SIZE  0x2000u
 #define BASIC_BASE    0xA000u
-#define BASIC_SIZE    0x5F80u
 #define VIDEO_BASE    0x4000u
 #define VIDEO_END     0x7FFFu
 #define IO_BASE       0xFF80u
@@ -42,7 +41,7 @@ void bk_platform_init(const uint8_t *monitor, const uint8_t *basic,
 {
     monitor_rom = monitor;
     basic_rom = basic;
-    basic_rom_size = basic_size_bytes > BASIC_SIZE ? BASIC_SIZE : basic_size_bytes;
+    basic_rom_size = basic_size_bytes > BK_BASIC_SIZE ? BK_BASIC_SIZE : basic_size_bytes;
     port0177664 = 01330;
     bk_reset();
 }
