@@ -226,6 +226,33 @@ void q_reset(void)
 {
 }
 
+/* Original BK keyboard input path: wait for the previous character's
+ * interrupt to be acknowledged, then schedule the next TTY interrupt. */
+static int bk_tty_finish(d_word info)
+{
+    (void)info;
+    return service(060);
+}
+
+void sendInput(uint8_t *buffer, uint8_t size)
+{
+    uint8_t i;
+    if (buffer == NULL) return;
+
+    for (i = 0; i < size; ++i) {
+        while (port0177660 & 0x80u) {
+            bk_loop();
+        }
+
+        uint8_t symbol = buffer[i];
+        if (symbol == 0x0D) symbol = 0x0A;
+
+        port0177660 |= 0x80u;
+        port0177662 = symbol & 0x7Fu;
+        (void)ev_register(TTY_PRI, bk_tty_finish, 0, symbol);
+    }
+}
+
 int32_t bk_loop(void)
 {
     pdp_regs *p = &pdp;
