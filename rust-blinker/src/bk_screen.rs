@@ -5,6 +5,7 @@
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
+const BK_UNSCROLLED_VALUE: u8 = 216;
 static BK_VERTICAL_SHIFT: AtomicU8 = AtomicU8::new(0);
 
 fn shifted_row(vram_y: usize) -> usize {
@@ -107,8 +108,11 @@ pub extern "C" fn bk_video_write_byte(addr: u32, mode: u8, value: u8) -> i32 {
 /// Apply the BK hardware vertical-roll register (port 0177664).
 #[unsafe(no_mangle)]
 pub extern "C" fn bk_video_shift_changed(shift: u8) {
-    let previous = BK_VERTICAL_SHIFT.swap(shift, Ordering::AcqRel);
-    crate::camera::rotate_bk_canvas_rows(shift.wrapping_sub(previous) as usize);
+    // The hardware register's neutral (unscrolled) value is 216, not zero.
+    // Store a normalized offset so the canvas is unchanged at the reset value.
+    let normalized = shift.wrapping_sub(BK_UNSCROLLED_VALUE);
+    let previous = BK_VERTICAL_SHIFT.swap(normalized, Ordering::AcqRel);
+    crate::camera::rotate_bk_canvas_rows(normalized.wrapping_sub(previous) as usize);
 }
 
 /// Keep the camera canvas interpretation aligned with BK RAM[0x0020].
