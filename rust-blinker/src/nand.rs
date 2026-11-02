@@ -222,17 +222,26 @@ fn show_program_diagnostics(page: u32) -> Result<(), Error> {
     let mut status_line = *b"STATUS: 00 WP:0 FAIL:0 ";
     status_line[8] = hex_digit(status >> 4);
     status_line[9] = hex_digit(status);
-    status_line[15] = if status & 0x80 != 0 { b'1' } else { b'0' };
+    status_line[14] = if status & 0x80 != 0 { b'1' } else { b'0' };
     status_line[21] = if status & 0x01 != 0 { b'1' } else { b'0' };
     show_usb_status(&status_line);
 
-    // Read the first 16 programmed bytes from column zero.
-    let mut data = [0u8; 16];
-    read_page(page, 0, &mut data)?;
-    show_hex_bytes(b"DATA0:", &data);
+    // Reset the NAND after capturing program status. This separates the
+    // subsequent array reads from any lingering status-register/output state.
+    write_cmd(CMD_RESET);
+    wait_ready_status()?;
 
-    // Read 16 bytes at the beginning of the spare area (column 2048).
-    let mut spare = [0u8; 16];
+    // Read short windows at two main-area columns and at the spare-area start.
+    // Eight bytes fit on one 32-character status row without truncation.
+    let mut data0 = [0u8; 8];
+    read_page(page, 0, &mut data0)?;
+    show_hex_bytes(b"COL000:", &data0);
+
+    let mut data100 = [0u8; 8];
+    read_page(page, 0x0100, &mut data100)?;
+    show_hex_bytes(b"COL100:", &data100);
+
+    let mut spare = [0u8; 8];
     read_page(page, PAGE_BYTES as u16, &mut spare)?;
     show_hex_bytes(b"SPARE:", &spare);
     Ok(())
