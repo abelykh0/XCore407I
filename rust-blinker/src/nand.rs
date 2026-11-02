@@ -428,12 +428,19 @@ pub fn run_test() {
         return;
     }
 
+    // Use the second factory-good block rather than repeating the previous
+    // test address. This tests a different row-address range while preserving
+    // the first block's contents for comparison.
+    let mut good_blocks_seen = 0u8;
     let mut selected = None;
     for block in 1..BLOCK_COUNT {
         match block_is_good(block) {
             Ok(true) => {
-                selected = Some(block);
-                break;
+                good_blocks_seen += 1;
+                if good_blocks_seen == 2 {
+                    selected = Some(block);
+                    break;
+                }
             }
             Ok(false) => {}
             Err(e) => {
@@ -451,7 +458,12 @@ pub fn run_test() {
         }
     };
 
-    show_usb_status(b"NAND: GOOD BLOCK FOUND");
+    let mut block_line = *b"TEST BLOCK: 0000";
+    for shift in (0..4).rev() {
+        block_line[12 + (3 - shift)] = hex_digit((block >> (shift * 4)) as u8);
+    }
+    show_usb_status(&block_line);
+    show_usb_status(b"NAND: SECOND GOOD BLOCK");
     if let Err(e) = erase_block(block) {
         report_error(e);
         return;
