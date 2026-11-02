@@ -389,22 +389,27 @@ pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
     }
 }
 
-/// Draw a persistent status message after a USB keyboard is enumerated.
+/// Draw a USB diagnostic message in canvas text row 31.
 ///
-/// The USB FS host layer should call this from its keyboard-connected event.
-/// Text is drawn into the compact canvas and therefore works in color and
-/// monochrome modes without changing the UVC packetizer.
-pub fn show_keyboard_connected() {
+/// The canvas has 32 character rows. Rows 0..30 are left untouched for the
+/// application image; row 31 is reserved for USB status. The message is
+/// clipped to 32 characters so it fits both the 256-pixel color canvas and
+/// the 512-pixel monochrome canvas. Call from the main loop, not an ISR.
+pub fn show_usb_status(message: &[u8]) {
     use crate::font8x8::FONT8X8;
 
-    const MESSAGE: &[u8] = b"USB KEYBOARD CONNECTED";
-    const START_X: usize = 2;
-    const START_Y: usize = 2;
+    const TEXT_ROW: usize = 31;
+    const MAX_CHARS: usize = 32;
     const FOREGROUND: u8 = 63;
     const BACKGROUND: u8 = 0;
 
-    for (character_index, character) in MESSAGE.iter().enumerate() {
-        let glyph = (*character as usize - 1) * 8;
+    for character_index in 0..MAX_CHARS {
+        let character = message.get(character_index).copied().unwrap_or(b' ');
+        // The font table uses one-based character indices. Restrict input to
+        // printable ASCII to keep arbitrary diagnostic strings in bounds.
+        let character = if (1..=128).contains(&character) { character } else { b'?' };
+        let glyph = (character as usize - 1) * 8;
+
         for row in 0..8 {
             let bits = FONT8X8[glyph + row];
             for column in 0..8 {
@@ -414,13 +419,18 @@ pub fn show_keyboard_connected() {
                     BACKGROUND
                 };
                 set_demo_pixel(
-                    START_X + character_index * 8 + column,
-                    START_Y * 8 + row,
+                    character_index * 8 + column,
+                    TEXT_ROW * 8 + row,
                     color,
                 );
             }
         }
     }
+}
+
+/// Draw a persistent status message after a USB keyboard is enumerated.
+pub fn show_keyboard_connected() {
+    show_usb_status(b"USB KEYBOARD CONNECTED");
 }
 
 /// Update the top-center clock text directly in the source canvas.
