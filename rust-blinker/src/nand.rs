@@ -10,6 +10,10 @@ use core::ptr::{read_volatile, write_volatile};
 
 const FSMC_BASE: usize = 0xA000_0000;
 const NAND_BASE: usize = 0x7000_0000;
+// PD6 is connected to NAND R/B and remains readable through GPIOx_IDR even
+// while the pin is configured for FSMC AF12.
+const GPIOD_IDR: *const u32 = 0x4002_0C10 as *const u32;
+const NAND_RB_MASK: u32 = 1 << 6;
 const CMD_ADDR: *mut u8 = (NAND_BASE | (1 << 17)) as *mut u8; // CLE -> A17
 const ADDR_ADDR: *mut u8 = (NAND_BASE | (1 << 16)) as *mut u8; // ALE -> A16
 const DATA_ADDR: *mut u8 = NAND_BASE as *mut u8;
@@ -58,11 +62,13 @@ fn read_data() -> u8 {
 }
 
 fn wait_ready() -> Result<(), Error> {
-    // R/B is connected to FSMC_NWAIT (PD6). Also check NAND status bit 6;
-    // the status command is accepted while the array is busy.
+    // Do not issue 0x70 here: that changes the NAND's output mux to the status
+    // register and destroys the pending page-data read stream. Poll the
+    // physical active-low R/B signal instead. PD6 is also FSMC_NWAIT; IDR
+    // continues to sample the pad while the pin is in alternate-function mode.
     for _ in 0..TIMEOUT {
-        write_cmd(CMD_STATUS);
-        if read_data() & 0x40 != 0 {
+        let rb_high = unsafe { read_volatile(GPIOD_IDR) } & NAND_RB_MASK != 0;
+        if rb_high {
             return Ok(());
         }
         core::hint::spin_loop();
@@ -125,8 +131,9 @@ fn erase_block(block: u32) -> Result<(), Error> {
 }
 
 fn read_status() -> Result<u8, Error> {
+    // Call only after wait_ready() has observed R/B high. Read the status byte
+    // directly; calling wait_ready() after 0x70 would issue another command.
     write_cmd(CMD_STATUS);
-    wait_ready()?;
     Ok(read_data())
 }
 
