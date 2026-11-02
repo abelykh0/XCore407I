@@ -201,6 +201,33 @@ pub fn initialize_demo_canvas() {
     clear_demo_canvas(0);
 }
 
+
+/// Rotate the existing BK canvas upward by whole rows. Both camera modes use
+/// 512 bytes per source row, so this operates on the shared canvas layout.
+pub(crate) fn rotate_bk_canvas_rows(rows: usize) {
+    let rows = rows % CANVAS_HEIGHT;
+    if rows == 0 { return; }
+
+    let mut first_row = [0u8; WIDTH];
+    for _ in 0..rows {
+        for x in 0..WIDTH {
+            let (ptr, _) = canvas_read_chunk(x);
+            first_row[x] = unsafe { ptr.read() };
+        }
+        for y in 0..(CANVAS_HEIGHT - 1) {
+            for x in 0..WIDTH {
+                let src = (y + 1) * WIDTH + x;
+                let (ptr, _) = canvas_read_chunk(src);
+                let value = unsafe { ptr.read() };
+                write_canvas(y * WIDTH + x, value);
+            }
+        }
+        for x in 0..WIDTH {
+            write_canvas((CANVAS_HEIGHT - 1) * WIDTH + x, first_row[x]);
+        }
+    }
+}
+
 /// Change one logical color pixel. Every source pixel expands to a 2x2 block
 /// in the 512x512 NV12 stream, as in the original C color mode.
 pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
