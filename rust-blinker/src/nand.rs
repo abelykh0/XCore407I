@@ -201,7 +201,7 @@ fn program_page(page: u32) -> Result<ProgramTrace, Error> {
 
     // Capture ECC after exactly 2048 data writes, then disable ECC to clear
     // the accumulator before the next operation.
-    trace.ecc = unsafe { read_volatile((FSMC_BASE + 0x54) as *const u32) };
+    trace.ecc = unsafe { read_volatile((FSMC_BASE + 0x74) as *const u32) };
     unsafe {
         let pcr = read_volatile(pcr2);
         write_volatile(pcr2, pcr & !(1 << 6));
