@@ -473,6 +473,20 @@ fn append_keyboard_text(out: &mut [u8; 32], used: &mut usize, text: &[u8]) {
 fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: bool) -> Option<u8> {
     if control_or_alt { return None; }
 
+    // Original BK OnKey() control codes for the cursor keys.
+    // The keypad navigation usages act as arrows when Num Lock is off.
+    match key {
+        0x4f => return Some(0x19), // Right
+        0x50 => return Some(0x08), // Left
+        0x51 => return Some(0x1b), // Down
+        0x52 => return Some(0x1a), // Up
+        0x5a if !num => return Some(0x1b), // Keypad Down
+        0x5c if !num => return Some(0x08), // Keypad Left
+        0x5e if !num => return Some(0x19), // Keypad Right
+        0x60 if !num => return Some(0x1a), // Keypad Up
+        _ => {}
+    }
+
     match key {
         0x04..=0x1d => {
             let lower = b'a' + (key - 0x04);
