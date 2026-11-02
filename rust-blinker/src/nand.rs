@@ -247,6 +247,36 @@ fn show_program_diagnostics(page: u32) -> Result<(), Error> {
     Ok(())
 }
 
+
+fn show_register(label: &[u8], address: usize) {
+    let value = unsafe { read_volatile(address as *const u32) };
+    let mut line = [b' '; 32];
+    let mut pos = 0;
+    for &ch in label {
+        if pos < line.len() { line[pos] = ch; pos += 1; }
+    }
+    if pos + 8 <= line.len() {
+        for shift in (0..8).rev() {
+            line[pos] = hex_digit((value >> (shift * 4)) as u8);
+            pos += 1;
+        }
+    }
+    show_usb_status(&line);
+}
+
+fn show_bus_configuration() {
+    show_register(b"PCR2:", FSMC_BASE + 0x60);
+    show_register(b"PMEM2:", FSMC_BASE + 0x68);
+    show_register(b"PATT2:", FSMC_BASE + 0x6C);
+    show_register(b"SR2:", FSMC_BASE + 0x64);
+    show_register(b"GPIOD MOD:", 0x4002_0C00);
+    show_register(b"GPIOD AFRL:", 0x4002_0C20);
+    show_register(b"GPIOD AFRH:", 0x4002_0C24);
+    show_register(b"GPIOE MOD:", 0x4002_1000);
+    show_register(b"GPIOE AFRL:", 0x4002_1020);
+    show_register(b"GPIOE AFRH:", 0x4002_1024);
+}
+
 fn configure_fsmc() {
     unsafe {
         let rcc_ahb3enr = 0x4002_3838 as *mut u32;
@@ -295,6 +325,7 @@ fn report_error(error: Error) {
 pub fn run_test() {
     show_usb_status(b"NAND: FSMC INIT");
     configure_fsmc();
+    show_bus_configuration();
 
     write_cmd(CMD_RESET);
     if let Err(e) = wait_ready_status() {
