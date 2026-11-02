@@ -34,6 +34,7 @@ static uint32_t basic_rom_size;
 extern int bk_video_read_byte(uint32_t addr, uint8_t mode, uint8_t *value);
 extern int bk_video_write_byte(uint32_t addr, uint8_t mode, uint8_t value);
 extern void bk_video_mode_changed(uint8_t mode);
+extern void bk_video_shift_changed(uint8_t shift);
 extern int ev_init(void);
 
 void bk_platform_init(const uint8_t *monitor, const uint8_t *basic,
@@ -73,6 +74,7 @@ void bk_reset(void)
     last_branch = 0;
     ev_init();
     bk_video_mode_changed(RamBuffer[0x0020]);
+    bk_video_shift_changed((uint8_t)port0177664);
 }
 
 int ll_byte(pdp_regs *p, c_addr addr, d_byte *byte)
@@ -175,8 +177,14 @@ int sl_byte(pdp_regs *p, c_addr addr, d_byte value)
             break;
         case 0177662: port0177662 = value; break;
         case 0177663: port0177662 = (uint8_t)((port0177662 & 0x00FFu) | ((uint16_t)value << 8)); break;
-        case 0177664: port0177664 = (uint16_t)((port0177664 & 0xFF00u) | value); break;
-        case 0177665: port0177664 = (uint16_t)((port0177664 & 0x00FFu) | ((uint16_t)value << 8)); break;
+        case 0177664:
+            port0177664 = (uint16_t)((port0177664 & 0xFF00u) | value);
+            bk_video_shift_changed((uint8_t)port0177664);
+            break;
+        case 0177665:
+            port0177664 = (uint16_t)((port0177664 & 0x00FFu) | ((uint16_t)value << 8));
+            bk_video_shift_changed((uint8_t)port0177664);
+            break;
         default: break;
         }
     } else if (addr >= BASIC_BASE || addr >= MONITOR_BASE) {
@@ -205,7 +213,10 @@ int sl_word(pdp_regs *p, c_addr addr, d_word value)
         case 0177660:
             port0177660 = (uint8_t)((port0177660 & (uint8_t)~0x40u) | (value & 0x40u));
             break;
-        case 0177664: port0177664 = value & 01377; break;
+        case 0177664:
+            port0177664 = value & 01377;
+            bk_video_shift_changed((uint8_t)port0177664);
+            break;
         default: break;
         }
     } else if (addr >= BASIC_BASE || addr >= MONITOR_BASE) {
