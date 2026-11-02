@@ -343,7 +343,6 @@ pub(crate) struct Nv12DemoImage {
     cached_y_source_row: u16,
     cached_uv_source_row: u16,
     cached_clock_version: u32,
-    blank_frame: bool,
 }
 
 impl Nv12DemoImage {
@@ -362,7 +361,6 @@ impl Nv12DemoImage {
             cached_y_source_row: u16::MAX,
             cached_uv_source_row: u16::MAX,
             cached_clock_version: CLOCK_VERSION.load(Ordering::Relaxed),
-            blank_frame: false,
         })
     }
 
@@ -375,7 +373,6 @@ impl Nv12DemoImage {
         self.cached_y_source_row = u16::MAX;
         self.cached_uv_source_row = u16::MAX;
         self.cached_clock_version = CLOCK_VERSION.load(Ordering::Relaxed);
-        self.blank_frame = false;
     }
 
     /// Set the estimated CPU percentage available outside measured UVC work.
@@ -408,7 +405,6 @@ impl Nv12DemoImage {
                 self.cached_uv_source_row = u16::MAX;
                 self.cached_clock_version = CLOCK_VERSION.load(Ordering::Relaxed);
             }
-            self.blank_frame = MODE_CLEAR_PENDING.load(Ordering::Acquire);
         }
         if out.len() < UVC_HEADER_BYTES {
             return None;
@@ -431,12 +427,10 @@ impl Nv12DemoImage {
         out[1] = 0x80 | u8::from(self.frame_id) | if complete { 0x02 } else { 0 };
         out[2] = 0; // PTS not present
         out[3] = 0; // SCR not present
-        let payload = &mut out[UVC_HEADER_BYTES..UVC_HEADER_BYTES + data_len];
-        if self.blank_frame {
-            fill_blank_nv12(self.offset, payload);
-        } else {
-            self.fill_nv12(self.offset, payload);
-        }
+        self.fill_nv12(
+            self.offset,
+            &mut out[UVC_HEADER_BYTES..UVC_HEADER_BYTES + data_len],
+        );
         /* CPU diagnostics are retained here for later use, but hidden from
          * the demo image so its contents remain unobstructed.
         let stage_start = cycle_counter();
@@ -454,7 +448,6 @@ impl Nv12DemoImage {
         if complete {
             self.offset = 0;
             self.frame_id = !self.frame_id;
-            self.blank_frame = false;
         }
 
         Some(Packet {
@@ -470,14 +463,6 @@ impl Drop for Nv12DemoImage {
     }
 }
 
-
-/// Fill one section of an NV12 frame with studio-range black. This lets main
-/// clear the shared canvas outside the high-priority USB polling interrupt.
-fn fill_blank_nv12(offset: usize, out: &mut [u8]) {
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = if offset + i < Y_PLANE_BYTES { 16 } else { 128 };
-    }
-}
 
 impl Nv12DemoImage {
     /// Render sequential NV12 bytes from the mode-specific compact canvas.
