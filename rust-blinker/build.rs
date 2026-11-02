@@ -20,6 +20,7 @@ fn main() {
             "csrc/bk/single.c",
             "csrc/bk/timing.c",
             "csrc/bk/weird.c",
+            "csrc/bk/platform.c",
         ])
         .compile("bk_cpu");
 }
