@@ -11,6 +11,7 @@ pub fn generate_cfg() -> String {
     cfg.push_str("#define CFG_TUSB_RHPORT0_MODE OPT_MODE_DEVICE\n");
 
     cfg.push_str("#define CFG_TUSB_OS                 OPT_OS_NONE\n");
+    cfg.push_str("#define CFG_TUSB_RHPORT0_SPEED     OPT_MODE_FULL_SPEED\n");
     cfg.push_str("#define CFG_TUSB_MEM_SECTION        __attribute__((section(\".data.usb\")))\n");
 
     cfg.push_str("#define CFG_TUD_MSC_EP_BUFSIZE 512\n");
@@ -153,6 +154,7 @@ pub fn generate_cfg() -> String {
     cfg.push_str("#define CFG_TUH_CDC 1\n");
     #[cfg(all(feature = "host", feature = "hid"))]
     cfg.push_str("#define CFG_TUH_HID 4\n");
+    cfg.push_str("#define CFG_TUH_ENUMERATION_BUFSIZE 256\n");
     #[cfg(all(feature = "host", feature = "midi"))]
     cfg.push_str("#define CFG_TUH_MIDI 1\n");
     #[cfg(all(feature = "host", feature = "msc"))]
