@@ -56,6 +56,15 @@ static KEYBOARD_LOCKS: AtomicU8 = AtomicU8::new(0);
 static KEYBOARD_DEVICE: AtomicU8 = AtomicU8::new(0);
 static KEYBOARD_INSTANCE: AtomicU8 = AtomicU8::new(0);
 static mut KEYBOARD_LED_REPORT: u8 = 0;
+// Characters decoded by TinyUSB are handed to the emulator from the main loop.
+static mut KEYBOARD_INPUT_BUFFER: [u8; 32] = [0; 32];
+static KEYBOARD_INPUT_LEN: AtomicU8 = AtomicU8::new(0);
+
+unsafe extern "C" {
+    fn bk_platform_init(monitor_rom: *const u8, basic_rom: *const u8, basic_size_bytes: u32);
+    fn bk_loop() -> i32;
+    fn sendInput(buffer: *mut u8, size: u8);
+}
 
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
@@ -79,6 +88,15 @@ fn main() -> ! {
     update_clock_from_rtc();
 
     enable_cycle_counter(&mut core);
+
+    // Initialize the BK platform with the original embedded ROM images.
+    unsafe {
+        bk_platform_init(
+            xcore407i_blinker::rom::MONITOR_ROM.as_ptr(),
+            xcore407i_blinker::rom::BASIC_ROM.as_ptr(),
+            xcore407i_blinker::rom::BASIC_ROM.len() as u32,
+        );
+    }
 
     // initialize_demo_canvas();
     clear_demo_canvas(0x10);
@@ -198,6 +216,23 @@ fn main() -> ! {
     let mut last_rtc_sample = 0;
 
     loop {
+        // Execute one original PDP-11 instruction per main-loop iteration.
+        unsafe { bk_loop(); }
+
+        // Deliver keyboard characters in main context, not from a TinyUSB callback.
+        let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
+        if input_len > 0 {
+            let mut buffer = [0u8; 32];
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
+                    buffer.as_mut_ptr(),
+                    input_len as usize,
+                );
+                sendInput(buffer.as_mut_ptr(), input_len);
+            }
+        }
+
         // Canvas clearing is deferred to thread context; TIM2 emits black
         // frames until the new mode's canvas has been cleared.
         service_camera_mode_change();
@@ -404,6 +439,15 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
 
     if used != 0 {
         show_keyboard_input(&text[..used]);
+        // Keep the latest decoded keyboard batch for the emulator main loop.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                text.as_ptr(),
+                core::ptr::addr_of_mut!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
+                used,
+            );
+        }
+        KEYBOARD_INPUT_LEN.store(used as u8, Ordering::Release);
     }
 }
 
