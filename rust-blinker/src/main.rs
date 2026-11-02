@@ -12,7 +12,7 @@ use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, service_camera_mode_change, show_keyboard_input, show_usb_status, update_clock_from_rtc};
+use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, service_camera_mode_change, show_usb_status};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
@@ -85,7 +85,7 @@ fn main() -> ! {
     let mut device = pac::Peripherals::take().unwrap();
 
     let rtc_ready = rtc::initialize();
-    update_clock_from_rtc();
+    // update_clock_from_rtc(); // Temporarily disable the RTC clock overlay.
 
     enable_cycle_counter(&mut core);
 
@@ -213,7 +213,7 @@ fn main() -> ! {
         &mut core.NVIC,
     );
 
-    let mut last_rtc_sample = 0;
+    // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
 
     loop {
         // Execute one original PDP-11 instruction per main-loop iteration.
@@ -240,11 +240,11 @@ fn main() -> ! {
         // USB polling and camera-class access now belong exclusively to TIM2.
         let now = TICKS.load(Ordering::Relaxed);
 
-        if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
-            last_rtc_sample = now;
-            rtc::refresh_display_time();
-            update_clock_from_rtc();
-        }
+        // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
+        //     last_rtc_sample = now;
+        //     rtc::refresh_display_time();
+        //     update_clock_from_rtc();
+        // } // Temporarily disable the RTC clock overlay.
 
         if USB_HOST_TASK_PENDING.swap(false, Ordering::AcqRel) {
             unsafe { tusb::tuh_task_ext(0, false); }
@@ -440,9 +440,9 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
         show_usb_status(event);
     }
 
-    if used != 0 {
-        show_keyboard_input(&text[..used]);
-    }
+    // if used != 0 {
+    //     show_keyboard_input(&text[..used]);
+    // } // Keyboard diagnostic text temporarily disabled.
 
     // Only decoded key bytes go to the emulator; display labels are not BK input.
     if emulator_used != 0 {
@@ -484,6 +484,7 @@ fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: boo
             let i = (key - 0x1e) as usize;
             Some(if shift { SHIFTED[i] } else { NORMAL[i] })
         }
+        0x28 => Some(b'\n'), // BK OnKey maps Enter to 0x0A.
         0x2c => Some(b' '),
         0x2d => Some(if shift { b'_' } else { b'-' }),
         0x2e => Some(if shift { b'+' } else { b'=' }),
