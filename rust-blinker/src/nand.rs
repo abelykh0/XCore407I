@@ -156,7 +156,16 @@ fn read_status() -> Result<u8, Error> {
     Ok(read_data())
 }
 
-fn program_page(page: u32) -> Result<(), Error> {
+#[derive(Clone, Copy)]
+struct ProgramTrace {
+    writes: u16,
+    first: u8,
+    last: u8,
+    saw_busy: bool,
+    saw_ready: bool,
+}
+
+fn program_page(page: u32) -> Result<ProgramTrace, Error> {
     write_cmd(CMD_PROGRAM);
     row_address(page);
 
@@ -165,15 +174,44 @@ fn program_page(page: u32) -> Result<(), Error> {
     // the current FSMC timing configuration to provide that margin.
     cortex_m::asm::delay(1_000);
 
+    let mut trace = ProgramTrace {
+        writes: 0,
+        first: 0,
+        last: 0,
+        saw_busy: false,
+        saw_ready: false,
+    };
     for i in 0..PAGE_BYTES {
-        write_data((i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5);
+        let value = (i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5;
+        if i == 0 { trace.first = value; }
+        trace.last = value;
+        write_data(value);
+        trace.writes += 1;
     }
+
     write_cmd(CMD_PROGRAM_CONFIRM);
-    wait_ready_rb()?;
+
+    // Record both edges explicitly rather than treating a ready-high idle
+    // level as proof that the program cycle completed.
+    let mut became_ready = false;
+    for _ in 0..TIMEOUT {
+        let ready = unsafe { read_volatile(GPIOD_IDR) } & NAND_RB_MASK != 0;
+        if !ready {
+            trace.saw_busy = true;
+        } else if trace.saw_busy {
+            trace.saw_ready = true;
+            became_ready = true;
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    if !became_ready {
+        return Err(Error::Timeout);
+    }
     if read_status()? & 0x01 != 0 {
         return Err(Error::ProgramFailed);
     }
-    Ok(())
+    Ok(trace)
 }
 
 fn verify_page(page: u32) -> Result<(), Error> {
@@ -194,6 +232,25 @@ fn verify_page(page: u32) -> Result<(), Error> {
 
 fn hex_digit(value: u8) -> u8 {
     b"0123456789ABCDEF"[(value & 0x0F) as usize]
+}
+
+fn show_program_trace(trace: ProgramTrace) {
+    let mut line = *b"WRITES:0000 FIRST:00 LAST:00";
+    let n = trace.writes as usize;
+    line[7] = hex_digit((n >> 12) as u8);
+    line[8] = hex_digit((n >> 8) as u8);
+    line[9] = hex_digit((n >> 4) as u8);
+    line[10] = hex_digit(n as u8);
+    line[18] = hex_digit(trace.first >> 4);
+    line[19] = hex_digit(trace.first);
+    line[26] = hex_digit(trace.last >> 4);
+    line[27] = hex_digit(trace.last);
+    show_usb_status(&line);
+
+    let mut rb = *b"RB BUSY:0 READY:0";
+    rb[8] = if trace.saw_busy { b'1' } else { b'0' };
+    rb[16] = if trace.saw_ready { b'1' } else { b'0' };
+    show_usb_status(&rb);
 }
 
 fn show_hex_bytes(prefix: &[u8], bytes: &[u8]) {
@@ -377,11 +434,15 @@ pub fn run_test() {
     show_usb_status(b"NAND: ERASE OK");
 
     let page = block * PAGES_PER_BLOCK;
-    if let Err(e) = program_page(page) {
-        report_error(e);
-        return;
-    }
+    let trace = match program_page(page) {
+        Ok(trace) => trace,
+        Err(e) => {
+            report_error(e);
+            return;
+        }
+    };
     show_usb_status(b"NAND: PROGRAM OK");
+    show_program_trace(trace);
 
     if let Err(e) = show_program_diagnostics(page) {
         report_error(e);
