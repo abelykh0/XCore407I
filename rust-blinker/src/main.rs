@@ -3,7 +3,7 @@
 
 use core::mem::MaybeUninit;
 use core::ptr;
-use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use cortex_m::peripheral::{scb::SystemHandler, syst::SystClkSource, NVIC, SCB};
 use cortex_m_rt::{entry, exception};
 use panic_halt as _;
@@ -23,7 +23,9 @@ const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
 // One timer interrupt per USB HS microframe (125 us, 8 kHz).
 const USB_POLL_TIMER_HZ: u32 = 8_000;
+const USB_HOST_TASK_HZ: u32 = 1_000;
 const TIM2_PRIORITY: u8 = 2;
+const TIM3_PRIORITY: u8 = 3;
 const SYSTICK_PRIORITY: u8 = 1;
 
 static TICKS: AtomicU32 = AtomicU32::new(0);
@@ -44,6 +46,8 @@ const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
 const CORE_CLOCK_HZ: u64 = 168_000_000;
 static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
 static USB_FS_STATUS: AtomicU32 = AtomicU32::new(0);
+// TIM3 schedules TinyUSB host work; the actual task runs in thread context.
+static USB_HOST_TASK_PENDING: AtomicBool = AtomicBool::new(false);
 
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
@@ -167,10 +171,19 @@ fn main() -> ! {
     CAMERA_PTR.store(camera_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
-    // Start only after both objects are fully initialized and published.
+    // Start the independent USB service timers only after all USB objects
+    // are initialized and published. TIM2 services the HS UVC device at 8 kHz.
     configure_usb_poll_timer(
         &device.RCC,
         &device.TIM2,
+        &mut core.NVIC,
+    );
+
+    // TIM3 schedules the TinyUSB FS host task at 1 kHz. The ISR only sets a
+    // flag; tuh_task_ext() itself must run in thread context, never in an ISR.
+    configure_usb_host_task_timer(
+        &device.RCC,
+        &device.TIM3,
         &mut core.NVIC,
     );
 
@@ -186,7 +199,7 @@ fn main() -> ! {
             update_clock_from_rtc();
         }
 
-        unsafe { tusb::tuh_task_ext(0, false); }
+        if USB_HOST_TASK_PENDING.swap(false, Ordering::AcqRel) {\n            unsafe { tusb::tuh_task_ext(0, false); }\n        }
 
         let status = USB_FS_STATUS.swap(0, Ordering::AcqRel);
         let message: &[u8] = match status {
@@ -289,6 +302,48 @@ fn TIM2() {
         );
     }
     */
+}
+
+/// Configure TIM3 as a 1 kHz scheduler tick for the TinyUSB FS host task.
+///
+/// TinyUSB's host task dispatches callbacks and is not ISR-safe. TIM3 therefore
+/// only requests a task run; main() performs the work in thread context.
+fn configure_usb_host_task_timer(
+    rcc: &pac::RCC,
+    tim3: &pac::TIM3,
+    nvic: &mut NVIC,
+) {
+    // TIM3CLK = 84 MHz (APB1 prescaler is /4, timer clock is doubled).
+    // 84 MHz / 84,000 = 1,000 Hz.
+    const TIMER_TICKS: u32 = 84_000;
+
+    rcc.apb1enr().modify(|_, w| w.tim3en().set_bit());
+
+    rcc.apb1rstr().modify(|_, w| w.tim3rst().set_bit());
+    rcc.apb1rstr().modify(|_, w| w.tim3rst().clear_bit());
+
+    tim3.cr1().write(|w| w.cen().clear_bit());
+    tim3.dier().write(|w| w.uie().clear_bit());
+    tim3.psc().write(|w| unsafe { w.psc().bits(0) });
+    tim3.arr().write(|w| unsafe { w.arr().bits(TIMER_TICKS - 1) });
+    tim3.egr().write(|w| w.ug().set_bit());
+    tim3.sr().write(|w| w.uif().clear_bit());
+
+    unsafe {
+        nvic.set_priority(interrupt::TIM3, TIM3_PRIORITY << 4);
+        NVIC::unpend(interrupt::TIM3);
+        NVIC::unmask(interrupt::TIM3);
+    }
+
+    tim3.dier().write(|w| w.uie().set_bit());
+    tim3.cr1().write(|w| w.cen().set_bit());
+}
+
+#[interrupt]
+fn TIM3() {
+    let tim3 = unsafe { &*pac::TIM3::ptr() };
+    tim3.sr().write(|w| w.uif().clear_bit());
+    USB_HOST_TASK_PENDING.store(true, Ordering::Release);
 }
 
 /// Set a simple preemption-priority grouping and the system-handler priorities.
