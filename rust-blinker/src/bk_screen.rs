@@ -74,3 +74,35 @@ impl BkScreen {
         self.sl_byte(addr + 1, (word >> 8) as u8, mode_register)
     }
 }
+
+/// C platform-layer callback for BK video-memory reads.
+#[unsafe(no_mangle)]
+pub extern "C" fn bk_video_read_byte(addr: u32, mode: u8, value: *mut u8) -> i32 {
+    if value.is_null() {
+        return 2; // BUS_ERROR
+    }
+    match BkScreen.ll_byte(addr, mode) {
+        Some(byte) => {
+            unsafe { value.write(byte) };
+            0
+        }
+        None => 2,
+    }
+}
+
+/// C platform-layer callback for BK video-memory writes.
+#[unsafe(no_mangle)]
+pub extern "C" fn bk_video_write_byte(addr: u32, mode: u8, value: u8) -> i32 {
+    if BkScreen.sl_byte(addr, value, mode) { 0 } else { 2 }
+}
+
+/// Keep the camera canvas interpretation aligned with BK RAM[0x0020].
+#[unsafe(no_mangle)]
+pub extern "C" fn bk_video_mode_changed(mode: u8) {
+    let camera_mode = if mode == 0 {
+        crate::camera::CameraMode::Monochrome
+    } else {
+        crate::camera::CameraMode::Color
+    };
+    crate::camera::request_camera_mode(camera_mode);
+}
