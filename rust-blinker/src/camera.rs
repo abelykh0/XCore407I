@@ -214,6 +214,47 @@ pub fn set_demo_pixel(x: usize, y: usize, color: u8) {
     }
 }
 
+/// Read a BK color pixel back from the NV12 source canvas.
+pub(crate) fn get_bk_color_pixel(x: usize, y: usize) -> u8 {
+    if x >= 256 || y >= CANVAS_HEIGHT {
+        return 0;
+    }
+    let offset = (y * 256 + x) * 2;
+    unsafe {
+        let base = core::ptr::addr_of!(DEMO_CANVAS.0).cast::<u8>();
+        let tail = core::ptr::addr_of!(DEMO_CANVAS_TAIL.0).cast::<u8>();
+        let (cb, cr) = if offset < CANVAS_MAIN_BYTES {
+            (base.add(offset).read(), base.add(offset + 1).read())
+        } else {
+            let o = offset - CANVAS_MAIN_BYTES;
+            (tail.add(o).read(), tail.add(o + 1).read())
+        };
+        let uv = [cb, cr];
+        if uv == UV_PALETTE[0] { 0x00 }
+        else if uv == UV_PALETTE[48] { 0x30 }
+        else if uv == UV_PALETTE[12] { 0x0c }
+        else if uv == UV_PALETTE[3] { 0x03 }
+        else { 0x00 }
+    }
+}
+
+/// Read a BK monochrome pixel as zero (black) or nonzero (white).
+pub(crate) fn get_bk_bw_pixel(x: usize, y: usize) -> u8 {
+    if x >= WIDTH || y >= CANVAS_HEIGHT {
+        return 0;
+    }
+    let offset = y * WIDTH + x;
+    unsafe {
+        let value = if offset < CANVAS_MAIN_BYTES {
+            core::ptr::addr_of!(DEMO_CANVAS.0).cast::<u8>().add(offset).read()
+        } else {
+            core::ptr::addr_of!(DEMO_CANVAS_TAIL.0).cast::<u8>()
+                .add(offset - CANVAS_MAIN_BYTES).read()
+        };
+        if value == 0 { 0 } else { 1 }
+    }
+}
+
 /// Draw a USB diagnostic message at the next text row, starting at the
 /// top-left corner (X=0, Y=0). Successive messages advance down the canvas
 /// and wrap to row zero after the last row. Call from the main loop, not an ISR.
