@@ -255,6 +255,11 @@ pub extern "C" fn tuh_umount_cb(_dev_addr: u8) { USB_FS_STATUS.store(5, Ordering
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tuh_hid_mount_cb(dev_addr: u8, instance: u8, _desc: *const u8, _len: u16) {
+    // HID interface protocol 1 is a boot keyboard; ignore unrelated HID
+    // interfaces rather than decoding a mouse/gamepad report as keystrokes.
+    if unsafe { tusb::tuh_hid_interface_protocol(dev_addr, instance) } != 1 {
+        return;
+    }
     KEYBOARD_DEVICE.store(dev_addr, Ordering::Release);
     KEYBOARD_INSTANCE.store(instance, Ordering::Release);
     KEYBOARD_LOCKS.store(0, Ordering::Release);
@@ -328,7 +333,7 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
 
     let modifiers = report[0];
     let shift = modifiers & 0x22 != 0;
-    let control_or_alt = modifiers & 0xcc != 0;
+    let control_or_alt = modifiers & 0xdd != 0;
     let locks_before = KEYBOARD_LOCKS.load(Ordering::Acquire);
     let mut locks = locks_before;
     let mut text = [b' '; 32];
