@@ -202,29 +202,72 @@ pub fn initialize_demo_canvas() {
 }
 
 
-/// Rotate the existing BK canvas upward by whole rows. Both camera modes use
-/// 512 bytes per source row, so this operates on the shared canvas layout.
+/// Copy a row from the split SRAM/CCM canvas into an aligned temporary row.
+#[inline]
+unsafe fn copy_canvas_row_to(row: usize, destination: *mut u8) {
+    copy_canvas_range(row * WIDTH, destination, WIDTH);
+}
+
+/// Copy a temporary row into the split SRAM/CCM canvas.
+#[inline]
+unsafe fn copy_row_to_canvas(source: *const u8, row: usize) {
+    let mut offset = row * WIDTH;
+    let mut source = source;
+    let mut remaining = WIDTH;
+    while remaining != 0 {
+        let (destination, available) = if offset < CANVAS_MAIN_BYTES {
+            (
+                core::ptr::addr_of_mut!(DEMO_CANVAS.0).cast::<u8>().add(offset),
+                CANVAS_MAIN_BYTES - offset,
+            )
+        } else {
+            let tail_offset = offset - CANVAS_MAIN_BYTES;
+            (
+                core::ptr::addr_of_mut!(DEMO_CANVAS_TAIL.0).cast::<u8>().add(tail_offset),
+                CANVAS_TAIL_BYTES - tail_offset,
+            )
+        };
+        let run = remaining.min(available);
+        crate::copy_words::copy_words(source, destination, run);
+        source = source.add(run);
+        offset += run;
+        remaining -= run;
+    }
+}
+
+/// Reverse a range of canvas rows in place, using the FPU-backed word copier.
+/// A row may straddle the SRAM/CCM boundary, so copies are split as needed.
+unsafe fn reverse_canvas_rows(first: usize, end: usize, temporary: *mut u8) {
+    let mut left = first;
+    let mut right = end;
+    while left < right {
+        right -= 1;
+        if left >= right {
+            break;
+        }
+        copy_canvas_row_to(left, temporary);
+        // Move the right row to the left, then restore the saved left row.
+        let mut right_row = [0u8; WIDTH];
+        copy_canvas_row_to(right, right_row.as_mut_ptr());
+        copy_row_to_canvas(right_row.as_ptr(), left);
+        copy_row_to_canvas(temporary, right);
+        left += 1;
+    }
+}
+
+/// Rotate the shared BK canvas upward by whole rows. Three reversals perform
+/// the rotation in O(height) row swaps, independent of the shift distance.
 pub(crate) fn rotate_bk_canvas_rows(rows: usize) {
     let rows = rows % CANVAS_HEIGHT;
-    if rows == 0 { return; }
+    if rows == 0 {
+        return;
+    }
 
-    let mut first_row = [0u8; WIDTH];
-    for _ in 0..rows {
-        for x in 0..WIDTH {
-            let (ptr, _) = canvas_read_chunk(x);
-            first_row[x] = unsafe { ptr.read() };
-        }
-        for y in 0..(CANVAS_HEIGHT - 1) {
-            for x in 0..WIDTH {
-                let src = (y + 1) * WIDTH + x;
-                let (ptr, _) = canvas_read_chunk(src);
-                let value = unsafe { ptr.read() };
-                write_canvas(y * WIDTH + x, value);
-            }
-        }
-        for x in 0..WIDTH {
-            write_canvas((CANVAS_HEIGHT - 1) * WIDTH + x, first_row[x]);
-        }
+    let mut temporary = [0u8; WIDTH];
+    unsafe {
+        reverse_canvas_rows(0, rows, temporary.as_mut_ptr());
+        reverse_canvas_rows(rows, CANVAS_HEIGHT, temporary.as_mut_ptr());
+        reverse_canvas_rows(0, CANVAS_HEIGHT, temporary.as_mut_ptr());
     }
 }
 
