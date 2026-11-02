@@ -400,7 +400,7 @@ static KEYBOARD_TEXT_COLUMN: AtomicU32 = AtomicU32::new(0);
 pub fn show_usb_status(message: &[u8]) {
     use crate::font8x8::FONT8X8;
 
-    const MAX_CHARS: usize = 32;
+    const MAX_CHARS: usize = CANVAS_WIDTH / 8;
     const FOREGROUND: u8 = 63;
     const BACKGROUND: u8 = 0;
     const TEXT_ROWS: usize = CANVAS_HEIGHT / 8;
@@ -438,7 +438,7 @@ pub fn show_usb_status(message: &[u8]) {
 pub fn show_keyboard_input(message: &[u8]) {
     use crate::font8x8::FONT8X8;
 
-    const MAX_CHARS: usize = 32;
+    const MAX_CHARS: usize = CANVAS_WIDTH / 8;
     const FOREGROUND: u8 = 63;
     const BACKGROUND: u8 = 0;
     const TEXT_ROW: usize = CANVAS_HEIGHT / 8 - 2;
