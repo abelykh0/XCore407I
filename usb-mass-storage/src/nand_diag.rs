@@ -17,10 +17,8 @@ const DATA: *mut u8 = NAND_BASE as *mut u8;
 const TIMEOUT: u32 = 20_000_000;
 
 const PAGE_BYTES: usize = 2048;
-const SPARE_BYTES: usize = 64;
 const PAGES_PER_BLOCK: u32 = 64;
 const BLOCKS: u32 = 1024;
-const PAGE_COUNT: u32 = PAGES_PER_BLOCK * BLOCKS;
 
 fn command(value: u8) { unsafe { write_volatile(CMD, value) } }
 fn address(value: u8) { unsafe { write_volatile(ADDR, value) } }
@@ -114,13 +112,13 @@ fn pattern_byte(block: u32, page: u32, offset: usize) -> u8 {
         ^ 0xA5
 }
 
-fn verify_erased(block: u32, page_buf: &mut [u8; PAGE_BYTES]) -> Result<(), (u32, u8)> {
+fn verify_erased(block: u32, page_buf: &mut [u8; PAGE_BYTES]) -> Result<(), (u32, u16)> {
     for p in 0..PAGES_PER_BLOCK {
         if !read_page(block * PAGES_PER_BLOCK + p, page_buf) {
             return Err((p, 0xFE)); // read timeout
         }
         if let Some(offset) = page_buf.iter().position(|&v| v != 0xFF) {
-            return Err((p, offset as u8));
+            return Err((p, offset as u16));
         }
     }
     Ok(())
@@ -296,7 +294,5 @@ pub fn create_report() -> ([u8; 192], usize) {
         append(&mut report, &mut len, b"RESULT: ALL GOOD BLOCKS PASSED\r\n");
     }
     append(&mut report, &mut len, b"Factory-bad blocks were skipped.\r\n");
-    let _ = SPARE_BYTES;
-    let _ = PAGE_COUNT;
     (report, len)
 }
