@@ -134,7 +134,7 @@ pub mod diagnostics {
     pub fn write_trace_status(out: &mut [u8]) -> usize {
         use core::sync::atomic::Ordering;
         let mut pos = 0;
-        append(out, &mut pos, b"XCore407I MTP trace\\r\\n");
+        append(out, &mut pos, b"XCore407I MTP trace\r\n");
         append_counter(out, &mut pos, b"GOR=", GET_OBJECT_REQUESTS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GSize=", GET_OBJECT_LAST_SIZE.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GRD=", GET_OBJECT_BYTES_READ.load(Ordering::Relaxed));
