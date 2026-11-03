@@ -49,6 +49,6 @@ LittleFS backend, and host-side interoperability tests are complete.
 ## Build
 
 ```sh
-rustup target add thumbv7em-none-eabihf
-cargo check --lib --target thumbv7em-none-eabihf
+cargo build --release --target thumbv7em-none-eabihf
+probe-rs download --chip STM32F407IGTx target/thumbv7em-none-eabihf/release/xcore407i_usb_mtp
 ```

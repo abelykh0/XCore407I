@@ -1,5 +1,5 @@
 [package]
-name = "xcore407i-usb-mtp"
+name = "xcore407i_usb_mtp"
 version = "0.1.0"
 edition = "2024"
 
