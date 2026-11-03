@@ -20,7 +20,7 @@ use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidP
 use xcore407i_usb_mtp::{
     board,
     bus::usb_bus,
-    mtp::{MtpObject, MtpUsbClass, UploadObjectInfo},
+    mtp::{MtpObject, MtpUsbClass, UploadObjectInfo, MTP_OBJECT_CAPACITY},
     nand_fs,
     usb_hs::F407UsbHs,
 };
@@ -52,6 +52,9 @@ static MTP_PTR: AtomicPtr<BoardMtpClass> = AtomicPtr::new(ptr::null_mut());
 #[unsafe(link_section = ".ccmram.usb_device")]
 static mut USB_DEVICE: MaybeUninit<BoardUsbDevice> = MaybeUninit::uninit();
 static mut MTP: MaybeUninit<BoardMtpClass> = MaybeUninit::uninit();
+
+// Large filesystem snapshot lives in main SRAM, not on the stack.
+static mut OBJECTS: [MtpObject; MTP_OBJECT_CAPACITY] = [MtpObject::EMPTY; MTP_OBJECT_CAPACITY];
 
 #[entry]
 fn main() -> ! {
@@ -125,7 +128,8 @@ fn main() -> ! {
         // accessed by the USB polling interrupt.
         let capacity_bytes = fs.total_space() as u64;
         let free_bytes = fs.available_space().unwrap_or(0) as u64;
-        let mut objects = [MtpObject::EMPTY; 17];
+        let objects = unsafe { &mut *ptr::addr_of_mut!(OBJECTS) };
+        objects.fill(MtpObject::EMPTY);
         let mut object_count = 0usize;
         fs.read_dir_and_then(path!("/"), |entries| {
             for entry in entries.skip(2) {
@@ -190,11 +194,12 @@ fn main() -> ! {
             // Pull commands out of the USB ISR and perform all LittleFS work
             // here, with TIM2 free to keep servicing USB HS.
             NVIC::mask(Interrupt::TIM2);
-            let (get_request, delete_request, info_request, upload_data, upload_abort) = {
+            let (get_request, delete_request, rename_request, info_request, upload_data, upload_abort) = {
                 let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
                 (
                     mtp.take_get_object_request(),
                     mtp.take_delete_object_request(),
+                    mtp.take_rename_object_request(),
                     mtp.take_send_object_info_request(),
                     mtp.take_upload_data(&mut upload_buffer),
                     mtp.take_upload_abort(),
@@ -235,6 +240,8 @@ fn main() -> ! {
                     final_packet,
                     &mut pending_upload,
                 );
+            } else if let Some((handle, transaction_id, name, name_len)) = rename_request {
+                service_rename_object(fs, objects, &mut object_count, handle, &name[..name_len as usize], transaction_id);
             } else if let Some((handle, transaction_id)) = delete_request {
                 service_delete_object(
                     fs,
@@ -322,7 +329,7 @@ fn test_hello_readback(
 /// to LittleFS while the USB endpoint applies bulk NAK back-pressure.
 fn service_send_object_info(
     fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
-    objects: &[MtpObject; 17],
+    objects: &[MtpObject],
     object_count: usize,
     info: UploadObjectInfo,
     transaction_id: u32,
@@ -632,6 +639,68 @@ fn service_delete_object(
         xcore407i_usb_mtp::mtp::response::OK,
         transaction_id,
     );
+    unsafe { NVIC::unmask(Interrupt::TIM2); }
+}
+
+/// Rename a root-level regular file and update its stable MTP handle.
+fn service_rename_object(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    objects: &mut [MtpObject],
+    object_count: &mut usize,
+    handle: u32,
+    new_name: &[u8],
+    transaction_id: u32,
+) {
+    let Some(index) = objects[..*object_count].iter().position(|object| object.handle == handle) else {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::INVALID_OBJECT_HANDLE, transaction_id);
+        return;
+    };
+    let object = objects[index];
+    if object.is_dir || object.name() == "MTP-README.txt" || object.name() == "MTP-STATUS.txt"
+        || new_name.eq_ignore_ascii_case(b".mtp-upload.tmp")
+        || new_name.eq_ignore_ascii_case(b"MTP-README.txt")
+        || new_name.eq_ignore_ascii_case(b"MTP-STATUS.txt")
+        || new_name.is_empty() || new_name.len() > object.name.len()
+    {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::ACCESS_DENIED, transaction_id);
+        return;
+    }
+    let Ok(old_name) = core::str::from_utf8(&object.name[..object.name_len as usize]) else {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::GENERAL_ERROR, transaction_id);
+        return;
+    };
+    let Ok(new_name_str) = core::str::from_utf8(new_name) else {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::INVALID_PARAMETER, transaction_id);
+        return;
+    };
+    if old_name.eq_ignore_ascii_case(new_name_str) {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::OK, transaction_id);
+        return;
+    }
+    if objects[..*object_count].iter().any(|entry| entry.handle != handle
+        && core::str::from_utf8(&entry.name[..entry.name_len as usize]).unwrap_or("")
+            .eq_ignore_ascii_case(new_name_str))
+    {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::ACCESS_DENIED, transaction_id);
+        return;
+    }
+    let (Ok(old_relative), Ok(new_relative)) = (PathBuf::try_from(old_name), PathBuf::try_from(new_name_str)) else {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::INVALID_PARAMETER, transaction_id);
+        return;
+    };
+    let old_path = path!("/").join(old_relative.as_path());
+    let new_path = path!("/").join(new_relative.as_path());
+    if fs.exists(&new_path) || fs.rename(&old_path, &new_path).is_err() {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::ACCESS_DENIED, transaction_id);
+        return;
+    }
+    objects[index].name.fill(0);
+    objects[index].name[..new_name.len()].copy_from_slice(new_name);
+    objects[index].name_len = new_name.len() as u8;
+    NVIC::mask(Interrupt::TIM2);
+    let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+    mtp.set_objects(&objects[..*object_count]);
+    let _ = mtp.queue_main_response(xcore407i_usb_mtp::mtp::response::OK, transaction_id);
     unsafe { NVIC::unmask(Interrupt::TIM2); }
 }
 
