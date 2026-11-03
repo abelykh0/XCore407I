@@ -758,7 +758,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u32(&mut data, &mut pos, 0); // EventsSupported
         Self::append_u32(&mut data, &mut pos, 0); // DevicePropertiesSupported
         Self::append_u32(&mut data, &mut pos, 0); // CaptureFormats
-        Self::append_u32(&mut data, &mut pos, 1); // PlaybackFormats
+        Self::append_u32(&mut data, &mut pos, 2); // PlaybackFormats
+        Self::append_u16(&mut data, &mut pos, 0x3000); // Undefined
         Self::append_u16(&mut data, &mut pos, 0x3004); // Text
 
         Self::append_ptp_string(&mut data, &mut pos, "OpenAI XCore407I");
