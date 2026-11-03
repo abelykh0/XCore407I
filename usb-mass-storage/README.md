@@ -55,18 +55,18 @@ a drive letter.
 - Persists 128-bit MTP Persistent Unique Object Identifiers (PUIDs) as LittleFS
   user attributes. The identifier combines the STM32 factory UID with a
   monotonically allocated counter. Rename preserves the file's attribute/PUID.
-- Implements `GetObjectPropValue` for the advertised properties. This operation
-  was added most recently and still requires hardware regression testing against
-  Windows enumeration and file reads.
+- `GetObjectPropValue` is not currently advertised or implemented. A recent
+  attempt caused Windows to lose the object listing, so it was reverted. Do not
+  reintroduce it until its data-phase handling can be isolated and validated.
 
 ## Remaining work
 
 ### Correctness and interoperability
 
-- **Validate the new `GetObjectPropValue` implementation on hardware.** Check
-  enumeration, property queries, opening, and copying files. Earlier versions
-  of this operation caused Windows to lose the object listing; revert or fix
-  this operation if that regression returns.
+- Revisit `GetObjectPropValue` only after the stable baseline is confirmed.
+  Implement and test it separately without changing object enumeration or file
+  streaming. The previous attempt caused Windows to lose the object listing and
+  has been reverted.
 - Complete the `GetObjectPropList` parameter semantics, including object
   selection, property-group handling, depth, and correct results for requests
   covering all objects. Current handling is intentionally narrower than the
