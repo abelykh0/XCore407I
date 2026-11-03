@@ -887,7 +887,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(out, pos, value);
     }
 
-    fn object_prop_list(&mut self, transaction_id: u32, handle: u32) {
+    fn object_prop_list(&mut self, transaction_id: u32, handle: u32, property_code: u32) {
         let selected = if handle == 0 || handle == 0xffff_ffff {
             self.objects[..self.object_count].first().copied()
         } else {
@@ -897,17 +897,57 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
             return;
         };
+
+        // PropertyCode == 0 requests all properties. Otherwise return only
+        // the requested property, as required by GetObjectPropList.
+        let include_storage_id = property_code == 0 || property_code == 0xdc01;
+        let include_format = property_code == 0 || property_code == 0xdc02;
+        let include_protection = property_code == 0 || property_code == 0xdc03;
+        let include_size = property_code == 0 || property_code == 0xdc04;
+        let include_filename = property_code == 0 || property_code == 0xdc07;
+        let include_date = property_code == 0 || property_code == 0xdc09;
+        let include_parent = property_code == 0 || property_code == 0xdc0b;
+
+        if !(include_storage_id || include_format || include_protection || include_size
+            || include_filename || include_date || include_parent)
+        {
+            self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
+            return;
+        }
+
+        let count = include_storage_id as u32
+            + include_format as u32
+            + include_protection as u32
+            + include_size as u32
+            + include_filename as u32
+            + include_date as u32
+            + include_parent as u32;
+
         let mut data = [0u8; 256];
         let mut pos = 0;
-        Self::append_u32(&mut data, &mut pos, 7);
+        Self::append_u32(&mut data, &mut pos, count);
         let h = object.handle;
-        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc01, PLACEHOLDER_STORAGE_ID);
-        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, if object.is_dir { 0x3001 } else { 0x3000 });
-        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 0);
-        Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, object.size as u64);
-        Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
-        Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
-        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0xffff_ffff);
+        if include_storage_id {
+            Self::append_prop_u32(&mut data, &mut pos, h, 0xdc01, PLACEHOLDER_STORAGE_ID);
+        }
+        if include_format {
+            Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, if object.is_dir { 0x3001 } else { 0x3000 });
+        }
+        if include_protection {
+            Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 0);
+        }
+        if include_size {
+            Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, object.size as u64);
+        }
+        if include_filename {
+            Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
+        }
+        if include_date {
+            Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
+        }
+        if include_parent {
+            Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0xffff_ffff);
+        }
         self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &data[..pos], response::OK);
     }
 
@@ -1030,8 +1070,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_OBJECT_PROP_LIST => {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                } else if let Some(handle) = parameter(0) {
-                    self.object_prop_list(header.transaction_id, handle);
+                } else if let (Some(handle), Some(property_code)) = (parameter(0), parameter(2)) {
+                    self.object_prop_list(header.transaction_id, handle, property_code);
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
