@@ -65,6 +65,11 @@ static mut UPLOAD_STAGING: [u8; nand_fs::PAGE_SIZE] = [0; nand_fs::PAGE_SIZE];
 // GET_OBJECT staging fills the 4 KiB MTP transport buffer in one batch.
 static mut GET_OBJECT_STAGING: [u8; 4084] = [0; 4084];
 
+// Persistent MTP trace snapshots are appended in main context. The file is
+// added to the MTP object snapshot on the next boot, after the test run.
+static mut MTP_TRACE_BUFFER: [u8; 1792] = [0; 1792];
+
+
 #[entry]
 fn main() -> ! {
     board::configure_system_clock_168mhz();
@@ -234,12 +239,14 @@ fn main() -> ! {
         // relatively small exception/main stack.
         let upload_staging = unsafe { &mut *ptr::addr_of_mut!(UPLOAD_STAGING) };
         let mut upload_staging_len = 0usize;
+        let mut last_seen_get_object = (0u32, 0u32);
+        let mut pending_trace_response: Option<(u32, u32)> = None;
 
         loop {
             // Pull commands out of the USB ISR and perform all LittleFS work
             // here, with TIM2 free to keep servicing USB HS.
             NVIC::mask(Interrupt::TIM2);
-            let (get_request, delete_request, rename_request, info_request, upload_data, upload_abort) = {
+            let (get_request, delete_request, rename_request, info_request, upload_data, upload_abort, last_op, last_tid, response_count) = {
                 let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
                 (
                     mtp.take_get_object_request(),
@@ -248,12 +255,21 @@ fn main() -> ! {
                     mtp.take_send_object_info_request(),
                     mtp.take_upload_data(&mut upload_buffer),
                     mtp.take_upload_abort(),
+                    xcore407i_usb_mtp::mtp::diagnostics::GET_OBJECT_LAST_COMMAND_CODE.load(Ordering::Relaxed),
+                    xcore407i_usb_mtp::mtp::diagnostics::GET_OBJECT_LAST_COMMAND_TXID.load(Ordering::Relaxed),
+                    xcore407i_usb_mtp::mtp::diagnostics::RESPONSE_IN_COMPLETED.load(Ordering::Relaxed),
                 )
             };
             peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
             unsafe {
                 NVIC::unpend(Interrupt::TIM2);
                 NVIC::unmask(Interrupt::TIM2);
+            }
+
+            if last_op == 0x1009 && (last_op, last_tid) != last_seen_get_object {
+                last_seen_get_object = (last_op, last_tid);
+                persist_get_object_trace(fs, b"REQUEST", last_tid);
+                pending_trace_response = Some((last_tid, response_count.wrapping_add(1)));
             }
 
             if upload_abort {
@@ -300,8 +316,18 @@ fn main() -> ! {
                 );
             } else if let Some((handle, transaction_id)) = get_request {
                 service_get_object(fs, objects, object_count, handle, transaction_id);
+                persist_get_object_trace(fs, b"DATA_QUEUED", transaction_id);
             } else {
                 core::hint::spin_loop();
+            }
+
+            if let Some((transaction_id, target_response_count)) = pending_trace_response {
+                let completed = xcore407i_usb_mtp::mtp::diagnostics::RESPONSE_IN_COMPLETED
+                    .load(Ordering::Relaxed);
+                if completed.wrapping_sub(target_response_count) < 0x8000_0000 {
+                    persist_get_object_trace(fs, b"RESPONSE_COMPLETED", transaction_id);
+                    pending_trace_response = None;
+                }
             }
         }
     });
@@ -312,6 +338,80 @@ fn main() -> ! {
 }
 
 
+
+
+/// Append one MTP GET_OBJECT lifecycle snapshot to LittleFS. This runs only
+/// in main context; the USB polling interrupt never accesses the filesystem.
+fn persist_get_object_trace(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    event: &[u8],
+    transaction_id: u32,
+) {
+    use xcore407i_usb_mtp::mtp::diagnostics;
+
+    let buffer = unsafe { &mut *ptr::addr_of_mut!(MTP_TRACE_BUFFER) };
+    let mut pos = 0usize;
+    let prefix = b"\r\n=== MTP GET_OBJECT ";
+    buffer[..prefix.len()].copy_from_slice(prefix);
+    pos += prefix.len();
+    let event_len = event.len().min(buffer.len() - pos);
+    buffer[pos..pos + event_len].copy_from_slice(&event[..event_len]);
+    pos += event_len;
+    let tid_label = b" TID=";
+    buffer[pos..pos + tid_label.len()].copy_from_slice(tid_label);
+    pos += tid_label.len();
+    pos += append_trace_decimal(&mut buffer[pos..], transaction_id);
+    buffer[pos..pos + 2].copy_from_slice(b"\r\n");
+    pos += 2;
+
+    let status_len = diagnostics::write_status(&mut buffer[pos..]);
+    pos += status_len;
+    let end = b"=== END TRACE ===\r\n";
+    if pos + end.len() <= buffer.len() {
+        buffer[pos..pos + end.len()].copy_from_slice(end);
+        pos += end.len();
+    }
+
+    let result = fs.open_file_with_options_and_then(
+        |options| options.write(true).create(true).append(true),
+        &path!("/MTP-TRACE.txt"),
+        |file| {
+            let mut written = 0usize;
+            while written < pos {
+                let count = file.write(&buffer[written..pos])?;
+                if count == 0 {
+                    return Err(littlefs2::io::Error::IO);
+                }
+                written += count;
+            }
+            file.sync()
+        },
+    );
+    if result.is_err() {
+        // Keep the trace best-effort: never interrupt normal MTP servicing.
+    }
+}
+
+fn append_trace_decimal(out: &mut [u8], value: u32) -> usize {
+    let mut digits = [0u8; 10];
+    let mut n = value;
+    let mut count = 0usize;
+    loop {
+        digits[count] = b'0' + (n % 10) as u8;
+        count += 1;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    if count > out.len() {
+        return 0;
+    }
+    for index in 0..count {
+        out[index] = digits[count - index - 1];
+    }
+    count
+}
 
 /// Read the STM32F407's factory-programmed 96-bit unique device identifier.
 fn read_device_uid() -> littlefs2::io::Result<[u8; 12]> {
