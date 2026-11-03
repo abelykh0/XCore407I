@@ -231,7 +231,7 @@ pub trait MtpStorage {
     fn free_bytes(&self) -> u64;
     fn object_count(&self) -> u32;
     fn read_object(&mut self, handle: u32, offset: u64, out: &mut [u8]) -> core::result::Result<usize, MtpStorageError>;
-    fn write_object(&mut self, handle: u32, offset: u64, data: &[u8]) -> Result<usize, MtpStorageError>;
+    fn write_object(&mut self, handle: u32, offset: u64, data: &[u8]) -> core::result::Result<usize, MtpStorageError>;
     fn delete_object(&mut self, handle: u32) -> core::result::Result<(), MtpStorageError>;
 }
 
