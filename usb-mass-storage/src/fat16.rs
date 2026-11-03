@@ -7,7 +7,7 @@
 use crate::block::{BlockError, SECTOR_SIZE};
 use crate::image::ImageFile;
 
-pub const DEFAULT_VOLUME_SECTORS: u32 = 65_536; // 32 MiB
+pub const DEFAULT_VOLUME_SECTORS: u32 = 196_608; // 96 MiB; 2 KiB clusters fit FAT16
 const SECTORS_PER_CLUSTER: u8 = 4;
 const RESERVED_SECTORS: u16 = 1;
 const FAT_COUNT: u8 = 2;
