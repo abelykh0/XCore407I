@@ -218,7 +218,10 @@ impl<'a, B: UsbBus, D: BlockDevice> MassStorage<'a, B, D> {
                         self.next_lba = self.next_lba.wrapping_add(1);
                         self.sectors_left -= 1;
                         self.residue = self.residue.saturating_sub(SECTOR_SIZE as u32);
-                        if self.sectors_left == 0 { self.send_csw(); }
+                        if self.sectors_left == 0 {
+                            if self.storage.sync().is_err() { self.fail(0x04, 0x44); }
+                            else { self.send_csw(); }
+                        }
                     }
                     Err(BlockError::ReadOnly) => self.fail(0x07, 0x27),
                     Err(_) => self.fail(0x03, 0x0c),
