@@ -555,7 +555,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.session_open = false;
         self.pending_get_object = None;
         if self.upload_info_accepted || self.awaiting_send_object.is_some()
-            || self.awaiting_send_object_info.is_some() || self.pending_upload_data
+            || self.awaiting_send_object_info.is_some() || self.upload_data_active
+            || self.pending_upload_data
         {
             self.pending_upload_abort = true;
         }
