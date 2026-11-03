@@ -4,6 +4,7 @@
 use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicU32, Ordering};
+use littlefs2::io::Read as LittleFsRead;
 use cortex_m::peripheral::{scb::SystemHandler, syst::SystClkSource, NVIC, SCB};
 use cortex_m_rt::{entry, exception};
 use panic_halt as _;
