@@ -260,7 +260,7 @@ impl Storage for NandStorage {
 /// Set true only for the initial provisioning flash. After README reports
 /// "LittleFS: formatted and mounted", change this to false and rebuild.
 /// With this false, an absent/corrupt filesystem is never reformatted.
-const FORMAT_NAND_ONCE: bool = falsd;
+const FORMAT_NAND_ONCE: bool = false;
 
 /// Initialize NAND, perform the explicitly enabled initial format if needed,
 /// then mount. Normal boots with FORMAT_NAND_ONCE=false are mount-only.
