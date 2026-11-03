@@ -348,9 +348,11 @@ fn service_send_object_info(
         return;
     };
     let final_path = path!("/").join(relative_path.as_path());
-    let name_conflicts = objects[..object_count]
-        .iter()
-        .any(|object| object.name().eq_ignore_ascii_case(name));
+    let name_conflicts = objects[..object_count].iter().any(|object| {
+        core::str::from_utf8(&object.name[..object.name_len as usize])
+            .unwrap_or("")
+            .eq_ignore_ascii_case(name)
+    });
     if name.eq_ignore_ascii_case("MTP-README.txt")
         || name.eq_ignore_ascii_case("MTP-STATUS.txt")
         || name.eq_ignore_ascii_case(".mtp-upload.tmp")
