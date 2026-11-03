@@ -317,9 +317,9 @@ fn test_hello_readback(
     b"LittleFS readback: PASS (HELLO.txt, 90 bytes)\r\n"
 }
 
-/// Reserve a new root-level upload destination. This first implementation
-/// intentionally caps files at 500 bytes so each MTP data container fits in
-/// one USB HS OUT packet and can be handed off without a packet ring.
+/// Reserve a new root-level upload destination. SendObject data is streamed
+/// through a single 512-byte handoff buffer; the main loop appends each packet
+/// to LittleFS while the USB endpoint applies bulk NAK back-pressure.
 fn service_send_object_info(
     fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
     objects: &[MtpObject; 17],
