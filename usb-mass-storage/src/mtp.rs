@@ -311,6 +311,8 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     event_in: EndpointIn<'a, B>,
     tx: [u8; 4096],
     tx_len: usize,
+    tx_offset: usize,
+    tx_chunk_len: usize,
     tx_pending: bool,
     tx_in_flight: bool,
     tx_is_response: bool,
@@ -369,6 +371,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             event_in,
             tx: [0; 4096],
             tx_len: 0,
+            tx_offset: 0,
+            tx_chunk_len: 0,
             tx_pending: false,
             tx_in_flight: false,
             tx_is_response: false,
@@ -589,6 +593,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.transaction_active = false;
         self.data_transfer_active = false;
         self.tx_len = 0;
+        self.tx_offset = 0;
+        self.tx_chunk_len = 0;
         self.tx_pending = false;
         self.tx_in_flight = false;
         self.tx_is_response = false;
@@ -633,6 +639,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx[8..12].copy_from_slice(&transaction_id.to_le_bytes());
         self.tx[12..length].copy_from_slice(payload);
         self.tx_len = length;
+        self.tx_offset = 0;
+        self.tx_chunk_len = 0;
         self.tx_pending = true;
         self.tx_is_response = false;
         self.pending_response = Some((response_code, transaction_id));
@@ -647,10 +655,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.pending_response = None;
         if let Ok(length) = encode_response(transaction_id, code, params, &mut self.tx) {
             self.tx_len = length;
+            self.tx_offset = 0;
+            self.tx_chunk_len = 0;
             self.tx_pending = true;
             self.tx_is_response = true;
         } else {
             self.tx_len = 0;
+            self.tx_offset = 0;
+            self.tx_chunk_len = 0;
             self.tx_is_response = true;
         }
     }
@@ -662,11 +674,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         if !self.tx_pending || self.tx_in_flight || self.tx_len == 0 {
             return;
         }
-        match self.bulk_in.write(&self.tx[..self.tx_len]) {
-            Ok(length) if length == self.tx_len => {
+        let remaining = self.tx_len.saturating_sub(self.tx_offset);
+        let chunk_len = remaining.min(BULK_MAX_PACKET_SIZE as usize);
+        match self.bulk_in.write(&self.tx[self.tx_offset..self.tx_offset + chunk_len]) {
+            Ok(length) if length == chunk_len => {
                 diagnostics::IN_SUBMIT_OK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 self.tx_pending = false;
                 self.tx_in_flight = true;
+                self.tx_chunk_len = chunk_len;
             }
             Ok(_) | Err(usb_device::UsbError::WouldBlock) => {
                 diagnostics::IN_SUBMIT_WOULDBLOCK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -686,7 +701,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
         Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
 
-        let operations: [u16; 14] = [
+        let operations: [u16; 15] = [
             operation::GET_DEVICE_INFO,
             operation::OPEN_SESSION,
             operation::CLOSE_SESSION,
@@ -701,6 +716,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::SEND_OBJECT,
             operation::GET_OBJECT_PROPS_SUPPORTED,
             operation::GET_OBJECT_PROP_LIST,
+            operation::SET_OBJECT_PROP_VALUE,
         ];
         Self::append_u32(&mut data, &mut pos, operations.len() as u32);
         for value in operations { Self::append_u16(&mut data, &mut pos, value); }
@@ -1219,7 +1235,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                         }
                         let data = &packet[CONTAINER_HEADER_LEN..length];
                         let count = data[0] as usize;
-                        if count < 2 || data.len() != 1 + count * 2 || count > 32 {
+                        if count < 2 || data.len() != 1 + count * 2 || count > 65 {
                             self.awaiting_set_object_prop_value = None;
                             self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                             return;
@@ -1338,6 +1354,14 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
             diagnostics::DATA_IN_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
         self.tx_in_flight = false;
+        self.tx_offset += self.tx_chunk_len;
+        self.tx_chunk_len = 0;
+        if self.tx_offset < self.tx_len {
+            self.tx_pending = true;
+            return;
+        }
+        self.tx_offset = 0;
+        self.tx_len = 0;
 
         // A data container is followed by its MTP response. The transaction
         // remains active until that response has itself completed.
