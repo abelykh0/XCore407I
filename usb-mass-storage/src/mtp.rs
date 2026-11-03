@@ -388,7 +388,6 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     object_count: usize,
     capacity_bytes: u64,
     free_bytes: u64,
-    pending_storage_info_changed: bool,
 }
 
 impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
@@ -447,7 +446,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             object_count: 0,
             capacity_bytes: 0,
             free_bytes: 0,
-            pending_storage_info_changed: false,
         }
     }
 
@@ -468,11 +466,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
     pub fn set_storage_stats(&mut self, capacity_bytes: u64, free_bytes: u64) {
         let free_bytes = free_bytes.min(capacity_bytes);
-        if self.session_open
-            && (self.capacity_bytes != capacity_bytes || self.free_bytes != free_bytes)
-        {
-            self.pending_storage_info_changed = true;
-        }
         self.capacity_bytes = capacity_bytes;
         self.free_bytes = free_bytes;
     }
@@ -617,7 +610,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     fn reset_protocol_state(&mut self) {
         self.clear_transport_stalls();
         self.session_open = false;
-        self.pending_storage_info_changed = false;
         self.pending_get_object = None;
         if self.upload_info_accepted || self.awaiting_send_object.is_some()
             || self.awaiting_send_object_info.is_some() || self.upload_data_active
@@ -742,28 +734,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         }
     }
 
-    fn transmit_pending_event(&mut self) {
-        if !self.pending_storage_info_changed {
-            return;
-        }
-
-        // PTP/MTP StorageInfoChanged event: StorageID is the sole parameter.
-        let mut event = [0u8; 16];
-        event[0..4].copy_from_slice(&16u32.to_le_bytes());
-        event[4..6].copy_from_slice(&4u16.to_le_bytes()); // Event container
-        event[6..8].copy_from_slice(&0x400cu16.to_le_bytes()); // StorageInfoChanged
-        event[8..12].copy_from_slice(&0u32.to_le_bytes()); // Event transaction ID
-        event[12..16].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
-
-        match self.event_in.write(&event) {
-            Ok(length) if length == event.len() => {
-                self.pending_storage_info_changed = false;
-            }
-            Ok(_) | Err(usb_device::UsbError::WouldBlock) => {}
-            Err(_) => {}
-        }
-    }
-
     fn device_info(&mut self, transaction_id: u32) {
         let mut data = [0u8; 240];
         let mut pos = 0;
@@ -794,8 +764,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u32(&mut data, &mut pos, operations.len() as u32);
         for value in operations { Self::append_u16(&mut data, &mut pos, value); }
 
-        Self::append_u32(&mut data, &mut pos, 1); // EventsSupported count
-        Self::append_u16(&mut data, &mut pos, 0x400c); // StorageInfoChanged
+        Self::append_u32(&mut data, &mut pos, 0); // EventsSupported
         Self::append_u32(&mut data, &mut pos, 0); // DevicePropertiesSupported
         Self::append_u32(&mut data, &mut pos, 0); // CaptureFormats
         Self::append_u32(&mut data, &mut pos, 2); // PlaybackFormats
@@ -1639,7 +1608,6 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
 
     fn poll(&mut self) {
         self.transmit_pending();
-        self.transmit_pending_event();
     }
 
     fn reset(&mut self) {
