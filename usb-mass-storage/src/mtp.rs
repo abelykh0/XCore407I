@@ -983,10 +983,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         &mut self,
         transaction_id: u32,
         handle: u32,
-        format: u32,
-        property: u32,
-        group: u32,
+        _format: u32,
+        _property: u32,
+        _group: u32,
     ) {
+        // Regression test: the previous working implementation returned the
+        // complete property set and did not filter by format/property/group.
+        // Keep the response values current, but remove the newer filtering
+        // logic so Windows can proceed through object discovery.
         let selected = if handle == 0 || handle == 0xffff_ffff {
             self.objects[..self.object_count].first().copied()
         } else {
@@ -997,48 +1001,17 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             return;
         };
 
-        // Respect the ObjectFormatCode and ObjectProperty filters. In
-        // particular, Windows asks for ObjectFormat (DC02) alone while
-        // discovering each handle; returning all seven properties for that
-        // request is not a valid ObjectPropList response.
-        if format != 0 && format as u16 != object.format_code() {
-            self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
-            return;
-        }
-        if group != 0 {
-            self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
-            return;
-        }
-
-        let properties: [u16; 7] = [0xdc01, 0xdc02, 0xdc03, 0xdc04, 0xdc07, 0xdc09, 0xdc0b];
-        // PTP/MTP uses 0xFFFFFFFF to request every property. Some hosts use
-        // zero for the same unfiltered request; accept both forms.
-        let all_properties = property == 0 || property == 0xffff_ffff;
-        if !all_properties && !properties.contains(&(property as u16)) {
-            self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
-            return;
-        }
-
         let mut data = [0u8; 256];
         let mut pos = 0;
-        let count = if all_properties { properties.len() as u32 } else { 1 };
-        Self::append_u32(&mut data, &mut pos, count);
+        Self::append_u32(&mut data, &mut pos, 7);
         let h = object.handle;
-        for code in properties.iter().copied() {
-            if !all_properties && property as u16 != code {
-                continue;
-            }
-            match code {
-                0xdc01 => Self::append_prop_u32(&mut data, &mut pos, h, code, PLACEHOLDER_STORAGE_ID),
-                0xdc02 => Self::append_prop_u16(&mut data, &mut pos, h, code, object.format_code()),
-                0xdc03 => Self::append_prop_u16(&mut data, &mut pos, h, code, 0),
-                0xdc04 => Self::append_prop_u64(&mut data, &mut pos, h, code, object.size as u64),
-                0xdc07 => Self::append_prop_string(&mut data, &mut pos, h, code, object.name()),
-                0xdc09 => Self::append_prop_string(&mut data, &mut pos, h, code, ""), // Match the unspecified ObjectInfo date
-                0xdc0b => Self::append_prop_u32(&mut data, &mut pos, h, code, 0), // Root-level object
-                _ => unreachable!(),
-            }
-        }
+        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc01, PLACEHOLDER_STORAGE_ID);
+        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, object.format_code());
+        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 0);
+        Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, object.size as u64);
+        Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
+        Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "");
+        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0);
         self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &data[..pos], response::OK);
     }
 
