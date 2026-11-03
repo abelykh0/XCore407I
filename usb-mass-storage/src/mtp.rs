@@ -43,6 +43,7 @@ pub mod diagnostics {
     pub static OBJECT_INFO_DECODE_FAIL: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_LENGTH: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_STORAGE: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_LAST_STORAGE_ID: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_FORMAT: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_PROTECTION: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_ASSOC: AtomicU32 = AtomicU32::new(0);
@@ -111,6 +112,7 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"DBAD=", OBJECT_INFO_DECODE_FAIL.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OLEN=", OBJ_BAD_LENGTH.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OSTO=", OBJ_BAD_STORAGE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OSID=", OBJ_LAST_STORAGE_ID.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OFMT=", OBJ_BAD_FORMAT.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OPRT=", OBJ_BAD_PROTECTION.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OASC=", OBJ_BAD_ASSOC.load(Ordering::Relaxed));
@@ -1282,6 +1284,7 @@ impl UploadObjectInfo {
         ]);
 
         let storage_id = u32_at(0);
+        diagnostics::OBJ_LAST_STORAGE_ID.store(storage_id, core::sync::atomic::Ordering::Relaxed);
         let format = u16_at(4);
         let protection = u16_at(6);
         let size = u32_at(8);
