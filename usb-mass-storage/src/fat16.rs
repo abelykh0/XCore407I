@@ -24,7 +24,7 @@ pub struct Fat16Geometry {
 }
 
 pub fn geometry(total_sectors: u32) -> Result<Fat16Geometry, BlockError> {
-    if total_sectors > u16::MAX as u32 && total_sectors < 4_096 {
+    if total_sectors < 4_096 {
         return Err(BlockError::OutOfRange);
     }
     let mut sectors_per_fat = 1u32;
