@@ -145,6 +145,7 @@ pub const CONTAINER_HEADER_LEN: usize = 12;
 const PLACEHOLDER_STORAGE_ID: u32 = 0x0001_0001;
 const DEMO_OBJECT_HANDLE: u32 = 1;
 const DEMO_OBJECT_NAME: &str = "README.txt";
+pub const MTP_OBJECT_CAPACITY: usize = 512;
 const DEFAULT_README: &[u8] = b"XCore407I NAND diagnostic pending.\r\n";
 
 /// One entry in the bounded root-directory snapshot supplied by the main loop.
@@ -244,6 +245,7 @@ pub mod operation {
     pub const DELETE_OBJECT: u16 = 0x100b;
     pub const SEND_OBJECT_INFO: u16 = 0x100c;
     pub const SEND_OBJECT: u16 = 0x100d;
+    pub const SET_OBJECT_PROP_VALUE: u16 = 0x1016;
     pub const GET_DEVICE_PROP_DESC: u16 = 0x1014;
     pub const GET_DEVICE_PROP_VALUE: u16 = 0x1015;
     pub const GET_OBJECT_PROPS_SUPPORTED: u16 = 0x9801;
@@ -307,7 +309,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     bulk_out: EndpointOut<'a, B>,
     bulk_in: EndpointIn<'a, B>,
     event_in: EndpointIn<'a, B>,
-    tx: [u8; 512],
+    tx: [u8; 4096],
     tx_len: usize,
     tx_pending: bool,
     tx_in_flight: bool,
@@ -323,6 +325,8 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     pending_response: Option<(u16, u32)>,
     pending_get_object: Option<(u32, u32)>,
     pending_delete_object: Option<(u32, u32)>,
+    awaiting_set_object_prop_value: Option<(u32, u32)>,
+    pending_rename_object: Option<(u32, u32, [u8; 64], u8)>,
     awaiting_send_object_info: Option<u32>,
     pending_send_object_info: Option<(u32, UploadObjectInfo)>,
     upload_info_accepted: bool,
@@ -337,7 +341,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     upload_data_len: usize,
     upload_data: [u8; BULK_MAX_PACKET_SIZE as usize],
     session_open: bool,
-    objects: [MtpObject; 17],
+    objects: [MtpObject; MTP_OBJECT_CAPACITY],
     object_count: usize,
     capacity_bytes: u64,
     free_bytes: u64,
@@ -363,7 +367,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             bulk_out,
             bulk_in,
             event_in,
-            tx: [0; 512],
+            tx: [0; 4096],
             tx_len: 0,
             tx_pending: false,
             tx_in_flight: false,
@@ -377,6 +381,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             pending_response: None,
             pending_get_object: None,
             pending_delete_object: None,
+            awaiting_set_object_prop_value: None,
+            pending_rename_object: None,
             awaiting_send_object_info: None,
             pending_send_object_info: None,
             upload_info_accepted: false,
@@ -391,7 +397,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             upload_data_len: 0,
             upload_data: [0; BULK_MAX_PACKET_SIZE as usize],
             session_open: false,
-            objects: [MtpObject::EMPTY; 17],
+            objects: [MtpObject::EMPTY; MTP_OBJECT_CAPACITY],
             object_count: 0,
             capacity_bytes: 0,
             free_bytes: 0,
@@ -408,7 +414,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
     /// Replace the bounded root-directory snapshot. Handles remain stable until refreshed.
     pub fn set_objects(&mut self, objects: &[MtpObject]) {
-        self.objects = [MtpObject::EMPTY; 17];
+        self.objects = [MtpObject::EMPTY; MTP_OBJECT_CAPACITY];
         self.object_count = objects.len().min(self.objects.len());
         self.objects[..self.object_count].copy_from_slice(&objects[..self.object_count]);
     }
@@ -426,6 +432,11 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     /// Take a DELETE_OBJECT request for processing by LittleFS in main context.
     pub fn take_delete_object_request(&mut self) -> Option<(u32, u32)> {
         self.pending_delete_object.take()
+    }
+
+    /// Take a validated rename request for main-context filesystem work.
+    pub fn take_rename_object_request(&mut self) -> Option<(u32, u32, [u8; 64], u8)> {
+        self.pending_rename_object.take()
     }
 
     /// Take a validated SendObjectInfo request for main-context filesystem work.
@@ -561,6 +572,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             self.pending_upload_abort = true;
         }
         self.pending_delete_object = None;
+        self.awaiting_set_object_prop_value = None;
+        self.pending_rename_object = None;
         self.awaiting_send_object_info = None;
         self.pending_send_object_info = None;
         self.awaiting_send_object = None;
@@ -908,7 +921,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response_with_params(response::OK, header.transaction_id, &[self.object_count as u32]);
                 } else {
                     // One embedded test object at the storage root.
-                    let mut handles = [0u8; 4 + 17 * 4];
+                    let mut handles = [0u8; 4 + MTP_OBJECT_CAPACITY * 4];
                     handles[..4].copy_from_slice(&(self.object_count as u32).to_le_bytes());
                     for (i, object) in self.objects[..self.object_count].iter().enumerate() {
                         let at = 4 + i * 4;
@@ -944,6 +957,29 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let Some(handle) = parameter(0) {
                     self.object_prop_list(header.transaction_id, handle);
+                } else {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                }
+            }
+            operation::SET_OBJECT_PROP_VALUE => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if params.len() != 8 {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if let (Some(handle), Some(property)) = (parameter(0), parameter(1)) {
+                    if property != 0xdc07 {
+                        self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id);
+                    } else if self.object(handle).is_none() {
+                        self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
+                    } else if self.object(handle).map(|o| o.is_dir).unwrap_or(false) {
+                        self.queue_response(response::ACCESS_DENIED, header.transaction_id);
+                    } else if self.object(handle).map(|o| matches!(o.name(), "MTP-README.txt" | "MTP-STATUS.txt")).unwrap_or(false) {
+                        self.queue_response(response::ACCESS_DENIED, header.transaction_id);
+                    } else if self.awaiting_set_object_prop_value.is_some() || self.pending_rename_object.is_some() {
+                        self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                    } else {
+                        self.awaiting_set_object_prop_value = Some((handle, header.transaction_id));
+                    }
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
@@ -1173,6 +1209,51 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
 
             if header.kind == ContainerType::Data {
                 match header.code {
+                    operation::SET_OBJECT_PROP_VALUE
+                        if self.awaiting_set_object_prop_value.map(|(_, tx)| tx) == Some(header.transaction_id) =>
+                    {
+                        if header.length as usize != length || length < CONTAINER_HEADER_LEN + 3 {
+                            self.awaiting_set_object_prop_value = None;
+                            self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                            return;
+                        }
+                        let data = &packet[CONTAINER_HEADER_LEN..length];
+                        let count = data[0] as usize;
+                        if count < 2 || data.len() != 1 + count * 2 || count > 32 {
+                            self.awaiting_set_object_prop_value = None;
+                            self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                            return;
+                        }
+                        let mut name = [0u8; 64];
+                        let mut name_len = 0usize;
+                        let mut valid = true;
+                        for i in 0..count - 1 {
+                            let at = 1 + i * 2;
+                            let unit = u16::from_le_bytes([data[at], data[at + 1]]);
+                            if !(0x20..=0x7e).contains(&unit) {
+                                valid = false;
+                                break;
+                            }
+                            let ch = unit as u8;
+                            if matches!(ch, b'/' | b'\\' | b':' | b'*' | b'?' | b'"' | b'<' | b'>' | b'|') {
+                                valid = false;
+                                break;
+                            }
+                            name[name_len] = ch;
+                            name_len += 1;
+                        }
+                        let terminator = 1 + (count - 1) * 2;
+                        if !valid || name_len == 0
+                            || u16::from_le_bytes([data[terminator], data[terminator + 1]]) != 0
+                            || &name[..name_len] == b"." || &name[..name_len] == b".."
+                        {
+                            self.awaiting_set_object_prop_value = None;
+                            self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                            return;
+                        }
+                        let (handle, _) = self.awaiting_set_object_prop_value.take().unwrap();
+                        self.pending_rename_object = Some((handle, header.transaction_id, name, name_len as u8));
+                    }
                     operation::SEND_OBJECT_INFO
                         if self.awaiting_send_object_info == Some(header.transaction_id) =>
                     {
