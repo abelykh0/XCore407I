@@ -150,6 +150,10 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"GUSB_TX=", GET_OBJECT_USB_SUBMITTED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_CPL=", GET_OBJECT_USB_COMPLETED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_B=", GET_OBJECT_USB_BYTES.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL_LEN=", GET_OBJECT_FINAL_CHUNK_LEN.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL_ATT=", GET_OBJECT_FINAL_CHUNK_ATTEMPTS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL_TX=", GET_OBJECT_FINAL_CHUNK_SUBMITTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL_CPL=", GET_OBJECT_FINAL_CHUNK_COMPLETED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_RSP=", GET_OBJECT_RESPONSE_COMPLETED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GFINAL=", GET_OBJECT_FINAL_DATA_COMPLETED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GRSPQ=", GET_OBJECT_RESPONSE_QUEUED.load(Ordering::Relaxed));
