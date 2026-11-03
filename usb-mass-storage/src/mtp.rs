@@ -97,6 +97,13 @@ pub mod diagnostics {
     pub static GET_OBJECT_USB_POLL_LATENCY: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_USB_LATENCY_US: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_USB_LATENCY_MAX_US: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_FINAL_DATA_COMPLETED: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_RESPONSE_QUEUED: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_NEXT_COMMAND_DEFERRED: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_DEFERRED_COMMAND_PROCESSED: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_COMMANDS_WHILE_ACTIVE: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_LAST_COMMAND_CODE: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_LAST_COMMAND_TXID: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -143,6 +150,13 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"GUSB_POLL=", GET_OBJECT_USB_POLL_LATENCY.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_LAT_US=", GET_OBJECT_USB_LATENCY_US.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_LAT_MAX_US=", GET_OBJECT_USB_LATENCY_MAX_US.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL=", GET_OBJECT_FINAL_DATA_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GRSPQ=", GET_OBJECT_RESPONSE_QUEUED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GDEF=", GET_OBJECT_NEXT_COMMAND_DEFERRED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GDEFDONE=", GET_OBJECT_DEFERRED_COMMAND_PROCESSED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GACTIVE_CMD=", GET_OBJECT_COMMANDS_WHILE_ACTIVE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GLAST_OP=", GET_OBJECT_LAST_COMMAND_CODE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GLAST_TID=", GET_OBJECT_LAST_COMMAND_TXID.load(Ordering::Relaxed));
         append(out, &mut pos, b"----\r\n");
         append_counter(out, &mut pos, b"OUT=", OUT_PACKETS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"BAD=", OUT_INVALID.load(Ordering::Relaxed));
@@ -1097,6 +1111,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
     fn handle_command(&mut self, packet: &[u8]) {
         let Ok(header) = ContainerHeader::decode(packet) else { return; };
+        diagnostics::GET_OBJECT_LAST_COMMAND_CODE.store(header.code as u32, core::sync::atomic::Ordering::Relaxed);
+        diagnostics::GET_OBJECT_LAST_COMMAND_TXID.store(header.transaction_id, core::sync::atomic::Ordering::Relaxed);
         if header.kind != ContainerType::Command
             || header.length as usize > packet.len()
             || header.length < CONTAINER_HEADER_LEN as u32
@@ -1625,9 +1641,15 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
             }
             if self.transaction_active {
                 if self.pending_command_len == 0 && length <= self.pending_command.len() {
+                    if self.get_object_tx_active {
+                        diagnostics::GET_OBJECT_COMMANDS_WHILE_ACTIVE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    }
                     self.pending_command[..length].copy_from_slice(&packet[..length]);
                     self.pending_command_len = length;
                     diagnostics::COMMANDS_DEFERRED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    if self.get_object_tx_active {
+                        diagnostics::GET_OBJECT_NEXT_COMMAND_DEFERRED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    }
                 } else {
                     diagnostics::PENDING_COMMAND_OVERFLOW.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 }
@@ -1692,6 +1714,10 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         // A data container is followed by its MTP response. The transaction
         // remains active until that response has itself completed.
         if let Some((code, transaction_id)) = self.pending_response.take() {
+            if self.get_object_tx_active {
+                diagnostics::GET_OBJECT_FINAL_DATA_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                diagnostics::GET_OBJECT_RESPONSE_QUEUED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            }
             self.data_transfer_active = false;
             self.queue_response(code, transaction_id);
             return;
@@ -1713,6 +1739,11 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
             packet[..length].copy_from_slice(&self.pending_command[..length]);
             self.pending_command_len = 0;
             self.transaction_active = true;
+            if diagnostics::GET_OBJECT_LAST_COMMAND_CODE.load(core::sync::atomic::Ordering::Relaxed)
+                == operation::GET_OBJECT as u32
+            {
+                diagnostics::GET_OBJECT_DEFERRED_COMMAND_PROCESSED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            }
             self.handle_command(&packet[..length]);
         }
     }
