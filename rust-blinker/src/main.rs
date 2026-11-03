@@ -15,7 +15,7 @@ use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
 use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, service_camera_mode_change, show_usb_status};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
-use xcore407i_blinker::nand_device;
+//use xcore407i_blinker::nand_device;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
@@ -116,7 +116,7 @@ fn main() -> ! {
 
     // Non-destructive NAND identification and factory bad-block scan.
     // No blocks are erased or programmed.
-    nand_device::run_read_only_diagnostic();
+    //nand_device::run_read_only_diagnostic();
 
     // Start the 1 ms timebase before TinyUSB initialization. TinyUSB's
     // no-RTOS port uses this clock during controller initialization.
