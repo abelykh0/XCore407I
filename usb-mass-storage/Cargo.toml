@@ -10,11 +10,9 @@ stm32f4 = { version = "0.16.0", default-features = false, features = ["stm32f407
 stm32f4xx-hal = { version = "0.23.0", default-features = false, features = ["stm32f407"] }
 panic-halt = "1.0.0"
 littlefs2 = { version = "0.8.1", default-features = false, features = ["c-stubs"] }
-usb-device = { path = "../rust-blinker/vendor/usb-device" }
-synopsys-usb-otg = { path = "../rust-blinker/vendor/synopsys-usb-otg", version = "0.5.0", features = ["hs", "internal-dma"] }
+usb-device = "0.3.2"
+synopsys-usb-otg = { version = "0.5.0", features = ["hs", "internal-dma"] }
 
-[patch.crates-io]
-usb-device = { path = "../rust-blinker/vendor/usb-device" }
 
 [profile.release]
 codegen-units = 1
