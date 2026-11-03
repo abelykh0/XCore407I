@@ -580,11 +580,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     /// True when another GET_OBJECT chunk can be queued without waiting for
     /// the currently transmitting buffer to finish.
     pub fn object_data_queue_ready(&self) -> bool {
-        if self.tx_pending || self.tx_in_flight {
-            !self.tx_next_pending
-        } else {
-            !self.tx_next_pending
-        }
+        !self.tx_next_pending
     }
 
     /// Queue one piece of a single MTP GetObject data container. The header is
