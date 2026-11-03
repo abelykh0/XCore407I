@@ -161,9 +161,6 @@ struct ProgramTrace {
     writes: u16,
     first: u8,
     last: u8,
-    ecc: u32,
-    saw_busy: bool,
-    saw_ready: bool,
 }
 
 fn program_page(page: u32) -> Result<ProgramTrace, Error> {
@@ -179,9 +176,6 @@ fn program_page(page: u32) -> Result<ProgramTrace, Error> {
         writes: 0,
         first: 0,
         last: 0,
-        ecc: 0,
-        saw_busy: false,
-        saw_ready: false,
     };
     // Keep ECC disabled for this test. This isolates the raw FSMC NAND
     // write path from the ECC datapath while preserving the exact data stream.
@@ -200,12 +194,12 @@ fn program_page(page: u32) -> Result<ProgramTrace, Error> {
     // Record both edges explicitly rather than treating a ready-high idle
     // level as proof that the program cycle completed.
     let mut became_ready = false;
+    let mut saw_busy = false;
     for _ in 0..TIMEOUT {
         let ready = unsafe { read_volatile(GPIOD_IDR) } & NAND_RB_MASK != 0;
         if !ready {
-            trace.saw_busy = true;
+            saw_busy = true;
         } else if trace.saw_busy {
-            trace.saw_ready = true;
             became_ready = true;
             break;
         }
@@ -226,8 +220,13 @@ fn verify_page(page: u32) -> Result<(), Error> {
     write_cmd(CMD_READSTART);
     wait_ready_rb()?;
 
-    for i in 0..16 {
-        let actual = read_data();
+    let mut data = [0u8; 16];
+    for byte in &mut data {
+        *byte = read_data();
+    }
+    show_usb_status(b"NAND: READ OK");
+
+    for (i, actual) in data.into_iter().enumerate() {
         let expected = (i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5;
         if actual != expected {
             return Err(Error::VerifyFailed(i as u16, expected, actual));
@@ -253,290 +252,6 @@ fn show_program_trace(trace: ProgramTrace) {
     line[27] = hex_digit(trace.last);
     show_usb_status(&line);
 
-    show_usb_status(b"ECC: DISABLED");
-
-    let mut rb = *b"RB BUSY:0 READY:0";
-    rb[8] = if trace.saw_busy { b'1' } else { b'0' };
-    rb[16] = if trace.saw_ready { b'1' } else { b'0' };
-    show_usb_status(&rb);
-}
-
-fn show_hex_bytes(prefix: &[u8], bytes: &[u8]) {
-    let mut line = [b' '; 32];
-    let mut pos = 0;
-    for &ch in prefix {
-        if pos < line.len() { line[pos] = ch; pos += 1; }
-    }
-    for (index, &byte) in bytes.iter().enumerate() {
-        if pos + 3 > line.len() { break; }
-        if index != 0 { line[pos] = b' '; pos += 1; }
-        line[pos] = hex_digit(byte >> 4);
-        line[pos + 1] = hex_digit(byte);
-        pos += 2;
-    }
-    show_usb_status(&line);
-}
-
-/// Capture independent program status and raw data/spare reads before verify.
-/// Each call advances to a new diagnostic text row on the camera canvas.
-fn show_program_diagnostics(page: u32) -> Result<(), Error> {
-    // Read the status register immediately after program completion, before
-    // issuing any other NAND command. Bit 7=1 means not write-protected;
-    // bit 0=1 means program/erase failure.
-    let status = read_status()?;
-    let mut status_line = *b"STATUS: 00 WP:0 FAIL:0 ";
-    status_line[8] = hex_digit(status >> 4);
-    status_line[9] = hex_digit(status);
-    status_line[14] = if status & 0x80 != 0 { b'1' } else { b'0' };
-    status_line[21] = if status & 0x01 != 0 { b'1' } else { b'0' };
-    show_usb_status(&status_line);
-
-    // Reset the NAND after capturing program status. This separates the
-    // subsequent array reads from any lingering status-register/output state.
-    write_cmd(CMD_RESET);
-    wait_ready_status()?;
-
-    // Read short windows at two main-area columns and at the spare-area start.
-    // Eight bytes fit on one 32-character status row without truncation.
-    let mut data0 = [0u8; 8];
-    read_page(page, 0, &mut data0)?;
-    show_hex_bytes(b"COL000:", &data0);
-
-    let mut data8 = [0u8; 8];
-    read_page(page, 8, &mut data8)?;
-    show_hex_bytes(b"COL008:", &data8);
-
-    let mut data100 = [0u8; 8];
-    read_page(page, 0x0100, &mut data100)?;
-    show_hex_bytes(b"COL100:", &data100);
-
-    let mut spare = [0u8; 8];
-    read_page(page, PAGE_BYTES as u16, &mut spare)?;
-    show_hex_bytes(b"SPARE:", &spare);
-    Ok(())
-}
-
-
-fn show_register(label: &[u8], address: usize) {
-    let value = unsafe { read_volatile(address as *const u32) };
-    let mut line = [b' '; 32];
-    let mut pos = 0;
-    for &ch in label {
-        if pos < line.len() { line[pos] = ch; pos += 1; }
-    }
-    if pos + 8 <= line.len() {
-        for shift in (0..8).rev() {
-            line[pos] = hex_digit((value >> (shift * 4)) as u8);
-            pos += 1;
-        }
-    }
-    show_usb_status(&line);
-}
-
-fn show_bus_configuration() {
-    // Keep only values that are still relevant to the write-path diagnosis.
-    show_register(b"PCR2:", FSMC_BASE + 0x60);
-    show_register(b"RCC AHB1ENR:", 0x4002_3830);
-    show_register(b"RCC AHB3ENR:", 0x4002_3838);
-    show_register(b"GPIOD IDR:", 0x4002_0C10);
-}
-
-// Exercise the FSMC control-pin pads as GPIO while keeping NAND CE inactive
-// during CLE/ALE/WE/RE transitions. This checks MCU-side pin mapping/readback.
-fn gpio_control_bus_test() {
-    const GPIOD: usize = 0x4002_0C00;
-    const CLE: u32 = 1 << 12;
-    const ALE: u32 = 1 << 11;
-    const WE: u32 = 1 << 5;
-    const RE: u32 = 1 << 4;
-    const CE: u32 = 1 << 7;
-    const MASK: u32 = CLE | ALE | WE | RE | CE;
-
-    unsafe {
-        let bsrr = (GPIOD + 0x18) as *mut u32;
-        let moder = (GPIOD + 0x00) as *mut u32;
-        let otyper = (GPIOD + 0x04) as *mut u32;
-        let pupdr = (GPIOD + 0x0C) as *mut u32;
-
-        // Preload all control outputs high before switching the pads to GPIO.
-        write_volatile(bsrr, MASK);
-        let mut mode = read_volatile(moder);
-        let mut pins = MASK;
-        while pins != 0 {
-            let bit = pins.trailing_zeros();
-            mode = (mode & !(0b11 << (bit * 2))) | (0b01 << (bit * 2));
-            pins &= pins - 1;
-        }
-        write_volatile(moder, mode);
-        write_volatile(otyper, read_volatile(otyper) & !MASK);
-        let mut pulls = read_volatile(pupdr);
-        let mut pins = MASK;
-        while pins != 0 {
-            let bit = pins.trailing_zeros();
-            pulls &= !(0b11 << (bit * 2));
-            pins &= pins - 1;
-        }
-        write_volatile(pupdr, pulls);
-    }
-
-    // First exercise CLE/ALE with CE, WE and RE held inactive/high.
-    let pattern_a = CLE | RE | WE | CE;
-    let pattern_b = ALE | RE | WE | CE;
-    unsafe {
-        let bsrr = (GPIOD + 0x18) as *mut u32;
-        write_volatile(bsrr, pattern_a | ((MASK & !pattern_a) << 16));
-        cortex_m::asm::delay(100);
-        let read_a = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
-        write_volatile(bsrr, pattern_b | ((MASK & !pattern_b) << 16));
-        cortex_m::asm::delay(100);
-        let read_b = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
-
-        // Exercise CE separately; all NAND strobes remain inactive/high.
-        write_volatile(bsrr, MASK);
-        cortex_m::asm::delay(100);
-        let read_ce_high = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
-        write_volatile(bsrr, (MASK & !CE) | (CE << 16));
-        cortex_m::asm::delay(100);
-        let read_ce_low = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
-        let pd7_mode = (read_volatile((GPIOD + 0x00) as *const u32) >> 14) & 0b11;
-        let pd7_type = (read_volatile((GPIOD + 0x04) as *const u32) >> 7) & 1;
-        let pd7_odr = (read_volatile((GPIOD + 0x14) as *const u32) >> 7) & 1;
-        let pd7_idr = (read_ce_low >> 7) & 1;
-
-        // Restore AF12. The AF selection was configured by configure_board_pins().
-        let moder = (GPIOD + 0x00) as *mut u32;
-        let mut mode = read_volatile(moder);
-        let mut pins = MASK;
-        while pins != 0 {
-            let bit = pins.trailing_zeros();
-            mode = (mode & !(0b11 << (bit * 2))) | (0b10 << (bit * 2));
-            pins &= pins - 1;
-        }
-        write_volatile(moder, mode);
-
-        let mut line = *b"CTRL A:0000 B:0000";
-        line[7..11].copy_from_slice(&[
-            b'0' + ((read_a >> 12) & 1) as u8,
-            b'0' + ((read_a >> 11) & 1) as u8,
-            b'0' + ((read_a >> 5) & 1) as u8,
-            b'0' + ((read_a >> 4) & 1) as u8,
-        ]);
-        line[14..18].copy_from_slice(&[
-            b'0' + ((read_b >> 12) & 1) as u8,
-            b'0' + ((read_b >> 11) & 1) as u8,
-            b'0' + ((read_b >> 5) & 1) as u8,
-            b'0' + ((read_b >> 4) & 1) as u8,
-        ]);
-        show_usb_status(&line);
-        let ce_ok = (read_ce_high & CE != 0) && (read_ce_low & CE == 0);
-        let a_ok = read_a == pattern_a;
-        let b_ok = read_b == pattern_b;
-        let mut ce_line = *b"CTRL CE HI:0 LO:0";
-        ce_line[11] = if read_ce_high & CE != 0 { b'1' } else { b'0' };
-        ce_line[16] = if read_ce_low & CE == 0 { b'1' } else { b'0' };
-        show_usb_status(&ce_line);
-        let mut pd7_line = *b"PD7 MOD:00 OT:0 ODR:0 IDR:0";
-        pd7_line[8] = b'0' + ((pd7_mode >> 1) as u8);
-        pd7_line[9] = b'0' + ((pd7_mode & 1) as u8);
-        pd7_line[14] = b'0' + (pd7_type as u8);
-        pd7_line[20] = b'0' + (pd7_odr as u8);
-        pd7_line[26] = b'0' + (pd7_idr as u8);
-        show_usb_status(&pd7_line);
-        if a_ok && b_ok && ce_ok {
-            show_usb_status(b"GPIO CTRL BUS: OK");
-        } else {
-            show_usb_status(b"GPIO CTRL BUS: FAIL");
-        }
-    }
-}
-
-// Temporarily take the eight NAND data pins out of FSMC AF12 and exercise
-// them as GPIO outputs. This verifies the MCU-side data pin mapping and
-// electrical readback without issuing NAND commands or relying on FSMC.
-fn gpio_data_bus_test() {
-    const GPIOD: usize = 0x4002_0C00;
-    const GPIOE: usize = 0x4002_1000;
-    const DATA_D: u32 = (1 << 14) | (1 << 15) | (1 << 0) | (1 << 1);
-    const DATA_E: u32 = 0x0F << 7;
-
-    // D0..D3 map to PD14, PD15, PD0, PD1; D4..D7 map to PE7..PE10.
-    // Preserve all unrelated GPIO configuration bits.
-    unsafe {
-        for (base, mask) in [(GPIOD, DATA_D), (GPIOE, DATA_E)] {
-            let moder = (base + 0x00) as *mut u32;
-            let otyper = (base + 0x04) as *mut u32;
-            let pupdr = (base + 0x0C) as *mut u32;
-            let mut mode = read_volatile(moder);
-            let mut pins = mask;
-            while pins != 0 {
-                let bit = pins.trailing_zeros();
-                mode = (mode & !(0b11 << (bit * 2))) | (0b01 << (bit * 2));
-                pins &= pins - 1;
-            }
-            write_volatile(moder, mode);
-            write_volatile(otyper, read_volatile(otyper) & !mask);
-            let mut pulls = read_volatile(pupdr);
-            let mut pins = mask;
-            while pins != 0 {
-                let bit = pins.trailing_zeros();
-                pulls &= !(0b11 << (bit * 2));
-                pins &= pins - 1;
-            }
-            write_volatile(pupdr, pulls);
-        }
-    }
-
-    fn drive_and_sample(value: u8) -> u8 {
-        let d = (((value as u32) & 0x01) << 14)
-            | ((((value as u32) >> 1) & 0x01) << 15)
-            | ((((value as u32) >> 2) & 0x01) << 0)
-            | ((((value as u32) >> 3) & 0x01) << 1);
-        let e = (((value as u32) >> 4) & 0x0F) << 7;
-        unsafe {
-            // BSRR lower half sets bits; upper half resets bits.
-            write_volatile((GPIOD + 0x18) as *mut u32, d | ((DATA_D & !d) << 16));
-            write_volatile((GPIOE + 0x18) as *mut u32, e | ((DATA_E & !e) << 16));
-            cortex_m::asm::delay(100);
-            let idr_d = read_volatile((GPIOD + 0x10) as *const u32);
-            let idr_e = read_volatile((GPIOE + 0x10) as *const u32);
-            (((idr_d >> 14) & 1) as u8)
-                | ((((idr_d >> 15) & 1) as u8) << 1)
-                | (((idr_d & 1) as u8) << 2)
-                | ((((idr_d >> 1) & 1) as u8) << 3)
-                | ((((idr_e >> 7) & 0x0F) as u8) << 4)
-        }
-    }
-
-    let a5 = drive_and_sample(0xA5);
-    let five_a = drive_and_sample(0x5A);
-
-    // Restore the NAND data pins to AF12. AFR was configured by
-    // configure_board_pins(); only MODER needs to be returned to alternate.
-    unsafe {
-        for (base, mask) in [(GPIOD, DATA_D), (GPIOE, DATA_E)] {
-            let moder = (base + 0x00) as *mut u32;
-            let mut mode = read_volatile(moder);
-            let mut pins = mask;
-            while pins != 0 {
-                let bit = pins.trailing_zeros();
-                mode = (mode & !(0b11 << (bit * 2))) | (0b10 << (bit * 2));
-                pins &= pins - 1;
-            }
-            write_volatile(moder, mode);
-        }
-    }
-
-    let mut line = *b"GPIO BUS A5:00 5A:00";
-    line[12] = hex_digit(a5 >> 4);
-    line[13] = hex_digit(a5);
-    line[18] = hex_digit(five_a >> 4);
-    line[19] = hex_digit(five_a);
-    show_usb_status(&line);
-    if a5 != 0xA5 || five_a != 0x5A {
-        show_usb_status(b"GPIO DATA BUS: FAIL");
-    } else {
-        show_usb_status(b"GPIO DATA BUS: OK");
-    }
 }
 
 fn configure_fsmc() {
@@ -588,9 +303,6 @@ fn report_error(error: Error) {
 pub fn run_test() {
     show_usb_status(b"NAND: FSMC INIT");
     configure_fsmc();
-    gpio_data_bus_test();
-    gpio_control_bus_test();
-    show_bus_configuration();
 
     write_cmd(CMD_RESET);
     if let Err(e) = wait_ready_status() {
@@ -600,16 +312,6 @@ pub fn run_test() {
 
     let mut id = [0u8; 5];
     read_id(&mut id);
-
-    // One compact status row: ID0 through ID4, in byte order.
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut id_line = *b"ID0..4: 00 00 00 00 00";
-    for (index, value) in id.iter().copied().enumerate() {
-        let offset = 8 + index * 3;
-        id_line[offset] = HEX[(value >> 4) as usize];
-        id_line[offset + 1] = HEX[(value & 0x0F) as usize];
-    }
-    show_usb_status(&id_line);
 
     if id[0] != 0xEC || id[1] != 0xF1 {
         report_error(Error::WrongId);
@@ -646,12 +348,6 @@ pub fn run_test() {
         }
     };
 
-    let mut block_line = *b"TEST BLOCK: 0000";
-    for shift in (0..4).rev() {
-        block_line[12 + (3 - shift)] = hex_digit((block >> (shift * 4)) as u8);
-    }
-    show_usb_status(&block_line);
-    show_usb_status(b"NAND: SECOND GOOD BLOCK");
     if let Err(e) = erase_block(block) {
         report_error(e);
         return;
@@ -660,11 +356,6 @@ pub fn run_test() {
 
     // Use page 2 of the selected erased block for the short-write test.
     let page = block * PAGES_PER_BLOCK + 2;
-    let mut page_line = *b"TEST PAGE: 0000";
-    for shift in (0..4).rev() {
-        page_line[11 + (3 - shift)] = hex_digit((page >> (shift * 4)) as u8);
-    }
-    show_usb_status(&page_line);
     let trace = match program_page(page) {
         Ok(trace) => trace,
         Err(e) => {
@@ -675,15 +366,9 @@ pub fn run_test() {
     show_usb_status(b"NAND: PROGRAM OK");
     show_program_trace(trace);
 
-    if let Err(e) = show_program_diagnostics(page) {
-        report_error(e);
-        return;
-    }
-
     if let Err(e) = verify_page(page) {
         report_error(e);
         return;
     }
     show_usb_status(b"NAND: VERIFY OK");
-    show_usb_status(b"NAND TEST: PASS");
 }
