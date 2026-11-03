@@ -50,6 +50,7 @@ pub enum InitError {
     WrongDevice,
     MarkerRead,
     TooManyBadBlocks,
+    MountFailed,
 }
 
 fn command(value: u8) { unsafe { write_volatile(CMD, value) } }
@@ -266,6 +267,22 @@ impl Storage for NandStorage {
         }
         Ok(len)
     }
+}
+
+/// Keep the LittleFS mount alive for the duration of the supplied service closure.
+///
+/// NAND initialization and all filesystem operations run in the caller's
+////// context (never in the USB polling ISR). This is deliberately mount-only:
+/// it never formats or erases the NAND.
+pub fn with_mounted<R>(
+    service: impl FnOnce(&Filesystem<'_, NandStorage>) -> LfsResult<R>,
+) -> Result<R, InitError> {
+    let mut storage = NandStorage::new()?;
+    if !Filesystem::<NandStorage>::is_mountable(&mut storage) {
+        return Err(InitError::MountFailed);
+    }
+    Filesystem::<NandStorage>::mount_and_then(&mut storage, service)
+        .map_err(|_| InitError::MountFailed)
 }
 
 /// Set true only for the initial provisioning flash. After README reports
