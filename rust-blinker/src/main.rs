@@ -143,16 +143,12 @@ fn main() -> ! {
     }
 
     // Initialize TinyUSB host on root-hub port 0 (OTG_FS).
-    show_usb_status(b"USB FS: HOST INIT");
     let rh_init = tusb::tusb_rhport_init_t {
         role: tusb::tusb_role_t::TUSB_ROLE_HOST,
         speed: tusb::tusb_speed_t::TUSB_SPEED_FULL,
     };
     if unsafe { tusb::tuh_rhport_init(0, &rh_init) } {
-        USB_FS_STATUS.store(1, Ordering::Release);
         unsafe { NVIC::unmask(interrupt::OTG_FS); }
-    } else {
-        USB_FS_STATUS.store(2, Ordering::Release);
     }
 
     let bus = usb_bus().expect("USB bus initialization failed");
@@ -242,7 +238,8 @@ fn main() -> ! {
         }
 
         unsafe { bk_loop(); }
-    }}
+    }
+}
 
 /// Load /tetris.bin from the existing NAND LittleFS volume.
 ///
