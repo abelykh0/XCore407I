@@ -208,7 +208,7 @@ This file is stored in NAND using LittleFS and read over USB MTP.\r\n",
 }
 
 /// Stream one root-level LittleFS file to the host. Each MTP data container is
-/// emitted in bounded 244-byte payload chunks; no whole-file buffer is used.
+/// emitted in USB HS-sized chunks; no whole-file buffer is used.
 fn service_get_object(
     fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
     objects: &[MtpObject; 16],
@@ -234,12 +234,15 @@ fn service_get_object(
     let mut first = true;
     let mut remaining = object.size as usize;
     let result = fs.open_file_and_then(&full_path, |file| {
-        let mut buffer = [0u8; 500];
+        let mut buffer = [0u8; 512];
         loop {
             let count = if remaining == 0 {
                 0
             } else {
-                let read_len = remaining.min(buffer.len());
+                // The first packet reserves 12 bytes for the MTP header;
+                // later packets can use the full 512-byte HS bulk packet.
+                let payload_limit = if first { 500 } else { buffer.len() };
+                let read_len = remaining.min(payload_limit);
                 file.read(&mut buffer[..read_len])?
             };
             if remaining != 0 && count == 0 {
