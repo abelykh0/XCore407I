@@ -257,51 +257,66 @@ impl Storage for NandStorage {
     }
 }
 
-/// Initialize NAND, format it only if no valid LittleFS volume exists, then
-/// mount it once to verify the filesystem and report its available capacity.
+/// Set true only for the initial provisioning flash. After README reports
+/// "LittleFS: formatted and mounted", change this to false and rebuild.
+/// With this false, an absent/corrupt filesystem is never reformatted.
+const FORMAT_NAND_ONCE: bool = true;
+
+/// Initialize NAND, perform the explicitly enabled initial format if needed,
+/// then mount. Normal boots with FORMAT_NAND_ONCE=false are mount-only.
 pub fn initialize_and_mount_report() -> ([u8; 192], usize) {
     let mut report = [0u8; 192];
     let mut len = 0;
-    append(&mut report, &mut len, b"XCore407I NAND / LittleFS\r\n");
+    append(&mut report, &mut len, b"XCore407I NAND / LittleFS\\r\\n");
 
     let mut storage = match NandStorage::new() {
         Ok(storage) => storage,
         Err(error) => {
             append(&mut report, &mut len, b"NAND init failed: ");
             append_init_error(&mut report, &mut len, error);
-            append(&mut report, &mut len, b"\r\n");
+            append(&mut report, &mut len, b"\\r\\n");
             return (report, len);
         }
     };
 
     append(&mut report, &mut len, b"Factory bad blocks: ");
     append_hex(&mut report, &mut len, storage.factory_bad_blocks() as u32, 4);
-    append(&mut report, &mut len, b"\r\n");
+    append(&mut report, &mut len, b"\\r\\n");
 
-    let was_formatted = Filesystem::<NandStorage>::is_mountable(&mut storage);
-    if !was_formatted {
-        append(&mut report, &mut len, b"Formatting LittleFS...\r\n");
-        if Filesystem::<NandStorage>::format(&mut storage).is_err() {
-            append(&mut report, &mut len, b"ERROR: format failed\r\n");
+    let mountable = Filesystem::<NandStorage>::is_mountable(&mut storage);
+    let mut formatted_now = false;
+
+    if !mountable {
+        if !FORMAT_NAND_ONCE {
+            append(&mut report, &mut len, b"ERROR: no valid LittleFS; not formatted\\r\\n");
             return (report, len);
         }
-    } else {
-        append(&mut report, &mut len, b"Existing LittleFS found\r\n");
+
+        append(&mut report, &mut len, b"Initial LittleFS format...\\r\\n");
+        if Filesystem::<NandStorage>::format(&mut storage).is_err() {
+            append(&mut report, &mut len, b"ERROR: format failed\\r\\n");
+            return (report, len);
+        }
+        formatted_now = true;
     }
 
     match Filesystem::<NandStorage>::mount_and_then(&mut storage, |fs| {
         Ok((fs.total_space(), fs.available_space().unwrap_or(0)))
     }) {
         Ok((total, free)) => {
-            append(&mut report, &mut len, b"LittleFS: mounted\r\n");
+            if formatted_now {
+                append(&mut report, &mut len, b"LittleFS: formatted and mounted\\r\\n");
+            } else {
+                append(&mut report, &mut len, b"LittleFS: existing volume mounted\\r\\n");
+            }
             append(&mut report, &mut len, b"Capacity: ");
             append_hex(&mut report, &mut len, total as u32, 8);
-            append(&mut report, &mut len, b" bytes\r\nFree: ");
+            append(&mut report, &mut len, b" bytes\\r\\nFree: ");
             append_hex(&mut report, &mut len, free as u32, 8);
-            append(&mut report, &mut len, b" bytes\r\n");
-            append(&mut report, &mut len, b"ECC: OFF (raw NAND)\r\n");
+            append(&mut report, &mut len, b" bytes\\r\\n");
+            append(&mut report, &mut len, b"ECC: OFF (raw NAND)\\r\\n");
         }
-        Err(_) => append(&mut report, &mut len, b"ERROR: mount failed\r\n"),
+        Err(_) => append(&mut report, &mut len, b"ERROR: mount failed; NAND unchanged\\r\\n"),
     }
     (report, len)
 }
