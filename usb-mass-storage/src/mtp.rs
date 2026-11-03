@@ -852,7 +852,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let mut data = [0u8; 192];
         let mut pos = 0;
         Self::append_u32(&mut data, &mut pos, PLACEHOLDER_STORAGE_ID);
-        Self::append_u16(&mut data, &mut pos, object.format_code());
+        Self::append_u16(&mut data, &mut pos, if object.is_dir { 0x3001 } else { 0x3000 });
         Self::append_u16(&mut data, &mut pos, 0); // Read/write
         Self::append_u32(&mut data, &mut pos, object.size);
         Self::append_u16(&mut data, &mut pos, 0);
@@ -1006,7 +1006,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u32(&mut data, &mut pos, 7);
         let h = object.handle;
         Self::append_prop_u32(&mut data, &mut pos, h, 0xdc01, PLACEHOLDER_STORAGE_ID);
-        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, object.format_code());
+        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, if object.is_dir { 0x3001 } else { 0x3000 });
         Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 0);
         Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, object.size as u64);
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
