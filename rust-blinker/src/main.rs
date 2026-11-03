@@ -12,10 +12,9 @@ use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, service_camera_mode_change, show_usb_status};
+use xcore407i_blinker::camera::{initialize_demo_canvas, service_camera_mode_change};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
-use xcore407i_blinker::nand_device;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
@@ -46,7 +45,7 @@ pub static SystemCoreClock: u32 = 168_000_000;
 const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
 const CORE_CLOCK_HZ: u64 = 168_000_000;
 static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
-static USB_FS_STATUS: AtomicU32 = AtomicU32::new(0);
+static LOAD_TETRIS_PENDING: AtomicBool = AtomicBool::new(false);
 // TIM3 schedules TinyUSB host work; the actual task runs in thread context.
 static USB_HOST_TASK_PENDING: AtomicBool = AtomicBool::new(false);
 
@@ -65,6 +64,8 @@ unsafe extern "C" {
     fn bk_platform_init(monitor_rom: *const u8, basic_rom: *const u8, basic_size_bytes: u32);
     fn bk_loop() -> i32;
     fn sendInput(buffer: *mut u8, size: u8);
+    fn bk_set_pc(start: u16);
+    static mut RamBuffer: [u8; 0x4000];
 }
 
 type BoardUsbBus = UsbBus<F407UsbHs>;
@@ -85,23 +86,19 @@ fn main() -> ! {
 
     let mut device = pac::Peripherals::take().unwrap();
 
-    let rtc_ready = rtc::initialize();
+    let _ = rtc::initialize();
     // update_clock_from_rtc(); // Temporarily disable the RTC clock overlay.
 
     enable_cycle_counter(&mut core);
 
-    // BK emulator initialization is temporarily disabled for the NAND test.
-    // unsafe {
-    //     bk_platform_init(
-    //         xcore407i_blinker::rom::MONITOR_ROM.as_ptr(),
-    //         xcore407i_blinker::rom::BASIC_ROM.as_ptr(),
-    //         xcore407i_blinker::rom::BASIC_ROM.len() as u32,
-    //     );
-    // }
-
-    // initialize_demo_canvas();
-    clear_demo_canvas(0x10);
-    show_usb_status(b"USB FS: INIT");
+    initialize_demo_canvas();
+    unsafe {
+        bk_platform_init(
+            xcore407i_blinker::rom::MONITOR_ROM.as_ptr(),
+            xcore407i_blinker::rom::BASIC_ROM.as_ptr(),
+            xcore407i_blinker::rom::BASIC_ROM.len() as u32,
+        );
+    }
 
     configure_board_pins(
         &mut device.RCC,
@@ -113,10 +110,6 @@ fn main() -> ! {
         device.GPIOH,
         device.GPIOI,
     );
-
-    // Non-destructive NAND identification and factory bad-block scan.
-    // No blocks are erased or programmed.
-    nand_device::run_read_only_diagnostic();
 
     // Start the 1 ms timebase before TinyUSB initialization. TinyUSB's
     // no-RTOS port uses this clock during controller initialization.
@@ -223,56 +216,77 @@ fn main() -> ! {
     // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
 
     loop {
-        // BK instruction execution and keyboard forwarding are temporarily
-        // disabled while the NAND bring-up test is active.
-        // unsafe { bk_loop(); }
-        // let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
-        // if input_len > 0 {
-        //     let mut buffer = [0u8; 32];
-        //     unsafe {
-        //         ptr::copy_nonoverlapping(
-        //             core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
-        //             buffer.as_mut_ptr(),
-        //             input_len as usize,
-        //         );
-        //         sendInput(buffer.as_mut_ptr(), input_len);
-        //     }
-        // }
-
-        // Canvas clearing is deferred to thread context; TIM2 emits black
-        // frames until the new mode's canvas has been cleared.
         service_camera_mode_change();
-
-        // USB polling and camera-class access now belong exclusively to TIM2.
-        let now = TICKS.load(Ordering::Relaxed);
-
-        // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
-        //     last_rtc_sample = now;
-        //     rtc::refresh_display_time();
-        //     update_clock_from_rtc();
-        // } // Temporarily disable the RTC clock overlay.
 
         if USB_HOST_TASK_PENDING.swap(false, Ordering::AcqRel) {
             unsafe { tusb::tuh_task_ext(0, false); }
         }
 
-        let status = USB_FS_STATUS.swap(0, Ordering::AcqRel);
-        let message: &[u8] = match status {
-            1 => b"USB FS: WAITING FOR DEVICE",
-            2 => b"USB FS: HOST INIT FAILED",
-            3 => b"USB FS: DEVICE ENUMERATED",
-            4 => b"USB FS: KEYBOARD MOUNTED",
-            5 => b"USB FS: KEYBOARD REMOVED",
-            6 => b"USB FS: KEYBOARD INPUT",
-            7 => b"USB FS: DEVICE DESCRIPTOR",
-            8 => b"USB FS: CONFIG DESCRIPTOR",
-            9 => b"USB FS: BOOT PROTOCOL FAILED",
-            _ => b"",
-        };
-        if !message.is_empty() { show_usb_status(message); }
+        // F1 is handled in thread context; NAND/LittleFS work never runs
+        // inside the USB HID callback or an interrupt.
+        if LOAD_TETRIS_PENDING.swap(false, Ordering::AcqRel) {
+            let _ = load_tetris_from_nand();
+        }
 
-        // rotozoom.render_next();
-    }
+        let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
+        if input_len != 0 {
+            let mut buffer = [0u8; 32];
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
+                    buffer.as_mut_ptr(),
+                    input_len as usize,
+                );
+                sendInput(buffer.as_mut_ptr(), input_len);
+            }
+        }
+
+        unsafe { bk_loop(); }
+    }}
+
+/// Load /tetris.bin from the existing NAND LittleFS volume.
+///
+/// File format: little-endian uint16 Start, uint16 Size, then Size payload
+/// bytes. The payload is copied directly into the BK 16 KiB RAM window.
+fn load_tetris_from_nand() -> Result<(), ()> {
+    let (start, _size) = xcore407i_blinker::nand_fs::with_mounted(|fs| {
+        fs.open_file_and_then(&littlefs2::path!("/tetris.bin"), |file| {
+            let mut header = [0u8; 4];
+            let mut header_read = 0usize;
+            while header_read < header.len() {
+                let count = file.read(&mut header[header_read..])?;
+                if count == 0 {
+                    return Err(littlefs2::io::Error::IO);
+                }
+                header_read += count;
+            }
+
+            let start = u16::from_le_bytes([header[0], header[1]]);
+            let size = u16::from_le_bytes([header[2], header[3]]);
+            if size == 0 || start as u32 + size as u32 > 0x4000 {
+                return Err(littlefs2::io::Error::IO);
+            }
+
+            let destination = unsafe {
+                core::slice::from_raw_parts_mut(
+                    core::ptr::addr_of_mut!(RamBuffer).cast::<u8>().add(start as usize),
+                    size as usize,
+                )
+            };
+            let mut total = 0usize;
+            while total < size as usize {
+                let count = file.read(&mut destination[total..])?;
+                if count == 0 {
+                    return Err(littlefs2::io::Error::IO);
+                }
+                total += count;
+            }
+            Ok((start, size))
+        })
+    }).map_err(|_| ())?;
+
+    unsafe { bk_set_pc(start); }
+    Ok(())
 }
 
 
@@ -280,23 +294,6 @@ fn main() -> ! {
 fn OTG_FS() {
     unsafe { tusb::hcd_int_handler(0, true); }
 }
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tuh_enum_descriptor_device_cb(_dev_addr: u8, _desc: *const tusb::tusb_desc_device_t) {
-    USB_FS_STATUS.store(7, Ordering::Release);
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tuh_enum_descriptor_configuration_cb(_dev_addr: u8, _cfg_index: u8, _desc: *const tusb::tusb_desc_configuration_t) -> bool {
-    USB_FS_STATUS.store(8, Ordering::Release);
-    true
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tuh_mount_cb(_dev_addr: u8) { USB_FS_STATUS.store(3, Ordering::Release); }
-
-#[unsafe(no_mangle)]
-pub extern "C" fn tuh_umount_cb(_dev_addr: u8) { USB_FS_STATUS.store(5, Ordering::Release); }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tuh_hid_mount_cb(dev_addr: u8, instance: u8, _desc: *const u8, _len: u16) {
@@ -312,7 +309,6 @@ pub extern "C" fn tuh_hid_mount_cb(dev_addr: u8, instance: u8, _desc: *const u8,
         PREVIOUS_KEYS = [0; 6];
         KEYBOARD_LED_REPORT = 0;
     }
-    USB_FS_STATUS.store(4, Ordering::Release);
 
     // TinyUSB normally selects boot protocol for boot keyboards during
     // enumeration (CFG_TUH_HID_SET_PROTOCOL_ON_ENUM). Verify that before
@@ -320,7 +316,6 @@ pub extern "C" fn tuh_hid_mount_cb(dev_addr: u8, instance: u8, _desc: *const u8,
     if unsafe { tusb::tuh_hid_get_protocol(dev_addr, instance) } != 0 {
         // Request boot protocol; the completion callback starts reception.
         if !unsafe { tusb::tuh_hid_set_protocol(dev_addr, instance, 0) } {
-            USB_FS_STATUS.store(9, Ordering::Release);
         }
     } else {
         unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
@@ -337,7 +332,6 @@ pub extern "C" fn tuh_hid_umount_cb(dev_addr: u8, instance: u8) {
         KEYBOARD_LOCKS.store(0, Ordering::Release);
         unsafe { PREVIOUS_KEYS = [0; 6]; }
     }
-    USB_FS_STATUS.store(5, Ordering::Release);
 }
 
 #[unsafe(no_mangle)]
@@ -348,7 +342,6 @@ pub extern "C" fn tuh_hid_set_protocol_complete_cb(_dev_addr: u8, _instance: u8,
             KEYBOARD_INSTANCE.load(Ordering::Acquire),
         ); }
     } else {
-        USB_FS_STATUS.store(9, Ordering::Release);
     }
 }
 
@@ -381,8 +374,6 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
     let control_or_alt = modifiers & 0xdd != 0;
     let locks_before = KEYBOARD_LOCKS.load(Ordering::Acquire);
     let mut locks = locks_before;
-    let mut text = [b' '; 32];
-    let mut used = 0usize;
     let mut emulator_input = [0u8; 32];
     let mut emulator_used = 0usize;
 
@@ -395,10 +386,9 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
             continue;
         }
 
-        // F1 requests a camera mode change. The camera applies it at the
-        // next UVC frame boundary and clears the canvas in the new format.
+        // F1 requests a LittleFS game load; loading is deferred to main().
         if key == 0x3a {
-            request_camera_mode_toggle();
+            LOAD_TETRIS_PENDING.store(true, Ordering::Release);
             continue;
         }
 
@@ -411,11 +401,7 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
         }
 
         if let Some(ch) = key_to_ascii(key, shift, locks & 0x02 != 0, locks & 0x01 != 0, control_or_alt) {
-            append_keyboard_char(&mut text, &mut used, ch);
             append_keyboard_char(&mut emulator_input, &mut emulator_used, ch);
-        } else if let Some(label) = special_key_label(key, locks & 0x01 != 0) {
-            if used != 0 { append_keyboard_char(&mut text, &mut used, b' '); }
-            append_keyboard_text(&mut text, &mut used, label);
         }
     }
 
@@ -433,22 +419,8 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
                 dev_addr, instance, 0, 2, led_report.cast(), 1,
             );
         }
-        let event: &[u8] = match locks & 0x07 {
-            0 => b"USB KEYBOARD: LOCKS OFF",
-            1 => b"USB KEYBOARD: NUM LOCK",
-            2 => b"USB KEYBOARD: CAPS LOCK",
-            3 => b"USB KEYBOARD: CAPS + NUM LOCK",
-            4 => b"USB KEYBOARD: SCROLL LOCK",
-            5 => b"USB KEYBOARD: NUM + SCROLL LOCK",
-            6 => b"USB KEYBOARD: CAPS + SCROLL LOCK",
-            _ => b"USB KEYBOARD: ALL LOCKS",
-        };
-        show_usb_status(event);
-    }
 
-    // if used != 0 {
-    //     show_keyboard_input(&text[..used]);
-    // } // Keyboard diagnostic text temporarily disabled.
+    }
 
     // Only decoded key bytes go to the emulator; display labels are not BK input.
     if emulator_used != 0 {
@@ -467,12 +439,6 @@ fn append_keyboard_char(out: &mut [u8; 32], used: &mut usize, ch: u8) {
     if *used < out.len() {
         out[*used] = ch;
         *used += 1;
-    }
-}
-
-fn append_keyboard_text(out: &mut [u8; 32], used: &mut usize, text: &[u8]) {
-    for &ch in text {
-        append_keyboard_char(out, used, ch);
     }
 }
 
