@@ -1374,7 +1374,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                         let mut payload = [0u8; 1536];
                         let payload_len = diagnostics::write_status(&mut payload);
                         payload[payload_len..].fill(b' ');
-                        // ObjectInfo advertises exactly 768 bytes. Send the
+                        // ObjectInfo advertises exactly 1536 bytes. Send the
                         // complete object, including padding, so the MTP data
                         // container length agrees with the advertised size.
                         self.queue_data(
