@@ -749,7 +749,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
         // PTP/MTP StorageInfoChanged event: StorageID is the sole parameter.
         let mut event = [0u8; 16];
-        event[0..4].copy_from_slice(&(event.len() as u32).to_le_bytes());
+        event[0..4].copy_from_slice(&16u32.to_le_bytes());
         event[4..6].copy_from_slice(&4u16.to_le_bytes()); // Event container
         event[6..8].copy_from_slice(&0x400cu16.to_le_bytes()); // StorageInfoChanged
         event[8..12].copy_from_slice(&0u32.to_le_bytes()); // Event transaction ID
