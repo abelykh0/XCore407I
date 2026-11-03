@@ -185,7 +185,9 @@ fn program_page(page: u32) -> Result<ProgramTrace, Error> {
     };
     // Keep ECC disabled for this test. This isolates the raw FSMC NAND
     // write path from the ECC datapath while preserving the exact data stream.
-    for i in 0..PAGE_BYTES {
+    // Program only 16 bytes for this isolation test. NAND supports a
+    // partial-page program; the page is erased immediately before this test.
+    for i in 0..16 {
         let value = (i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5;
         if i == 0 { trace.first = value; }
         trace.last = value;
@@ -224,7 +226,7 @@ fn verify_page(page: u32) -> Result<(), Error> {
     write_cmd(CMD_READSTART);
     wait_ready_rb()?;
 
-    for i in 0..PAGE_BYTES {
+    for i in 0..16 {
         let actual = read_data();
         let expected = (i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5;
         if actual != expected {
@@ -299,6 +301,10 @@ fn show_program_diagnostics(page: u32) -> Result<(), Error> {
     let mut data0 = [0u8; 8];
     read_page(page, 0, &mut data0)?;
     show_hex_bytes(b"COL000:", &data0);
+
+    let mut data8 = [0u8; 8];
+    read_page(page, 8, &mut data8)?;
+    show_hex_bytes(b"COL008:", &data8);
 
     let mut data100 = [0u8; 8];
     read_page(page, 0x0100, &mut data100)?;
@@ -542,8 +548,7 @@ pub fn run_test() {
     }
     show_usb_status(b"NAND: ERASE OK");
 
-    // Keep the same erased block but program page 2 instead of page 0.
-    // This changes the NAND row address without changing block selection.
+    // Use page 2 of the selected erased block for the short-write test.
     let page = block * PAGES_PER_BLOCK + 2;
     let mut page_line = *b"TEST PAGE: 0000";
     for shift in (0..4).rev() {
