@@ -1015,11 +1015,8 @@ fn service_get_object(
     let mut first = true;
     let mut remaining = object.size as usize;
     let result = fs.open_file_and_then(&full_path, |file| {
-        // Queue two USB packets per batch. MtpUsbClass owns a separate
-        // 4 KiB transport buffer and splits each batch into 512-byte USB
-        // packets, so the main loop need not wait after every individual
-        // packet. Keep this staging buffer modest to avoid stack pressure.
-        // Static SRAM staging avoids consuming 4 KiB of the main stack.
+        // Fill the 4 KiB MTP transport buffer with one batch. The staging
+        // buffer is in static SRAM, avoiding a large main-stack allocation.
         let buffer = unsafe { &mut *ptr::addr_of_mut!(GET_OBJECT_STAGING) };
         loop {
             // Keep every non-final USB packet full. The first batch reserves
