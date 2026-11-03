@@ -90,3 +90,18 @@ pub fn format<F: ImageFile>(image: &mut F, total_sectors: u32) -> Result<Fat16Ge
     image.sync()?;
     Ok(g)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_volume_has_valid_fat16_cluster_count() {
+        let g = geometry(DEFAULT_VOLUME_SECTORS).unwrap();
+        assert_eq!(g.sectors_per_fat, 192);
+        assert_eq!(g.first_data_sector, 417);
+        assert_eq!(g.cluster_count, 49_047);
+        assert!(g.cluster_count >= 4_085 && g.cluster_count < 65_525);
+    }
+}
