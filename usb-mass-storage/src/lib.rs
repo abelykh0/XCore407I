@@ -2,6 +2,7 @@
 
 //! USB High-Speed MTP/PTP file transfer backed by LittleFS.
 
+pub mod libc_shims;
 pub mod board;
 pub mod bus;
 pub mod mtp;
