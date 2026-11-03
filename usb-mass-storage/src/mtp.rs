@@ -162,6 +162,30 @@ impl MtpObject {
     pub const EMPTY: Self = Self { handle: 0, name: [0; 64], name_len: 0, size: 0, is_dir: false };
     fn name(&self) -> &str { core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("") }
 }
+
+/// Convert UTF-16 filename code units from a PTP string into bounded UTF-8.
+/// Invalid surrogate sequences, control characters, path separators, and
+/// Windows-invalid filename characters are rejected.
+fn decode_utf16_filename(units: &[u16], out: &mut [u8]) -> Option<usize> {
+    let mut written = 0usize;
+    for decoded in core::char::decode_utf16(units.iter().copied()) {
+        let ch = decoded.ok()?;
+        if ch.is_control() || matches!(ch, '/' | '\\\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            return None;
+        }
+        let mut encoded = [0u8; 4];
+        let bytes = ch.encode_utf8(&mut encoded).as_bytes();
+        if written.checked_add(bytes.len())? > out.len() {
+            return None;
+        }
+        out[written..written + bytes.len()].copy_from_slice(bytes);
+        written += bytes.len();
+    }
+    if written == 0 || &out[..written] == b"." || &out[..written] == b".." {
+        return None;
+    }
+    Some(written)
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
 pub enum ContainerType {
@@ -1275,33 +1299,26 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                             self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                             return;
                         }
-                        let mut name = [0u8; 64];
-                        let mut name_len = 0usize;
-                        let mut valid = true;
-                        for i in 0..count - 1 {
-                            let at = 1 + i * 2;
-                            let unit = u16::from_le_bytes([data[at], data[at + 1]]);
-                            if !(0x20..=0x7e).contains(&unit) {
-                                valid = false;
-                                break;
-                            }
-                            let ch = unit as u8;
-                            if matches!(ch, b'/' | b'\\' | b':' | b'*' | b'?' | b'"' | b'<' | b'>' | b'|') {
-                                valid = false;
-                                break;
-                            }
-                            name[name_len] = ch;
-                            name_len += 1;
-                        }
-                        let terminator = 1 + (count - 1) * 2;
-                        if !valid || name_len == 0
+                        let mut units = [0u16; 64];
+                        let unit_count = count - 1;
+                        let terminator = 1 + unit_count * 2;
+                        if unit_count > units.len()
                             || u16::from_le_bytes([data[terminator], data[terminator + 1]]) != 0
-                            || &name[..name_len] == b"." || &name[..name_len] == b".."
                         {
                             self.awaiting_set_object_prop_value = None;
                             self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                             return;
                         }
+                        for i in 0..unit_count {
+                            let at = 1 + i * 2;
+                            units[i] = u16::from_le_bytes([data[at], data[at + 1]]);
+                        }
+                        let mut name = [0u8; 64];
+                        let Some(name_len) = decode_utf16_filename(&units[..unit_count], &mut name) else {
+                            self.awaiting_set_object_prop_value = None;
+                            self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                            return;
+                        };
                         let (handle, _) = self.awaiting_set_object_prop_value.take().unwrap();
                         self.pending_rename_object = Some((handle, header.transaction_id, name, name_len as u8));
                     }
@@ -1530,33 +1547,26 @@ impl UploadObjectInfo {
             diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
-        let mut name = [0u8; 64];
-        let mut name_len = 0usize;
-        for index in 0..count - 1 {
-            let at = FIXED_LEN + 1 + index * 2;
-            let unit = u16::from_le_bytes([dataset[at], dataset[at + 1]]);
-            if !(0x20..=0x7e).contains(&unit) {
-                diagnostics::OBJ_BAD_NAME.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                return Err(MtpError::InvalidContainerLength);
-            }
-            let byte = unit as u8;
-            if matches!(byte, b'/' | b'\\' | b':' | b'*' | b'?' | b'"' | b'<' | b'>' | b'|') {
-                return Err(MtpError::InvalidContainerLength);
-            }
-            if name_len == name.len() {
-                return Err(MtpError::InvalidContainerLength);
-            }
-            name[name_len] = byte;
-            name_len += 1;
-        }
-        let terminator_at = FIXED_LEN + 1 + (count - 1) * 2;
-        if u16::from_le_bytes([dataset[terminator_at], dataset[terminator_at + 1]]) != 0
-            || name_len == 0
-            || &name[..name_len] == b"."
-            || &name[..name_len] == b".."
-        {
+        let unit_count = count - 1;
+        if unit_count > 64 {
+            diagnostics::OBJ_BAD_NAME.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
+        let mut units = [0u16; 64];
+        for index in 0..unit_count {
+            let at = FIXED_LEN + 1 + index * 2;
+            units[index] = u16::from_le_bytes([dataset[at], dataset[at + 1]]);
+        }
+        let terminator_at = FIXED_LEN + 1 + unit_count * 2;
+        if u16::from_le_bytes([dataset[terminator_at], dataset[terminator_at + 1]]) != 0 {
+            diagnostics::OBJ_BAD_NAME.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            return Err(MtpError::InvalidContainerLength);
+        }
+        let mut name = [0u8; 64];
+        let Some(name_len) = decode_utf16_filename(&units[..unit_count], &mut name) else {
+            diagnostics::OBJ_BAD_NAME.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            return Err(MtpError::InvalidContainerLength);
+        };
 
         // ObjectInfo has four PTP strings: filename, capture date,
         // modification date, and keywords. Consume the three metadata
@@ -1591,6 +1601,32 @@ impl UploadObjectInfo {
         }
 
         Ok(Self { storage_id, parent, size, name, name_len: name_len as u8 })
+    }
+}
+
+#[cfg(test)]
+mod filename_unicode_tests {
+    use super::*;
+
+    #[test]
+    fn decodes_basic_multilingual_plane_filename() {
+        let mut out = [0u8; 64];
+        let len = decode_utf16_filename(&[0x4e2d, 0x6587, b'.' as u16, b't' as u16], &mut out).unwrap();
+        assert_eq!(&out[..len], "中文.t".as_bytes());
+    }
+
+    #[test]
+    fn decodes_supplementary_character_filename() {
+        let mut out = [0u8; 64];
+        let len = decode_utf16_filename(&[0xd83d, 0xde00, b'.' as u16], &mut out).unwrap();
+        assert_eq!(&out[..len], "😀.".as_bytes());
+    }
+
+    #[test]
+    fn rejects_invalid_surrogates_and_path_characters() {
+        let mut out = [0u8; 64];
+        assert!(decode_utf16_filename(&[0xd800], &mut out).is_none());
+        assert!(decode_utf16_filename(&[b'a' as u16, b'/' as u16], &mut out).is_none());
     }
 }
 
