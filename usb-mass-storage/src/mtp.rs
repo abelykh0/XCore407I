@@ -845,9 +845,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             );
             return;
         }
-        // StorageID, ObjectFormat, ProtectionStatus, ObjectSize, ObjectFileName,
-        // DateModified, ParentObject.
-        let props: [u16; 7] = [0xdc01, 0xdc02, 0xdc03, 0xdc04, 0xdc07, 0xdc09, 0xdc0b];
+        // StorageID, ObjectFormat, ProtectionStatus, ObjectSize,
+        // ObjectFileName, ParentObject. DateModified is omitted because the
+        // filesystem snapshot does not currently carry modification times.
+        let props: [u16; 6] = [0xdc01, 0xdc02, 0xdc03, 0xdc04, 0xdc07, 0xdc0b];
         let mut data = [0u8; 32];
         data[..4].copy_from_slice(&(props.len() as u32).to_le_bytes());
         for (i, prop) in props.iter().enumerate() {
@@ -870,7 +871,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             0xdc02 | 0xdc03 => (0x0004, false), // ObjectFormat, ProtectionStatus: UINT16
             0xdc04 => (0x0008, false),          // ObjectSize: UINT64
             0xdc07 => (0xffff, true),           // ObjectFileName: STRING
-            0xdc09 => (0xffff, false),          // DateModified: STRING
             _ => {
                 self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
                 return;
@@ -954,11 +954,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let include_protection = property_code == 0 || property_code == 0xdc03;
         let include_size = property_code == 0 || property_code == 0xdc04;
         let include_filename = property_code == 0 || property_code == 0xdc07;
-        let include_date = property_code == 0 || property_code == 0xdc09;
         let include_parent = property_code == 0 || property_code == 0xdc0b;
 
         if !(include_storage_id || include_format || include_protection || include_size
-            || include_filename || include_date || include_parent)
+            || include_filename || include_parent)
         {
             self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
             return;
@@ -969,7 +968,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             + include_protection as u32
             + include_size as u32
             + include_filename as u32
-            + include_date as u32
             + include_parent as u32;
 
         let mut data = [0u8; 256];
@@ -990,9 +988,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         }
         if include_filename {
             Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
-        }
-        if include_date {
-            Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
         }
         if include_parent {
             Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0xffff_ffff);
