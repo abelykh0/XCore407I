@@ -313,7 +313,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "OpenAI XCore407I");
         Self::append_ptp_string(&mut data, &mut pos, "XCore407I");
         Self::append_ptp_string(&mut data, &mut pos, "0.1");
-        Self::append_ptp_string(&mut data, &mut pos, "XCORE407I-001");
+        Self::append_ptp_string(&mut data, &mut pos, "XCORE407I-002");
 
         self.queue_data(operation::GET_DEVICE_INFO, transaction_id, &data[..pos], response::OK);
     }
