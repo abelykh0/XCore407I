@@ -178,7 +178,7 @@ fn append_hex(out: &mut [u8; 192], len: &mut usize, value: u32, digits: usize) {
 pub fn create_report() -> ([u8; 192], usize) {
     let mut report = [0u8; 192];
     let mut len = 0;
-    append(&mut report, &mut len, b"XCore407I NAND destructive test\r\n");
+    append(&mut report, &mut len, b"XCore NAND full test\r\n");
     configure_fsmc();
     command(0xFF);
     if !wait_ready_status() {
@@ -216,7 +216,7 @@ pub fn create_report() -> ([u8; 192], usize) {
             }
         }
     }
-    append(&mut report, &mut len, b"Factory-good: ");
+    append(&mut report, &mut len, b"Good: ");
     append_hex(&mut report, &mut len, good as u32, 4);
     append(&mut report, &mut len, b" bad: ");
     append_hex(&mut report, &mut len, bad as u32, 4);
@@ -270,12 +270,12 @@ pub fn create_report() -> ([u8; 192], usize) {
         programmed += 1;
     }
 
-    append(&mut report, &mut len, b"Erased+verified blocks: ");
+    append(&mut report, &mut len, b"Erase+verify: ");
     append_hex(&mut report, &mut len, erased as u32, 4);
-    append(&mut report, &mut len, b"\r\nProgrammed+verified: ");
+    append(&mut report, &mut len, b"\r\nWrite+verify: ");
     append_hex(&mut report, &mut len, programmed as u32, 4);
-    append(&mut report, &mut len, b"\r\nPages/block: 64; bytes/page: 2048\r\n");
-    append(&mut report, &mut len, b"ECC: OFF (raw data test)\r\n");
+    append(&mut report, &mut len, b"\r\n64 pages x 2048 B/block\r\n");
+    append(&mut report, &mut len, b"ECC: OFF (raw)\r\n");
     if let Some(block) = failed_block {
         append(&mut report, &mut len, b"FAIL block 0x");
         append_hex(&mut report, &mut len, block, 3);
@@ -291,8 +291,8 @@ pub fn create_report() -> ([u8; 192], usize) {
         append_hex(&mut report, &mut len, actual as u32, 2);
         append(&mut report, &mut len, b"\r\n");
     } else {
-        append(&mut report, &mut len, b"RESULT: ALL GOOD BLOCKS PASSED\r\n");
+        append(&mut report, &mut len, b"PASS: all good blocks\r\n");
     }
-    append(&mut report, &mut len, b"Factory-bad blocks were skipped.\r\n");
+    append(&mut report, &mut len, b"Factory-bad blocks skipped.\r\n");
     (report, len)
 }
