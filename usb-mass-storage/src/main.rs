@@ -86,26 +86,24 @@ fn main() -> ! {
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
     configure_usb_poll_timer(&rcc, &peripherals.TIM2, &mut core.NVIC);
 
-    // TIM2 owns all USB polling; NAND initialization and LittleFS formatting
-    // run in the main thread without stopping USB enumeration.
-    let (report, report_len) = nand_fs::initialize_and_mount_report();
+    // Mount the existing volume once. The report is generated from this
+    // mount, then the same mounted filesystem remains alive while the main
+    // context services future MTP requests. No NAND/LittleFS work runs in TIM2.
+    let mounted = nand_fs::with_mounted_report::<()>(|_fs, report, report_len| {
+        // Main and TIM2 share the MTP class. Mask TIM2 while updating its
+        // diagnostic object so the ISR cannot observe a partially copied value.
+        unsafe { NVIC::mask(Interrupt::TIM2); }
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        let _ = mtp.set_readme(&report[..report_len]);
+        peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
+        unsafe {
+            NVIC::unpend(Interrupt::TIM2);
+            NVIC::unmask(Interrupt::TIM2);
+        }
 
-    // Update the MTP object between polling interrupts. Mask TIM2 to ensure
-    // the ISR cannot access MTP while set_readme() changes its contents.
-    unsafe { NVIC::mask(Interrupt::TIM2); }
-    let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
-    let _ = mtp.set_readme(&report[..report_len]);
-    peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
-    unsafe {
-        NVIC::unpend(Interrupt::TIM2);
-        NVIC::unmask(Interrupt::TIM2);
-    }
-
-    // Keep LittleFS mounted for the firmware lifetime. The closure owns the
-    // mount, so later main-loop MTP requests can be serviced without remounting
-    // or exposing NAND operations to the TIM2 USB polling interrupt.
-    let mounted = nand_fs::with_mounted::<()>(|_fs| loop {
-        core::hint::spin_loop();
+        loop {
+            core::hint::spin_loop();
+        }
     });
     let _ = mounted;
     loop {
