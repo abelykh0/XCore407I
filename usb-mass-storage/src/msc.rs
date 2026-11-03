@@ -56,6 +56,10 @@ impl<'a, B: UsbBus, D: BlockDevice> MassStorage<'a, B, D> {
 
     pub fn storage_mut(&mut self) -> &mut D { &mut self.storage }
 
+    /// Flush pending storage writes before disconnecting MSC or returning the
+    /// volume to firmware-side filesystem access.
+    pub fn sync_storage(&mut self) -> Result<(), BlockError> { self.storage.sync() }
+
     fn set_sense(&mut self, key: u8, asc: u8) {
         self.sense_key = key;
         self.sense_asc = asc;
@@ -149,7 +153,13 @@ impl<'a, B: UsbBus, D: BlockDevice> MassStorage<'a, B, D> {
             0x1a => { // MODE SENSE(6): caching page omitted; writable medium
                 self.send_bytes(&[3, 0, 0, 0]);
             }
-            0x1b | 0x1e => self.send_csw(), // START STOP / PREVENT ALLOW
+            0x1b => { // START STOP UNIT; synchronize before host eject
+                if cdb.len() >= 6 && cdb[4] & 0x02 != 0 && cdb[4] & 0x01 == 0 {
+                    if self.storage.sync().is_err() { self.fail(0x04, 0x44); }
+                    else { self.send_csw(); }
+                } else { self.send_csw(); }
+            }
+            0x1e => self.send_csw(), // PREVENT/ALLOW MEDIUM REMOVAL
             0x25 => { // READ CAPACITY(10)
                 let count = self.storage.sector_count();
                 if count == 0 { self.fail(0x02, 0x3a); return; }
@@ -272,6 +282,7 @@ impl<B: UsbBus, D: BlockDevice> UsbClass<B> for MassStorage<'_, B, D> {
     }
 
     fn reset(&mut self) {
+        let _ = self.storage.sync();
         self.phase = Phase::Idle;
         self.sectors_left = 0;
         self.residue = 0;
