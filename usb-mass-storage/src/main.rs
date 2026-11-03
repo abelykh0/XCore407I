@@ -16,8 +16,8 @@ use xcore407i_usb_mtp::{
 
 /// Minimal USB/MTP bring-up firmware.
 ///
-/// Exposes a read-only embedded demo object over MTP. NAND and LittleFS are
-/// deliberately not mounted in this stage.
+/// Exposes a read-only NAND diagnostic report as README.txt over MTP.
+/// LittleFS is not mounted in this diagnostic stage.
 #[entry]
 fn main() -> ! {
     board::configure_system_clock_168mhz();
