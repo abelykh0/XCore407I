@@ -182,6 +182,7 @@ fn main() -> ! {
             NVIC::unmask(Interrupt::TIM2);
         }
 
+        let mut next_object_handle = object_count as u32 + 1;
         let mut pending_upload: Option<(UploadObjectInfo, u32)> = None;
         let mut upload_buffer = [0u8; 500];
 
@@ -220,6 +221,7 @@ fn main() -> ! {
                     object_count,
                     info,
                     transaction_id,
+                    &mut next_object_handle,
                     &mut pending_upload,
                 );
             } else if let Some((transaction_id, length)) = upload_data {
@@ -326,6 +328,7 @@ fn service_send_object_info(
     object_count: usize,
     info: UploadObjectInfo,
     transaction_id: u32,
+    next_object_handle: &mut u32,
     pending_upload: &mut Option<(UploadObjectInfo, u32)>,
 ) {
     if info.size > 500 || object_count >= objects.len() || pending_upload.is_some() {
@@ -345,8 +348,14 @@ fn service_send_object_info(
         return;
     };
     let final_path = path!("/").join(relative_path.as_path());
-    if name == "MTP-README.txt" || name == "MTP-STATUS.txt"
-        || name == ".mtp-upload.tmp" || fs.exists(&final_path)
+    let name_conflicts = objects[..object_count]
+        .iter()
+        .any(|object| object.name().eq_ignore_ascii_case(name));
+    if name.eq_ignore_ascii_case("MTP-README.txt")
+        || name.eq_ignore_ascii_case("MTP-STATUS.txt")
+        || name.eq_ignore_ascii_case(".mtp-upload.tmp")
+        || name_conflicts
+        || fs.exists(&final_path)
     {
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
@@ -378,20 +387,16 @@ fn service_send_object_info(
         return;
     }
 
-    let handle = objects[..object_count]
-        .iter()
-        .map(|object| object.handle)
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1);
-    if handle == 0 {
+    let handle = *next_object_handle;
+    let Some(next) = handle.checked_add(1) else {
         let _ = fs.remove(&temp_path);
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::GENERAL_ERROR,
             transaction_id,
         );
         return;
-    }
+    };
+    *next_object_handle = next;
 
     *pending_upload = Some((info, handle));
     loop {
