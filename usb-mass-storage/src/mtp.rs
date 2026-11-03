@@ -848,7 +848,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         if req.request_type != usb_device::control::RequestType::Class
             || req.recipient != usb_device::control::Recipient::Interface
             || req.index > u8::MAX as u16
-            || self.interface != InterfaceNumber(req.index as u8)
+            || u8::from(self.interface) != req.index as u8
             || req.value != 0
         {
             return;
@@ -877,7 +877,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         if req.request_type != usb_device::control::RequestType::Class
             || req.recipient != usb_device::control::Recipient::Interface
             || req.index > u8::MAX as u16
-            || self.interface != InterfaceNumber(req.index as u8)
+            || u8::from(self.interface) != req.index as u8
             || req.value != 0
         {
             return;
