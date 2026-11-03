@@ -656,7 +656,7 @@ fn service_rename_object(
         return;
     };
     let object = objects[index];
-    if object.is_dir || object.name() == "MTP-README.txt" || object.name() == "MTP-STATUS.txt"
+    if object.is_dir || core::str::from_utf8(&object.name[..object.name_len as usize]).unwrap_or("") == "MTP-README.txt" || core::str::from_utf8(&object.name[..object.name_len as usize]).unwrap_or("") == "MTP-STATUS.txt"
         || new_name.eq_ignore_ascii_case(b".mtp-upload.tmp")
         || new_name.eq_ignore_ascii_case(b"MTP-README.txt")
         || new_name.eq_ignore_ascii_case(b"MTP-STATUS.txt")
