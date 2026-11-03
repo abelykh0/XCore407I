@@ -9,6 +9,7 @@ on:
       - "rust-blinker/vendor/synopsys-usb-otg/**"
   pull_request:
     paths:
+      - ".github/workflows/usb-mass-storage.yml"
       - "usb-mass-storage/**"
       - "rust-blinker/vendor/usb-device/**"
       - "rust-blinker/vendor/synopsys-usb-otg/**"
@@ -26,3 +27,6 @@ jobs:
       - name: Check firmware library
         working-directory: usb-mass-storage
         run: cargo check --lib --target thumbv7em-none-eabihf
+      - name: Run host-side unit tests
+        working-directory: usb-mass-storage
+        run: cargo test --lib
