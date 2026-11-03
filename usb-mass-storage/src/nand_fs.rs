@@ -300,24 +300,24 @@ pub fn with_mounted_report<R>(
 
     let mut report = [0u8; 192];
     let mut len = 0;
-    append(&mut report, &mut len, b"XCore407I NAND / LittleFS\\r\\n");
+    append(&mut report, &mut len, b"XCore407I NAND / LittleFS\r\n");
     append(&mut report, &mut len, b"Factory bad blocks: ");
     append_hex(&mut report, &mut len, storage.factory_bad_blocks() as u32, 4);
-    append(&mut report, &mut len, b"\\r\\n");
-    append(&mut report, &mut len, b"LittleFS: existing volume mounted\\r\\n");
+    append(&mut report, &mut len, b"\r\n");
+    append(&mut report, &mut len, b"LittleFS: existing volume mounted\r\n");
     append(&mut report, &mut len, b"Capacity: ");
 
     Filesystem::<NandStorage>::mount_and_then(&mut storage, |fs| {
         append_hex(&mut report, &mut len, fs.total_space() as u32, 8);
-        append(&mut report, &mut len, b" bytes\\r\\nFree: ");
+        append(&mut report, &mut len, b" bytes\r\nFree: ");
         append_hex(
             &mut report,
             &mut len,
             fs.available_space().unwrap_or(0) as u32,
             8,
         );
-        append(&mut report, &mut len, b" bytes\\r\\n");
-        append(&mut report, &mut len, b"ECC: OFF (raw NAND)\\r\\n");
+        append(&mut report, &mut len, b" bytes\r\n");
+        append(&mut report, &mut len, b"ECC: OFF (raw NAND)\r\n");
         service(fs, &report, len)
     })
     .map_err(|_| InitError::MountFailed)
@@ -333,34 +333,34 @@ const FORMAT_NAND_ONCE: bool = false;
 pub fn initialize_and_mount_report() -> ([u8; 192], usize) {
     let mut report = [0u8; 192];
     let mut len = 0;
-    append(&mut report, &mut len, b"XCore407I NAND / LittleFS\\r\\n");
+    append(&mut report, &mut len, b"XCore407I NAND / LittleFS\r\n");
 
     let mut storage = match NandStorage::new() {
         Ok(storage) => storage,
         Err(error) => {
             append(&mut report, &mut len, b"NAND init failed: ");
             append_init_error(&mut report, &mut len, error);
-            append(&mut report, &mut len, b"\\r\\n");
+            append(&mut report, &mut len, b"\r\n");
             return (report, len);
         }
     };
 
     append(&mut report, &mut len, b"Factory bad blocks: ");
     append_hex(&mut report, &mut len, storage.factory_bad_blocks() as u32, 4);
-    append(&mut report, &mut len, b"\\r\\n");
+    append(&mut report, &mut len, b"\r\n");
 
     let mountable = Filesystem::<NandStorage>::is_mountable(&mut storage);
     let mut formatted_now = false;
 
     if !mountable {
         if !FORMAT_NAND_ONCE {
-            append(&mut report, &mut len, b"ERROR: no valid LittleFS; not formatted\\r\\n");
+            append(&mut report, &mut len, b"ERROR: no valid LittleFS; not formatted\r\n");
             return (report, len);
         }
 
-        append(&mut report, &mut len, b"Initial LittleFS format...\\r\\n");
+        append(&mut report, &mut len, b"Initial LittleFS format...\r\n");
         if Filesystem::<NandStorage>::format(&mut storage).is_err() {
-            append(&mut report, &mut len, b"ERROR: format failed\\r\\n");
+            append(&mut report, &mut len, b"ERROR: format failed\r\n");
             return (report, len);
         }
         formatted_now = true;
@@ -371,18 +371,18 @@ pub fn initialize_and_mount_report() -> ([u8; 192], usize) {
     }) {
         Ok((total, free)) => {
             if formatted_now {
-                append(&mut report, &mut len, b"LittleFS: formatted and mounted\\r\\n");
+                append(&mut report, &mut len, b"LittleFS: formatted and mounted\r\n");
             } else {
-                append(&mut report, &mut len, b"LittleFS: existing volume mounted\\r\\n");
+                append(&mut report, &mut len, b"LittleFS: existing volume mounted\r\n");
             }
             append(&mut report, &mut len, b"Capacity: ");
             append_hex(&mut report, &mut len, total as u32, 8);
-            append(&mut report, &mut len, b" bytes\\r\\nFree: ");
+            append(&mut report, &mut len, b" bytes\r\nFree: ");
             append_hex(&mut report, &mut len, free as u32, 8);
-            append(&mut report, &mut len, b" bytes\\r\\n");
-            append(&mut report, &mut len, b"ECC: OFF (raw NAND)\\r\\n");
+            append(&mut report, &mut len, b" bytes\r\n");
+            append(&mut report, &mut len, b"ECC: OFF (raw NAND)\r\n");
         }
-        Err(_) => append(&mut report, &mut len, b"ERROR: mount failed; NAND unchanged\\r\\n"),
+        Err(_) => append(&mut report, &mut len, b"ERROR: mount failed; NAND unchanged\r\n"),
     }
     (report, len)
 }
