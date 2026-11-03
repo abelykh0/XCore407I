@@ -170,10 +170,12 @@ pub struct MtpObject {
     pub name_len: u8,
     pub size: u32,
     pub is_dir: bool,
+    /// Persistent 128-bit MTP identifier, loaded from the LittleFS file attribute.
+    pub puid: [u8; 16],
 }
 
 impl MtpObject {
-    pub const EMPTY: Self = Self { handle: 0, name: [0; 64], name_len: 0, size: 0, is_dir: false };
+    pub const EMPTY: Self = Self { handle: 0, name: [0; 64], name_len: 0, size: 0, is_dir: false, puid: [0; 16] };
     fn name(&self) -> &str { core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("") }
 }
 
