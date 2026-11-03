@@ -33,6 +33,10 @@ pub mod diagnostics {
     pub static IN_COMPLETE: AtomicU32 = AtomicU32::new(0);
     pub static USB_RESETS: AtomicU32 = AtomicU32::new(0);
     pub static PENDING_COMMAND_OVERFLOW: AtomicU32 = AtomicU32::new(0);
+    pub static DATA_IN_COMPLETED: AtomicU32 = AtomicU32::new(0);
+    pub static RESPONSE_IN_COMPLETED: AtomicU32 = AtomicU32::new(0);
+    pub static CONTROL_GET_STATUS: AtomicU32 = AtomicU32::new(0);
+    pub static CONTROL_DEVICE_RESET: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -72,6 +76,10 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"IN_COMPLETE: ", IN_COMPLETE.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"USB_RESETS: ", USB_RESETS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"PENDING_COMMAND_OVERFLOW: ", PENDING_COMMAND_OVERFLOW.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"DATA_IN_COMPLETED: ", DATA_IN_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"RESPONSE_IN_COMPLETED: ", RESPONSE_IN_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"CONTROL_GET_STATUS: ", CONTROL_GET_STATUS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"CONTROL_DEVICE_RESET: ", CONTROL_DEVICE_RESET.load(Ordering::Relaxed));
         pos
     }
 }
@@ -247,6 +255,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     tx_len: usize,
     tx_pending: bool,
     tx_in_flight: bool,
+    tx_is_response: bool,
     // MTP commands are serialized: retain one OUT command that arrives while
     // the current transaction's data/response is still being transmitted.
     transaction_active: bool,
@@ -288,6 +297,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             tx_len: 0,
             tx_pending: false,
             tx_in_flight: false,
+            tx_is_response: false,
             transaction_active: false,
             data_transfer_active: false,
             pending_command: [0; BULK_MAX_PACKET_SIZE as usize],
@@ -359,6 +369,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx[header_len..header_len + bytes.len()].copy_from_slice(bytes);
         self.tx_len = header_len + bytes.len();
         self.tx_pending = true;
+        self.tx_is_response = false;
         if first {
             self.data_transfer_active = true;
         }
@@ -396,6 +407,22 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     pub fn bulk_in(&self) -> &EndpointIn<'a, B> { &self.bulk_in }
     pub fn event_in(&self) -> &EndpointIn<'a, B> { &self.event_in }
     pub fn interface(&self) -> InterfaceNumber { self.interface }
+
+    /// Clear protocol state after the Still Image class Device Reset request.
+    /// This does not reset the USB peripheral or increment the USB bus-reset counter.
+    fn reset_protocol_state(&mut self) {
+        self.clear_transport_stalls();
+        self.session_open = false;
+        self.pending_get_object = None;
+        self.pending_response = None;
+        self.pending_command_len = 0;
+        self.transaction_active = false;
+        self.data_transfer_active = false;
+        self.tx_len = 0;
+        self.tx_pending = false;
+        self.tx_in_flight = false;
+        self.tx_is_response = false;
+    }
 
     /// Clear endpoint stalls after a PTP Cancel/Reset recovery sequence.
     pub fn clear_transport_stalls(&self) {
@@ -437,6 +464,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx[12..length].copy_from_slice(payload);
         self.tx_len = length;
         self.tx_pending = true;
+        self.tx_is_response = false;
         self.pending_response = Some((response_code, transaction_id));
         self.data_transfer_active = true;
     }
@@ -450,8 +478,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         if let Ok(length) = encode_response(transaction_id, code, params, &mut self.tx) {
             self.tx_len = length;
             self.tx_pending = true;
+            self.tx_is_response = true;
         } else {
             self.tx_len = 0;
+            self.tx_is_response = true;
         }
     }
 
@@ -813,6 +843,54 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         if index == self.interface_string { Some("XCore407I MTP data") } else { None }
     }
 
+    fn control_in(&mut self, xfer: usb_device::class::ControlIn<'_, '_, '_, B>) {
+        let req = *xfer.request();
+        if req.request_type != usb_device::control::RequestType::Class
+            || req.recipient != usb_device::control::Recipient::Interface
+            || req.index != self.interface.0 as u16
+            || req.value != 0
+        {
+            return;
+        }
+
+        // USB Still Image class request 0x67: Get Device Status.
+        // The returned structure is { uint16 length, uint16 PTP response code }.
+        if req.request == 0x67 && req.length >= 4 {
+            diagnostics::CONTROL_GET_STATUS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            let code = if self.transaction_active
+                || self.tx_pending
+                || self.tx_in_flight
+                || self.pending_get_object.is_some()
+            {
+                0x2019u16 // Device Busy
+            } else {
+                response::OK
+            };
+            let status = [4u8, 0, code as u8, (code >> 8) as u8];
+            let _ = xfer.accept_with(&status);
+        }
+    }
+
+    fn control_out(&mut self, xfer: usb_device::class::ControlOut<'_, '_, '_, B>) {
+        let req = *xfer.request();
+        if req.request_type != usb_device::control::RequestType::Class
+            || req.recipient != usb_device::control::Recipient::Interface
+            || req.index != self.interface.0 as u16
+            || req.value != 0
+        {
+            return;
+        }
+
+        // USB Still Image class request 0x66: Device Reset. This is a
+        // protocol-level reset, not a USB bus reset.
+        if req.request == 0x66 && req.length == 0 {
+            if xfer.accept().is_ok() {
+                diagnostics::CONTROL_DEVICE_RESET.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                self.reset_protocol_state();
+            }
+        }
+    }
+
     fn endpoint_out(&mut self, address: usb_device::endpoint::EndpointAddress) {
         if address != self.bulk_out.address() { return; }
         let mut packet = [0u8; BULK_MAX_PACKET_SIZE as usize];
@@ -854,6 +932,11 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
     fn endpoint_in_complete(&mut self, address: usb_device::endpoint::EndpointAddress) {
         if address != self.bulk_in.address() { return; }
         diagnostics::IN_COMPLETE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if self.tx_is_response {
+            diagnostics::RESPONSE_IN_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        } else if self.pending_response.is_some() {
+            diagnostics::DATA_IN_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
         self.tx_in_flight = false;
 
         // A data container is followed by its MTP response. The transaction
@@ -890,16 +973,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
 
     fn reset(&mut self) {
         diagnostics::USB_RESETS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        self.clear_transport_stalls();
-        self.session_open = false;
-        self.pending_get_object = None;
-        self.pending_response = None;
-        self.pending_command_len = 0;
-        self.transaction_active = false;
-        self.data_transfer_active = false;
-        self.tx_len = 0;
-        self.tx_pending = false;
-        self.tx_in_flight = false;
+        self.reset_protocol_state();
     }
 }
 
