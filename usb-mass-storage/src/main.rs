@@ -143,7 +143,7 @@ fn configure_usb_poll_timer(rcc: &pac::RCC, tim2: &pac::TIM2, nvic: &mut NVIC) {
 
     unsafe {
         nvic.set_priority(interrupt::TIM2, TIM2_PRIORITY << 4);
-        NVIC::unpend(irq::TIM2);
+        NVIC::unpend(interrupt::TIM2);
     }
 
     tim2.dier().write(|w| w.uie().set_bit());
