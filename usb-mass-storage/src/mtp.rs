@@ -194,6 +194,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     readme: [u8; 192],
     readme_len: usize,
     pending_response: Option<(u16, u32)>,
+    pending_get_object: Option<(u32, u32)>,
     session_open: bool,
     objects: [MtpObject; 16],
     object_count: usize,
@@ -228,6 +229,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             readme: { let mut bytes = [0u8; 192]; bytes[..DEFAULT_README.len()].copy_from_slice(DEFAULT_README); bytes },
             readme_len: DEFAULT_README.len(),
             pending_response: None,
+            pending_get_object: None,
             session_open: false,
             objects: [MtpObject::EMPTY; 16],
             object_count: 0,
@@ -254,6 +256,57 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     pub fn set_storage_stats(&mut self, capacity_bytes: u64, free_bytes: u64) {
         self.capacity_bytes = capacity_bytes;
         self.free_bytes = free_bytes.min(capacity_bytes);
+    }
+
+    /// Take a GET_OBJECT request for processing in the main context.
+    pub fn take_get_object_request(&mut self) -> Option<(u32, u32)> {
+        self.pending_get_object.take()
+    }
+
+    /// True when the previous bulk-IN packet has completed and another chunk
+    /// can be queued by the main context.
+    pub fn object_tx_ready(&self) -> bool {
+        !self.tx_pending && !self.tx_in_flight
+    }
+
+    /// Queue one piece of a single MTP GetObject data container. The header is
+    /// included only in the first chunk; the final chunk schedules the response.
+    pub fn queue_object_data_chunk(
+        &mut self,
+        transaction_id: u32,
+        total_size: u32,
+        bytes: &[u8],
+        first: bool,
+        last: bool,
+    ) -> bool {
+        let header_len = if first { CONTAINER_HEADER_LEN } else { 0 };
+        if bytes.len() + header_len > self.tx.len() || !self.object_tx_ready() {
+            return false;
+        }
+        if first {
+            let length = CONTAINER_HEADER_LEN as u32 + total_size;
+            self.tx[..4].copy_from_slice(&length.to_le_bytes());
+            self.tx[4..6].copy_from_slice(&(ContainerType::Data as u16).to_le_bytes());
+            self.tx[6..8].copy_from_slice(&operation::GET_OBJECT.to_le_bytes());
+            self.tx[8..12].copy_from_slice(&transaction_id.to_le_bytes());
+        }
+        self.tx[header_len..header_len + bytes.len()].copy_from_slice(bytes);
+        self.tx_len = header_len + bytes.len();
+        self.tx_pending = true;
+        self.tx_in_flight = false;
+        if last {
+            self.pending_response = Some((response::OK, transaction_id));
+        }
+        true
+    }
+
+    /// Queue a response from the main context after a storage-side failure.
+    pub fn queue_main_response(&mut self, code: u16, transaction_id: u32) -> bool {
+        if !self.object_tx_ready() {
+            return false;
+        }
+        self.queue_response(code, transaction_id);
+        true
     }
 
     fn object(&self, handle: u32) -> Option<&MtpObject> {
@@ -616,10 +669,18 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_OBJECT => {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                } else if parameter(0).and_then(|handle| self.object(handle)).is_none() {
-                    self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
+                } else if params.len() != 4 {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if let Some(handle) = parameter(0) {
+                    if self.object(handle).is_none() {
+                        self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
+                    } else if self.pending_get_object.is_some() {
+                        self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                    } else {
+                        self.pending_get_object = Some((handle, header.transaction_id));
+                    }
                 } else {
-                    self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id);
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
             }
             _ => self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id),
@@ -667,6 +728,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
     fn reset(&mut self) {
         self.clear_transport_stalls();
         self.session_open = false;
+        self.pending_get_object = None;
         self.pending_response = None;
         self.tx_len = 0;
         self.tx_pending = false;
