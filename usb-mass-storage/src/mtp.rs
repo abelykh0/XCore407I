@@ -422,7 +422,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, DEMO_OBJECT.len() as u64);
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, DEMO_OBJECT_NAME);
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
-        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0);
+        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0xffff_ffff);
         self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &data[..pos], response::OK);
     }
 
