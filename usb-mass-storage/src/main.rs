@@ -110,6 +110,7 @@ fn main() -> ! {
 
     MTP_PTR.store(mtp_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
+    configure_get_object_timer(&rcc, &peripherals.TIM5);
     configure_usb_poll_timer(&rcc, &peripherals.TIM2, &mut core.NVIC);
 
     // Mount the existing volume once. The report is generated from this
@@ -956,6 +957,10 @@ fn service_get_object(
     diag::GET_OBJECT_BYTES_READ.store(0, Ordering::Relaxed);
     diag::GET_OBJECT_CHUNKS_QUEUED.store(0, Ordering::Relaxed);
     diag::GET_OBJECT_READ_ERRORS.store(0, Ordering::Relaxed);
+    diag::GET_OBJECT_READ_US.store(0, Ordering::Relaxed);
+    diag::GET_OBJECT_WAIT_US.store(0, Ordering::Relaxed);
+    diag::GET_OBJECT_TOTAL_US.store(0, Ordering::Relaxed);
+    let total_started = get_object_timer_us();
     let Some(object) = objects[..object_count].iter().find(|item| item.handle == handle).copied() else {
         diag::GET_OBJECT_READ_ERRORS.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::INVALID_OBJECT_HANDLE, transaction_id);
@@ -1024,7 +1029,12 @@ fn service_get_object(
             let wanted = remaining.min(payload_limit);
             let mut count = 0usize;
             while count < wanted {
+                let read_started = get_object_timer_us();
                 let read = file.read(&mut buffer[count..wanted])?;
+                diag::GET_OBJECT_READ_US.fetch_add(
+                    get_object_timer_us().wrapping_sub(read_started),
+                    Ordering::Relaxed,
+                );
                 if read == 0 {
                     return Err(littlefs2::io::Error::IO);
                 }
@@ -1033,12 +1043,17 @@ fn service_get_object(
             }
             remaining -= count;
             let last = remaining == 0;
+            let wait_started = get_object_timer_us();
             wait_and_queue_object_chunk(
                 transaction_id,
                 object.size,
                 &buffer[..count],
                 first,
                 last,
+            );
+            diag::GET_OBJECT_WAIT_US.fetch_add(
+                get_object_timer_us().wrapping_sub(wait_started),
+                Ordering::Relaxed,
             );
             diag::GET_OBJECT_CHUNKS_QUEUED.fetch_add(1, Ordering::Relaxed);
             first = false;
@@ -1048,6 +1063,11 @@ fn service_get_object(
         }
         Ok(())
     });
+
+    diag::GET_OBJECT_TOTAL_US.store(
+        get_object_timer_us().wrapping_sub(total_started),
+        Ordering::Relaxed,
+    );
 
     if result.is_err() {
         diag::GET_OBJECT_READ_ERRORS.fetch_add(1, Ordering::Relaxed);
@@ -1118,6 +1138,29 @@ fn queue_main_mtp_response(code: u16, transaction_id: u32) {
         unsafe { NVIC::unmask(Interrupt::TIM2); }
         core::hint::spin_loop();
     }
+}
+
+/// Read the free-running TIM5 counter configured at 1 MHz.
+#[inline]
+fn get_object_timer_us() -> u32 {
+    unsafe { (*pac::TIM5::ptr()).cnt().read().bits() }
+}
+
+/// TIM5 is independent of TIM2, which remains dedicated to USB polling.
+/// APB1 timer clock is 84 MHz; prescaler 83 gives a 1 MHz, 32-bit counter.
+fn configure_get_object_timer(rcc: &pac::RCC, tim5: &pac::TIM5) {
+    rcc.apb1enr().modify(|_, w| w.tim5en().set_bit());
+    rcc.apb1rstr().modify(|_, w| w.tim5rst().set_bit());
+    rcc.apb1rstr().modify(|_, w| w.tim5rst().clear_bit());
+
+    tim5.cr1().write(|w| w.cen().clear_bit());
+    tim5.dier().write(|w| w.uie().clear_bit());
+    tim5.psc().write(|w| unsafe { w.psc().bits(83) });
+    tim5.arr().write(|w| unsafe { w.arr().bits(u32::MAX) });
+    tim5.egr().write(|w| w.ug().set_bit());
+    tim5.sr().write(|w| w.uif().clear_bit());
+    tim5.cnt().write(|w| unsafe { w.cnt().bits(0) });
+    tim5.cr1().write(|w| w.cen().set_bit());
 }
 
 /// Poll the USB HS device at 8 kHz (one call per 125 us microframe).
