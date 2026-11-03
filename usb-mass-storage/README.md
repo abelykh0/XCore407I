@@ -36,12 +36,14 @@ Implemented:
 - Initial operation/response code definitions and a storage abstraction for
   bounded file streaming.
 
+Bring-up firmware now exists (`src/main.rs`). It initializes the 168 MHz clock, configures the USB3300 ULPI pins, constructs the OTG_HS bus and MTP interface, and polls `usb-device`. It does not mount storage or implement MTP operations; its purpose is limited to USB enumeration testing.
+
 Not yet implemented:
 - MTP transaction state machine and Windows interoperability.
 - Device/storage/object-info datasets and object-handle/path database.
 - LittleFS-backed implementation of `MtpStorage`.
 - NAND ECC, bad-block management, and power-fail-safe LittleFS block device.
-- Runnable board entry point, USB reset/cancel handling, and hardware validation.
+- MTP transaction state machine, USB reset/cancel handling, and hardware validation.
 
 Do not connect this prototype to valuable NAND contents until the NAND driver,
 LittleFS backend, and host-side interoperability tests are complete.
