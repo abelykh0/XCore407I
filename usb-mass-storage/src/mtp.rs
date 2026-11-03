@@ -179,6 +179,21 @@ pub struct MtpObject {
 impl MtpObject {
     pub const EMPTY: Self = Self { handle: 0, name: [0; 64], name_len: 0, size: 0, is_dir: false };
     fn name(&self) -> &str { core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("") }
+
+    fn format_code(&self) -> u16 {
+        if self.is_dir {
+            return 0x3001; // Association
+        }
+        let name = self.name();
+        if [".txt", ".text", ".log", ".csv", ".html", ".htm", ".xml"]
+            .iter()
+            .any(|ext| name.to_ascii_lowercase().ends_with(ext))
+        {
+            0x3004 // Text
+        } else {
+            0x3000 // Undefined / application-specific binary
+        }
+    }
 }
 
 /// Convert UTF-16 filename code units from a PTP string into bounded UTF-8.
@@ -816,7 +831,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let mut data = [0u8; 192];
         let mut pos = 0;
         Self::append_u32(&mut data, &mut pos, PLACEHOLDER_STORAGE_ID);
-        Self::append_u16(&mut data, &mut pos, if object.is_dir { 0x3001 } else { 0x3000 });
+        Self::append_u16(&mut data, &mut pos, object.format_code());
         Self::append_u16(&mut data, &mut pos, 0); // Read/write
         Self::append_u32(&mut data, &mut pos, object.size);
         Self::append_u16(&mut data, &mut pos, 0);
@@ -838,7 +853,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn object_props_supported(&mut self, transaction_id: u32, format: u32) {
-        if format != 0 && format != 0x3000 && format != 0x3001 {
+        if format != 0 && format != 0x3000 && format != 0x3001 && format != 0x3004 {
             self.queue_response(response::OK, transaction_id);
             return;
         }
@@ -942,7 +957,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.queue_data(operation::GET_OBJECT_PROP_VALUE, transaction_id, &data[..pos], response::OK);
     }
 
-    fn object_prop_list(&mut self, transaction_id: u32, handle: u32) {
+    fn object_prop_list(
+        &mut self,
+        transaction_id: u32,
+        handle: u32,
+        format: u32,
+        property: u32,
+        group: u32,
+    ) {
         let selected = if handle == 0 || handle == 0xffff_ffff {
             self.objects[..self.object_count].first().copied()
         } else {
@@ -952,17 +974,46 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
             return;
         };
+
+        // Respect the ObjectFormatCode and ObjectProperty filters. In
+        // particular, Windows asks for ObjectFormat (DC02) alone while
+        // discovering each handle; returning all seven properties for that
+        // request is not a valid ObjectPropList response.
+        if format != 0 && format as u16 != object.format_code() {
+            self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
+            return;
+        }
+        if group != 0 {
+            self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
+            return;
+        }
+
+        let properties: [u16; 7] = [0xdc01, 0xdc02, 0xdc03, 0xdc04, 0xdc07, 0xdc09, 0xdc0b];
+        if property != 0 && !properties.contains(&(property as u16)) {
+            self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
+            return;
+        }
+
         let mut data = [0u8; 256];
         let mut pos = 0;
-        Self::append_u32(&mut data, &mut pos, 7);
+        let count = if property == 0 { 7 } else { 1 };
+        Self::append_u32(&mut data, &mut pos, count);
         let h = object.handle;
-        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc01, PLACEHOLDER_STORAGE_ID);
-        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, if object.is_dir { 0x3001 } else { 0x3000 });
-        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 0);
-        Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, object.size as u64);
-        Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
-        Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
-        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0xffff_ffff);
+        for code in properties.iter().copied() {
+            if property != 0 && property as u16 != code {
+                continue;
+            }
+            match code {
+                0xdc01 => Self::append_prop_u32(&mut data, &mut pos, h, code, PLACEHOLDER_STORAGE_ID),
+                0xdc02 => Self::append_prop_u16(&mut data, &mut pos, h, code, object.format_code()),
+                0xdc03 => Self::append_prop_u16(&mut data, &mut pos, h, code, 0),
+                0xdc04 => Self::append_prop_u64(&mut data, &mut pos, h, code, object.size as u64),
+                0xdc07 => Self::append_prop_string(&mut data, &mut pos, h, code, object.name()),
+                0xdc09 => Self::append_prop_string(&mut data, &mut pos, h, code, "20261102T000000"),
+                0xdc0b => Self::append_prop_u32(&mut data, &mut pos, h, code, 0xffff_ffff),
+                _ => unreachable!(),
+            }
+        }
         self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &data[..pos], response::OK);
     }
 
@@ -1102,8 +1153,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 diagnostics::GET_OBJECT_PROP_LIST_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                } else if let Some(handle) = parameter(0) {
-                    self.object_prop_list(header.transaction_id, handle);
+                } else if params.len() == 20 {
+                    if let (Some(handle), Some(format), Some(property), Some(group), Some(_depth)) =
+                        (parameter(0), parameter(1), parameter(2), parameter(3), parameter(4))
+                    {
+                        self.object_prop_list(header.transaction_id, handle, format, property, group);
+                    } else {
+                        self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                    }
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
