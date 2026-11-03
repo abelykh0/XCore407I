@@ -36,7 +36,7 @@ pub const LOGICAL_BLOCKS: usize = PHYSICAL_BLOCKS as usize - RESERVED_BLOCKS;
 
 /// Keep the 2 KiB logical-to-physical map in static RAM, not on the
 /// small startup stack while LittleFS is being mounted/formatted.
-static mut PHYSICAL_BLOCKS: [u16; LOGICAL_BLOCKS] = [0; LOGICAL_BLOCKS];
+static mut PHYSICAL_BLOCK_MAP: [u16; LOGICAL_BLOCKS] = [0; LOGICAL_BLOCKS];
 
 pub struct NandStorage {
     physical_blocks: &'static mut [u16; LOGICAL_BLOCKS],
@@ -157,7 +157,7 @@ impl NandStorage {
         // the call stack: this routine runs alongside the USB polling ISR.
         // Only one NandStorage instance is created for this firmware lifetime.
         let physical_blocks = unsafe {
-            &mut *core::ptr::addr_of_mut!(PHYSICAL_BLOCKS)
+            &mut *core::ptr::addr_of_mut!(PHYSICAL_BLOCK_MAP)
         };
         physical_blocks.fill(0);
         let mut storage = Self {
