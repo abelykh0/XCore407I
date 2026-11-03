@@ -107,7 +107,13 @@ pub mod diagnostics {
     pub fn write_status(out: &mut [u8]) -> usize {
         use core::sync::atomic::Ordering;
         let mut pos = 0;
-        append(out, &mut pos, b"XCore407I MTP diagnostics\r\n");
+        append(out, &mut pos, b"XCore407I MTP read diagnostics\r\n");
+        append_counter(out, &mut pos, b"GOR=", GET_OBJECT_REQUESTS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GSize=", GET_OBJECT_LAST_SIZE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GRD=", GET_OBJECT_BYTES_READ.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GCH=", GET_OBJECT_CHUNKS_QUEUED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GER=", GET_OBJECT_READ_ERRORS.load(Ordering::Relaxed));
+        append(out, &mut pos, b"----\r\n");
         append_counter(out, &mut pos, b"OUT=", OUT_PACKETS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"BAD=", OUT_INVALID.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"CMD=", COMMANDS_ACCEPTED.load(Ordering::Relaxed));
@@ -157,11 +163,6 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"GOPLP=", GET_OBJECT_PROP_LIST_LAST_PROPERTY.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOPC=", SET_OBJECT_PROP_VALUE_COMMANDS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOPD=", SET_OBJECT_PROP_VALUE_DATA.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"GOR=", GET_OBJECT_REQUESTS.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"GSize=", GET_OBJECT_LAST_SIZE.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"GRD=", GET_OBJECT_BYTES_READ.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"GCH=", GET_OBJECT_CHUNKS_QUEUED.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"GER=", GET_OBJECT_READ_ERRORS.load(Ordering::Relaxed));
         pos
     }
 }
