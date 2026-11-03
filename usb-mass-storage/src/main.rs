@@ -119,7 +119,7 @@ fn main() -> ! {
 
         // Publish the diagnostic text and root snapshot atomically relative
         // to TIM2. Handles are 1..N and refer to this snapshot.
-        unsafe { NVIC::mask(Interrupt::TIM2); }
+        NVIC::mask(Interrupt::TIM2);
         let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
         let _ = mtp.set_readme(&report[..report_len]);
         mtp.set_objects(&objects[..object_count]);
