@@ -993,18 +993,21 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         }
 
         let properties: [u16; 7] = [0xdc01, 0xdc02, 0xdc03, 0xdc04, 0xdc07, 0xdc09, 0xdc0b];
-        if property != 0 && !properties.contains(&(property as u16)) {
+        // PTP/MTP uses 0xFFFFFFFF to request every property. Some hosts use
+        // zero for the same unfiltered request; accept both forms.
+        let all_properties = property == 0 || property == 0xffff_ffff;
+        if !all_properties && !properties.contains(&(property as u16)) {
             self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
             return;
         }
 
         let mut data = [0u8; 256];
         let mut pos = 0;
-        let count = if property == 0 { 7 } else { 1 };
+        let count = if all_properties { properties.len() as u32 } else { 1 };
         Self::append_u32(&mut data, &mut pos, count);
         let h = object.handle;
         for code in properties.iter().copied() {
-            if property != 0 && property as u16 != code {
+            if !all_properties && property as u16 != code {
                 continue;
             }
             match code {
