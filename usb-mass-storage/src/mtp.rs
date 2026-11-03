@@ -1018,7 +1018,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 0xdc03 => Self::append_prop_u16(&mut data, &mut pos, h, code, 0),
                 0xdc04 => Self::append_prop_u64(&mut data, &mut pos, h, code, object.size as u64),
                 0xdc07 => Self::append_prop_string(&mut data, &mut pos, h, code, object.name()),
-                0xdc09 => Self::append_prop_string(&mut data, &mut pos, h, code, "20261102T000000"),
+                0xdc09 => Self::append_prop_string(&mut data, &mut pos, h, code, ""), // Match the unspecified ObjectInfo date
                 0xdc0b => Self::append_prop_u32(&mut data, &mut pos, h, code, 0), // Root-level object
                 _ => unreachable!(),
             }
