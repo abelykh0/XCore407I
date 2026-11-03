@@ -110,6 +110,11 @@ fn main() -> ! {
         // data. These writes happen in main context, never in TIM2.
         seed_test_files(fs)?;
 
+        // Verify the storage read path independently of USB/MTP. This file is
+        // refreshed on each boot and is visible in the root directory.
+        let read_test = test_hello_readback(fs);
+        fs.write(path!("/MTP-READ-TEST.txt"), read_test)?;
+
         // Build a bounded snapshot of the LittleFS root directory in main
         // context. Directory entries are copied out; no LittleFS object is
         // accessed by the USB polling interrupt.
@@ -205,6 +210,38 @@ This file is stored in NAND using LittleFS and read over USB MTP.\r\n",
         fs.write(path!("/EMPTY.TXT"), &[])?;
     }
     Ok(())
+}
+
+/// Read HELLO.txt directly from LittleFS and return a short persistent
+/// diagnostic. This separates NAND/LittleFS read failures from USB transport.
+fn test_hello_readback(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+) -> &'static [u8] {
+    const EXPECTED: &[u8] = b"Hello from XCore407I!\\r\\n\\
+This file is stored in NAND using LittleFS and read over USB MTP.\\r\\n";
+    let mut actual = [0u8; 128];
+    let mut total = 0usize;
+    let result = fs.open_file_and_then(path!("/HELLO.txt"), |file| {
+        while total < EXPECTED.len() {
+            let count = file.read(&mut actual[total..EXPECTED.len()])?;
+            if count == 0 {
+                break;
+            }
+            total += count;
+        }
+        Ok(())
+    });
+
+    if result.is_err() {
+        return b"LittleFS readback: ERROR opening/reading HELLO.txt\\r\\n";
+    }
+    if total != EXPECTED.len() {
+        return b"LittleFS readback: SHORT READ from HELLO.txt\\r\\n";
+    }
+    if &actual[..total] != EXPECTED {
+        return b"LittleFS readback: DATA MISMATCH in HELLO.txt\\r\\n";
+    }
+    b"LittleFS readback: PASS (HELLO.txt, 90 bytes)\\r\\n"
 }
 
 /// Stream one root-level LittleFS file to the host. Each MTP data container is
