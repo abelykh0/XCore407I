@@ -113,7 +113,11 @@ fn main() -> ! {
         // Verify the storage read path independently of USB/MTP. This file is
         // refreshed on each boot and is visible in the root directory.
         let read_test = test_hello_readback(fs);
-        fs.write(path!("/MTP-READ-TEST.txt"), read_test)?;
+        if read_test.starts_with(b"LittleFS readback: PASS") {
+            fs.write(path!("/MTP-DIAG-PASS.txt"), read_test)?;
+        } else {
+            fs.write(path!("/MTP-DIAG-FAIL.txt"), read_test)?;
+        }
 
         // Build a bounded snapshot of the LittleFS root directory in main
         // context. Directory entries are copied out; no LittleFS object is
