@@ -395,7 +395,7 @@ fn gpio_control_bus_test() {
         write_volatile(bsrr, MASK);
         cortex_m::asm::delay(100);
         let read_ce_high = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
-        write_volatile(bsrr, MASK & !CE);
+        write_volatile(bsrr, (MASK & !CE) | (CE << 16));
         cortex_m::asm::delay(100);
         let read_ce_low = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
 
