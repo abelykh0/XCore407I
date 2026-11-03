@@ -398,6 +398,10 @@ fn gpio_control_bus_test() {
         write_volatile(bsrr, (MASK & !CE) | (CE << 16));
         cortex_m::asm::delay(100);
         let read_ce_low = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
+        let pd7_mode = (read_volatile((GPIOD + 0x00) as *const u32) >> 14) & 0b11;
+        let pd7_type = (read_volatile((GPIOD + 0x04) as *const u32) >> 7) & 1;
+        let pd7_odr = (read_volatile((GPIOD + 0x14) as *const u32) >> 7) & 1;
+        let pd7_idr = (read_ce_low >> 7) & 1;
 
         // Restore AF12. The AF selection was configured by configure_board_pins().
         let moder = (GPIOD + 0x00) as *mut u32;
@@ -431,6 +435,13 @@ fn gpio_control_bus_test() {
         ce_line[11] = if read_ce_high & CE != 0 { b'1' } else { b'0' };
         ce_line[16] = if read_ce_low & CE == 0 { b'1' } else { b'0' };
         show_usb_status(&ce_line);
+        let mut pd7_line = *b"PD7 MOD:00 OT:0 ODR:0 IDR:0";
+        pd7_line[8] = b'0' + ((pd7_mode >> 1) as u8);
+        pd7_line[9] = b'0' + ((pd7_mode & 1) as u8);
+        pd7_line[14] = b'0' + (pd7_type as u8);
+        pd7_line[20] = b'0' + (pd7_odr as u8);
+        pd7_line[26] = b'0' + (pd7_idr as u8);
+        show_usb_status(&pd7_line);
         if a_ok && b_ok && ce_ok {
             show_usb_status(b"GPIO CTRL BUS: OK");
         } else {
