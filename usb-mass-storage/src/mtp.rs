@@ -187,7 +187,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     bulk_out: EndpointOut<'a, B>,
     bulk_in: EndpointIn<'a, B>,
     event_in: EndpointIn<'a, B>,
-    tx: [u8; 256],
+    tx: [u8; 512],
     tx_len: usize,
     tx_pending: bool,
     tx_in_flight: bool,
