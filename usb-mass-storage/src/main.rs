@@ -329,6 +329,7 @@ fn service_send_object_info(
     pending_upload: &mut Option<(UploadObjectInfo, u32)>,
 ) {
     if info.size > 500 || object_count >= objects.len() || pending_upload.is_some() {
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_PREFLIGHT_REJECT.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::STORE_FULL,
             transaction_id,
@@ -338,6 +339,7 @@ fn service_send_object_info(
 
     let name = core::str::from_utf8(&info.name[..info.name_len as usize]).unwrap_or("");
     let Ok(relative_path) = PathBuf::try_from(name) else {
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_PATH_REJECT.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::INVALID_PARAMETER,
             transaction_id,
@@ -356,6 +358,7 @@ fn service_send_object_info(
         || name_conflicts
         || fs.exists(&final_path)
     {
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_NAME_REJECT.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
             transaction_id,
@@ -367,6 +370,7 @@ fn service_send_object_info(
     // Never delete an unrecognized file at the reserved temporary path.
     // An interrupted upload is cleaned up by the main-loop abort handler.
     if fs.exists(&temp_path) {
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_TEMP_EXISTS.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
             transaction_id,
