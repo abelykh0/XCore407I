@@ -282,9 +282,6 @@ This file is stored in NAND using LittleFS and read over USB MTP.\r\n",
     if !fs.exists(path!("/PATTERN.BIN")) {
         fs.write(path!("/PATTERN.BIN"), &TEST_PATTERN)?;
     }
-    if !fs.exists(path!("/EMPTY.TXT")) {
-        fs.write(path!("/EMPTY.TXT"), &[])?;
-    }
     Ok(())
 }
 
