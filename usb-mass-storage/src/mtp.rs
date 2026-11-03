@@ -524,7 +524,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
         Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
 
-        let operations: [u16; 14] = [
+        let operations: [u16; 12] = [
             operation::GET_DEVICE_INFO,
             operation::OPEN_SESSION,
             operation::CLOSE_SESSION,
@@ -535,8 +535,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_OBJECT_INFO,
             operation::GET_OBJECT,
             operation::DELETE_OBJECT,
-            operation::SEND_OBJECT_INFO,
-            operation::SEND_OBJECT,
             operation::GET_OBJECT_PROPS_SUPPORTED,
             operation::GET_OBJECT_PROP_LIST,
         ];
