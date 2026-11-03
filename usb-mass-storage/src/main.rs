@@ -67,7 +67,7 @@ static mut GET_OBJECT_STAGING: [u8; 4084] = [0; 4084];
 
 // Persistent MTP trace snapshots are appended in main context. The file is
 // added to the MTP object snapshot on the next boot, after the test run.
-static mut MTP_TRACE_BUFFER: [u8; 1792] = [0; 1792];
+static mut MTP_TRACE_BUFFER: [u8; 512] = [0; 512];
 
 
 #[entry]
@@ -364,7 +364,7 @@ fn persist_get_object_trace(
     buffer[pos..pos + 2].copy_from_slice(b"\r\n");
     pos += 2;
 
-    let status_len = diagnostics::write_status(&mut buffer[pos..]);
+    let status_len = diagnostics::write_trace_status(&mut buffer[pos..]);
     pos += status_len;
     let end = b"=== END TRACE ===\r\n";
     if pos + end.len() <= buffer.len() {
