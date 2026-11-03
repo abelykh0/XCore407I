@@ -1090,7 +1090,7 @@ fn wait_and_queue_object_chunk(
     loop {
         NVIC::mask(Interrupt::TIM2);
         let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
-        if mtp.object_tx_ready() {
+        if mtp.object_data_queue_ready() {
             let queued = mtp.queue_object_data_chunk(
                 transaction_id,
                 total_size,
