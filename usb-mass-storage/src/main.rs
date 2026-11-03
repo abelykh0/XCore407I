@@ -68,7 +68,7 @@ fn main() -> ! {
         StringDescriptors::new(LangID::EN_US)
             .manufacturer("XCore407I")
             .product("XCore407I NAND")
-            .serial_number("XCORE407I-001"),
+            .serial_number("XCORE407I-002"),
     ];
     let usb_ptr = unsafe { (*ptr::addr_of_mut!(USB_DEVICE)).as_mut_ptr() };
     unsafe {
