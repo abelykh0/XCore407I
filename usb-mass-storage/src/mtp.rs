@@ -686,6 +686,12 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                         self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
                     } else if self.pending_get_object.is_some() {
                         self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                    } else if self.object(handle).map(|object| object.name()) == Some("MTP-README.txt") {
+                        // Keep one known-good, in-memory object on the original
+                        // command/response path. This isolates USB MTP transport
+                        // from the deferred LittleFS read path.
+                        let payload = self.readme[..self.readme_len].to_vec();
+                        self.queue_data(operation::GET_OBJECT, header.transaction_id, &payload, response::OK);
                     } else {
                         self.pending_get_object = Some((handle, header.transaction_id));
                     }
