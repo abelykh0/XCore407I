@@ -63,7 +63,7 @@ static mut MTP: MaybeUninit<BoardMtpClass> = MaybeUninit::uninit();
 static mut OBJECTS: [MtpObject; MTP_OBJECT_CAPACITY] = [MtpObject::EMPTY; MTP_OBJECT_CAPACITY];
 static mut UPLOAD_STAGING: [u8; nand_fs::PAGE_SIZE] = [0; nand_fs::PAGE_SIZE];
 // GET_OBJECT staging fills the 4 KiB MTP transport buffer in one batch.
-static mut GET_OBJECT_STAGING: [u8; 4084] = [0; 4084];
+static mut GET_OBJECT_STAGING: [u8; 4096] = [0; 4096];
 
 // Persistent MTP trace snapshots are appended in main context. The file is
 // added to the MTP object snapshot on the next boot, after the test run.
@@ -1135,8 +1135,11 @@ fn service_get_object(
         // buffer is in static SRAM, avoiding a large main-stack allocation.
         let buffer = unsafe { &mut *ptr::addr_of_mut!(GET_OBJECT_STAGING) };
         loop {
-            // Keep every non-final USB packet full. The first batch reserves
-            // 12 bytes in the MTP transport buffer for the container header.
+            // Keep every non-final USB transfer packet-aligned. The first
+            // batch includes the 12-byte MTP header, so it carries 4084 bytes
+            // of file data; later batches use the full 4096-byte buffer.
+            // This avoids a short USB packet at an intermediate batch boundary,
+            // which would make the host treat the MTP data phase as complete.
             let payload_limit = if first {
                 buffer.len() - xcore407i_usb_mtp::mtp::CONTAINER_HEADER_LEN
             } else {
