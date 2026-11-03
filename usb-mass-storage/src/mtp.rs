@@ -187,7 +187,11 @@ impl MtpObject {
         let name = self.name();
         if [".txt", ".text", ".log", ".csv", ".html", ".htm", ".xml"]
             .iter()
-            .any(|ext| name.to_ascii_lowercase().ends_with(ext))
+            .any(|ext| {
+                name.get(name.len().saturating_sub(ext.len())..)
+                    .map(|suffix| suffix.eq_ignore_ascii_case(ext))
+                    .unwrap_or(false)
+            })
         {
             0x3004 // Text
         } else {
