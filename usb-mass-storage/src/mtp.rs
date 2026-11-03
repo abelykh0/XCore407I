@@ -252,8 +252,12 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn queue_response(&mut self, code: u16, transaction_id: u32) {
+        self.queue_response_with_params(code, transaction_id, &[]);
+    }
+
+    fn queue_response_with_params(&mut self, code: u16, transaction_id: u32, params: &[u32]) {
         let mut response_bytes = [0u8; 32];
-        if let Ok(length) = encode_response(transaction_id, code, &[], &mut response_bytes) {
+        if let Ok(length) = encode_response(transaction_id, code, params, &mut response_bytes) {
             let _ = self.bulk_in.write(&response_bytes[..length]);
         }
         self.pending_response = None;
@@ -303,7 +307,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         // Read-only, zero-capacity placeholder; NAND/LittleFS is not mounted.
         let mut data = [0u8; 96];
         let mut pos = 0;
-        Self::append_u16(&mut data, &mut pos, 0x0003); // Fixed ROM
+        Self::append_u16(&mut data, &mut pos, 0x0004); // Fixed RAM
         Self::append_u16(&mut data, &mut pos, 0x0002); // Hierarchical filesystem
         Self::append_u16(&mut data, &mut pos, 0x0001); // Read-only
         Self::append_u64(&mut data, &mut pos, 0);
@@ -381,8 +385,12 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     && parameter(0) != Some(0xffff_ffff)
                 {
                     self.queue_response(response::INVALID_STORAGE_ID, header.transaction_id);
+                } else if header.code == operation::GET_NUM_OBJECTS {
+                    // GetNumObjects returns the count as a response parameter.
+                    self.queue_response_with_params(response::OK, header.transaction_id, &[0]);
                 } else {
-                    let empty = [0u8; 4]; // uint32 object count = 0
+                    // GetObjectHandles returns a data container with a uint32 count.
+                    let empty = [0u8; 4];
                     self.queue_data(header.code, header.transaction_id, &empty, response::OK);
                 }
             }
