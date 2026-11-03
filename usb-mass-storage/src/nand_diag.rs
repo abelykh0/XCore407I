@@ -1,7 +1,9 @@
-//! Non-destructive K9F1G08U0E factory-marker scan for the MTP README.
+//! Destructive full-media test for the XCore407I Samsung K9F1G08U0E NAND.
 //!
-//! This reports the NAND ID and counts factory-marked bad blocks. It does not
-//! erase/program NAND and does not perform ECC correction or data validation.
+//! Factory-marked bad blocks are never erased or programmed, preserving their
+//! markers. Every factory-good block is erased, checked page-by-page, then all
+//! 64 pages are programmed with a deterministic data pattern and read-verified.
+//! FSMC ECC is deliberately disabled: this qualifies raw NAND I/O only.
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -15,11 +17,14 @@ const DATA: *mut u8 = NAND_BASE as *mut u8;
 const TIMEOUT: u32 = 20_000_000;
 
 const PAGE_BYTES: usize = 2048;
+const SPARE_BYTES: usize = 64;
 const PAGES_PER_BLOCK: u32 = 64;
 const BLOCKS: u32 = 1024;
+const PAGE_COUNT: u32 = PAGES_PER_BLOCK * BLOCKS;
 
 fn command(value: u8) { unsafe { write_volatile(CMD, value) } }
 fn address(value: u8) { unsafe { write_volatile(ADDR, value) } }
+fn data_write(value: u8) { unsafe { write_volatile(DATA, value) } }
 fn data_read() -> u8 { unsafe { read_volatile(DATA) } }
 
 fn wait_ready_status() -> bool {
@@ -45,15 +50,98 @@ fn wait_ready_rb() -> bool {
     false
 }
 
-fn read_page_byte(page: u32, column: u16) -> Option<u8> {
+fn read_page(page: u32, out: &mut [u8; PAGE_BYTES]) -> bool {
     command(0x00);
-    address(column as u8);
-    address((column >> 8) as u8);
+    address(0);
+    address(0);
+    address(page as u8);
+    address((page >> 8) as u8);
+    command(0x30);
+    if !wait_ready_rb() { return false; }
+    for byte in out.iter_mut() { *byte = data_read(); }
+    true
+}
+
+fn read_marker(page: u32) -> Option<u8> {
+    command(0x00);
+    address(PAGE_BYTES as u8);
+    address((PAGE_BYTES >> 8) as u8);
     address(page as u8);
     address((page >> 8) as u8);
     command(0x30);
     if !wait_ready_rb() { return None; }
     Some(data_read())
+}
+
+fn erase_block(block: u32) -> bool {
+    let page = block * PAGES_PER_BLOCK;
+    command(0x60);
+    address(page as u8);
+    address((page >> 8) as u8);
+    command(0xD0);
+    if !wait_ready_rb() { return false; }
+    command(0x70);
+    data_read() & 0x01 == 0
+}
+
+fn program_page(page: u32, block: u32, page_in_block: u32) -> bool {
+    command(0x80);
+    address(0);
+    address(0);
+    address(page as u8);
+    address((page >> 8) as u8);
+
+    // tADL >= 100 ns between final address and first data cycle.
+    cortex_m::asm::delay(1_000);
+
+    for i in 0..PAGE_BYTES {
+        data_write(pattern_byte(block, page_in_block, i));
+    }
+
+    command(0x10);
+    if !wait_ready_rb() { return false; }
+    command(0x70);
+    data_read() & 0x01 == 0
+}
+
+#[inline]
+fn pattern_byte(block: u32, page: u32, offset: usize) -> u8 {
+    (block as u8)
+        .wrapping_mul(29)
+        .wrapping_add((page as u8).wrapping_mul(71))
+        .wrapping_add((offset as u8).wrapping_mul(37))
+        ^ ((offset >> 8) as u8).rotate_left((page & 7) as u32)
+        ^ 0xA5
+}
+
+fn verify_erased(block: u32, page_buf: &mut [u8; PAGE_BYTES]) -> Result<(), (u32, u8)> {
+    for p in 0..PAGES_PER_BLOCK {
+        if !read_page(block * PAGES_PER_BLOCK + p, page_buf) {
+            return Err((p, 0xFE)); // read timeout
+        }
+        if let Some(offset) = page_buf.iter().position(|&v| v != 0xFF) {
+            return Err((p, offset as u8));
+        }
+    }
+    Ok(())
+}
+
+fn verify_programmed(
+    block: u32,
+    page: u32,
+    page_buf: &mut [u8; PAGE_BYTES],
+) -> Result<(), (u32, u16, u8, u8)> {
+    let absolute_page = block * PAGES_PER_BLOCK + page;
+    if !read_page(absolute_page, page_buf) {
+        return Err((page, 0xFFFF, 0x00, 0xFE));
+    }
+    for (offset, actual) in page_buf.iter().copied().enumerate() {
+        let expected = pattern_byte(block, page, offset);
+        if actual != expected {
+            return Err((page, offset as u16, expected, actual));
+        }
+    }
+    Ok(())
 }
 
 fn configure_fsmc() {
@@ -65,6 +153,7 @@ fn configure_fsmc() {
         write_volatile(pcr2, 0);
         write_volatile((FSMC_BASE + 0x68) as *mut u32, timing);
         write_volatile((FSMC_BASE + 0x6C) as *mut u32, timing);
+        // NAND bank 2, 8-bit bus, FSMC ECC disabled, NWAIT enabled.
         let control = (1 << 1) | (1 << 2) | (1 << 3) | (2 << 9) | (2 << 13);
         write_volatile(pcr2, control);
         let _ = read_volatile(pcr2);
@@ -77,27 +166,25 @@ fn append(out: &mut [u8; 192], len: &mut usize, bytes: &[u8]) {
     *len += count;
 }
 
-fn append_hex_byte(out: &mut [u8; 192], len: &mut usize, value: u8) {
+fn append_hex(out: &mut [u8; 192], len: &mut usize, value: u32, digits: usize) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    append(out, len, &[HEX[(value >> 4) as usize], HEX[(value & 0x0F) as usize]]);
+    for shift in (0..digits).rev() {
+        let nibble = ((value >> (shift * 4)) & 0xF) as usize;
+        append(out, len, &HEX[nibble..nibble + 1]);
+    }
 }
 
-fn append_hex_u16(out: &mut [u8; 192], len: &mut usize, value: u16) {
-    append_hex_byte(out, len, (value >> 8) as u8);
-    append_hex_byte(out, len, value as u8);
-}
-
-/// Run a read-only NAND identification and factory bad-block scan.
-/// Returns a text report suitable for the MTP README object.
+/// Erases and fully tests every factory-good block. Bad-block marker pages
+/// are inspected first and bad blocks are skipped. The report is served as
+/// README.txt over MTP; USB enumeration starts only after the test completes.
 pub fn create_report() -> ([u8; 192], usize) {
     let mut report = [0u8; 192];
     let mut len = 0;
-    append(&mut report, &mut len, b"XCore407I NAND diagnostic\r\n");
-
+    append(&mut report, &mut len, b"XCore407I NAND destructive test\r\n");
     configure_fsmc();
     command(0xFF);
     if !wait_ready_status() {
-        append(&mut report, &mut len, b"ERROR: NAND reset timeout\r\n");
+        append(&mut report, &mut len, b"ERROR: reset timeout\r\n");
         return (report, len);
     }
 
@@ -106,67 +193,110 @@ pub fn create_report() -> ([u8; 192], usize) {
     let mut id = [0u8; 5];
     for byte in &mut id { *byte = data_read(); }
     append(&mut report, &mut len, b"ID: ");
-    for (index, byte) in id.iter().enumerate() {
-        if index != 0 { append(&mut report, &mut len, b" "); }
-        append_hex_byte(&mut report, &mut len, *byte);
+    for (i, byte) in id.iter().enumerate() {
+        if i != 0 { append(&mut report, &mut len, b" "); }
+        append_hex(&mut report, &mut len, *byte as u32, 2);
     }
     append(&mut report, &mut len, b"\r\n");
-
     if id[0] != 0xEC || id[1] != 0xF1 {
         append(&mut report, &mut len, b"ERROR: unexpected NAND ID\r\n");
         return (report, len);
     }
 
+    // Preserve factory bad-block markers by never erasing a marked block.
     let mut good = 0u16;
     let mut bad = 0u16;
     for block in 0..BLOCKS {
-        let first = block * PAGES_PER_BLOCK;
-        let marker0 = read_page_byte(first, PAGE_BYTES as u16);
-        let marker1 = read_page_byte(first + 1, PAGE_BYTES as u16);
-        match (marker0, marker1) {
-            (Some(a), Some(b)) if a == 0xFF && b == 0xFF => good += 1,
+        let first = read_marker(block * PAGES_PER_BLOCK);
+        let second = read_marker(block * PAGES_PER_BLOCK + 1);
+        match (first, second) {
+            (Some(0xFF), Some(0xFF)) => good += 1,
             (Some(_), Some(_)) => bad += 1,
             _ => {
-                append(&mut report, &mut len, b"ERROR: marker read timeout\r\n");
+                append(&mut report, &mut len, b"ERROR: marker scan timeout\r\n");
                 return (report, len);
             }
         }
     }
+    append(&mut report, &mut len, b"Factory-good: ");
+    append_hex(&mut report, &mut len, good as u32, 4);
+    append(&mut report, &mut len, b" bad: ");
+    append_hex(&mut report, &mut len, bad as u32, 4);
+    append(&mut report, &mut len, b"\r\n");
 
-    append(&mut report, &mut len, b"Factory-good blocks: 0x");
-    append_hex_u16(&mut report, &mut len, good);
-    append(&mut report, &mut len, b" (");
-    // Decimal conversion without formatting or allocation.
-    let mut digits = [0u8; 5];
-    let mut value = good as u32;
-    let mut used = 0;
-    loop {
-        digits[used] = b'0' + (value % 10) as u8;
-        used += 1;
-        value /= 10;
-        if value == 0 { break; }
+    let mut erased = 0u16;
+    let mut programmed = 0u16;
+    let mut failed_block = None;
+    let mut failed_phase = 0u8;
+    let mut failed_page = 0u8;
+    let mut failed_offset = 0u16;
+    let mut expected = 0u8;
+    let mut actual = 0u8;
+    let mut page_buf = [0u8; PAGE_BYTES];
+
+    for block in 0..BLOCKS {
+        let first = match read_marker(block * PAGES_PER_BLOCK) {
+            Some(v) => v,
+            None => { failed_block = Some(block); failed_phase = 1; break; }
+        };
+        let second = match read_marker(block * PAGES_PER_BLOCK + 1) {
+            Some(v) => v,
+            None => { failed_block = Some(block); failed_phase = 1; break; }
+        };
+        if first != 0xFF || second != 0xFF { continue; }
+
+        if !erase_block(block) {
+            failed_block = Some(block); failed_phase = 2; break;
+        }
+        if let Err((page, offset)) = verify_erased(block, &mut page_buf) {
+            failed_block = Some(block); failed_phase = 3;
+            failed_page = page as u8; failed_offset = offset as u16;
+            break;
+        }
+        erased += 1;
+
+        for page in 0..PAGES_PER_BLOCK {
+            if !program_page(block * PAGES_PER_BLOCK + page, block, page) {
+                failed_block = Some(block); failed_phase = 4;
+                failed_page = page as u8; break;
+            }
+            if let Err((bad_page, offset, exp, got)) =
+                verify_programmed(block, page, &mut page_buf)
+            {
+                failed_block = Some(block); failed_phase = 5;
+                failed_page = bad_page as u8; failed_offset = offset;
+                expected = exp; actual = got; break;
+            }
+        }
+        if failed_block.is_some() { break; }
+        programmed += 1;
     }
-    while used != 0 {
-        used -= 1;
-        append(&mut report, &mut len, &digits[used..used + 1]);
+
+    append(&mut report, &mut len, b"Erased+verified blocks: ");
+    append_hex(&mut report, &mut len, erased as u32, 4);
+    append(&mut report, &mut len, b"\r\nProgrammed+verified: ");
+    append_hex(&mut report, &mut len, programmed as u32, 4);
+    append(&mut report, &mut len, b"\r\nPages/block: 64; bytes/page: 2048\r\n");
+    append(&mut report, &mut len, b"ECC: OFF (raw data test)\r\n");
+    if let Some(block) = failed_block {
+        append(&mut report, &mut len, b"FAIL block 0x");
+        append_hex(&mut report, &mut len, block, 3);
+        append(&mut report, &mut len, b" phase ");
+        append_hex(&mut report, &mut len, failed_phase as u32, 1);
+        append(&mut report, &mut len, b" page ");
+        append_hex(&mut report, &mut len, failed_page as u32, 2);
+        append(&mut report, &mut len, b" off ");
+        append_hex(&mut report, &mut len, failed_offset as u32, 4);
+        append(&mut report, &mut len, b" exp ");
+        append_hex(&mut report, &mut len, expected as u32, 2);
+        append(&mut report, &mut len, b" got ");
+        append_hex(&mut report, &mut len, actual as u32, 2);
+        append(&mut report, &mut len, b"\r\n");
+    } else {
+        append(&mut report, &mut len, b"RESULT: ALL GOOD BLOCKS PASSED\r\n");
     }
-    append(&mut report, &mut len, b")\r\nFactory-bad blocks: 0x");
-    append_hex_u16(&mut report, &mut len, bad);
-    append(&mut report, &mut len, b" (");
-    let mut value = bad as u32;
-    let mut used = 0;
-    loop {
-        digits[used] = b'0' + (value % 10) as u8;
-        used += 1;
-        value /= 10;
-        if value == 0 { break; }
-    }
-    while used != 0 {
-        used -= 1;
-        append(&mut report, &mut len, &digits[used..used + 1]);
-    }
-    append(&mut report, &mut len, b")\r\n");
-    append(&mut report, &mut len, b"ECC: not applied; raw marker scan only.\r\n");
-    append(&mut report, &mut len, b"Erase/program: none.\r\n");
+    append(&mut report, &mut len, b"Factory-bad blocks were skipped.\r\n");
+    let _ = SPARE_BYTES;
+    let _ = PAGE_COUNT;
     (report, len)
 }
