@@ -548,7 +548,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 } else if parameter(0) != Some(DEMO_OBJECT_HANDLE) {
                     self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
                 } else {
-                    self.queue_data(operation::GET_OBJECT, header.transaction_id, &self.readme[..self.readme_len], response::OK);
+                    let mut object = [0u8; 192];
+                    object[..self.readme_len].copy_from_slice(&self.readme[..self.readme_len]);
+                    self.queue_data(operation::GET_OBJECT, header.transaction_id, &object[..self.readme_len], response::OK);
                 }
             }
             _ => self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id),
