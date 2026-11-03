@@ -300,6 +300,16 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         true
     }
 
+    /// Queue a complete small GetObject data container using the same
+    /// single-transfer path as the other MTP data responses.
+    pub fn queue_object_data(&mut self, transaction_id: u32, payload: &[u8]) -> bool {
+        if payload.len() + CONTAINER_HEADER_LEN > self.tx.len() || !self.object_tx_ready() {
+            return false;
+        }
+        self.queue_data(operation::GET_OBJECT, transaction_id, payload, response::OK);
+        true
+    }
+
     /// Queue a response from the main context after a storage-side failure.
     pub fn queue_main_response(&mut self, code: u16, transaction_id: u32) -> bool {
         if !self.object_tx_ready() {
