@@ -267,6 +267,15 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     pending_response: Option<(u16, u32)>,
     pending_get_object: Option<(u32, u32)>,
     pending_delete_object: Option<(u32, u32)>,
+    awaiting_send_object_info: Option<u32>,
+    pending_send_object_info: Option<(u32, UploadObjectInfo)>,
+    upload_info_accepted: bool,
+    upload_expected_size: usize,
+    awaiting_send_object: Option<u32>,
+    pending_upload_data: bool,
+    upload_data_transaction: u32,
+    upload_data_len: usize,
+    upload_data: [u8; 500],
     session_open: bool,
     objects: [MtpObject; 17],
     object_count: usize,
@@ -308,6 +317,15 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             pending_response: None,
             pending_get_object: None,
             pending_delete_object: None,
+            awaiting_send_object_info: None,
+            pending_send_object_info: None,
+            upload_info_accepted: false,
+            upload_expected_size: 0,
+            awaiting_send_object: None,
+            pending_upload_data: false,
+            upload_data_transaction: 0,
+            upload_data_len: 0,
+            upload_data: [0; 500],
             session_open: false,
             objects: [MtpObject::EMPTY; 17],
             object_count: 0,
@@ -344,6 +362,43 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     /// Take a DELETE_OBJECT request for processing by LittleFS in main context.
     pub fn take_delete_object_request(&mut self) -> Option<(u32, u32)> {
         self.pending_delete_object.take()
+    }
+
+    /// Take a validated SendObjectInfo request for main-context filesystem work.
+    pub fn take_send_object_info_request(&mut self) -> Option<(u32, UploadObjectInfo)> {
+        self.pending_send_object_info.take()
+    }
+
+    /// Mark a new destination file as safely created in LittleFS.
+    pub fn accept_upload_info(&mut self, info: UploadObjectInfo) {
+        self.upload_expected_size = info.size as usize;
+        self.upload_info_accepted = true;
+    }
+
+    /// Copy a completed single-packet SendObject payload into main context.
+    pub fn take_upload_data(&mut self, out: &mut [u8; 500]) -> Option<(u32, usize)> {
+        if !self.pending_upload_data { return None; }
+        let len = self.upload_data_len;
+        out[..len].copy_from_slice(&self.upload_data[..len]);
+        self.pending_upload_data = false;
+        Some((self.upload_data_transaction, len))
+    }
+
+    /// Clear upload state after finalization or an error.
+    pub fn finish_upload(&mut self) {
+        self.upload_info_accepted = false;
+        self.upload_expected_size = 0;
+        self.awaiting_send_object = None;
+        self.pending_upload_data = false;
+        self.upload_data_len = 0;
+    }
+
+    /// Queue a response with parameters from the main context.
+    pub fn queue_main_response_with_params(&mut self, code: u16, transaction_id: u32, params: &[u32]) -> bool {
+        if !self.object_tx_ready() { return false; }
+        self.data_transfer_active = false;
+        self.queue_response_with_params(code, transaction_id, params);
+        true
     }
 
     /// True when the previous bulk-IN packet has completed and another chunk
@@ -422,6 +477,13 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.session_open = false;
         self.pending_get_object = None;
         self.pending_delete_object = None;
+        self.awaiting_send_object_info = None;
+        self.pending_send_object_info = None;
+        self.awaiting_send_object = None;
+        self.pending_upload_data = false;
+        self.upload_info_accepted = false;
+        self.upload_expected_size = 0;
+        self.upload_data_len = 0;
         self.pending_response = None;
         self.pending_command_len = 0;
         self.transaction_active = false;
@@ -535,6 +597,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_OBJECT_INFO,
             operation::GET_OBJECT,
             operation::DELETE_OBJECT,
+            operation::SEND_OBJECT_INFO,
+            operation::SEND_OBJECT,
             operation::GET_OBJECT_PROPS_SUPPORTED,
             operation::GET_OBJECT_PROP_LIST,
         ];
@@ -785,6 +849,35 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
             }
+            operation::SEND_OBJECT_INFO => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if params.len() != 12 {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if parameter(0) != Some(PLACEHOLDER_STORAGE_ID)
+                    || (parameter(1) != Some(0) && parameter(1) != Some(0xffff_ffff)) {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if self.awaiting_send_object_info.is_some()
+                    || self.pending_send_object_info.is_some()
+                    || self.upload_info_accepted {
+                    self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                } else {
+                    self.awaiting_send_object_info = Some(header.transaction_id);
+                }
+            }
+            operation::SEND_OBJECT => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if !params.is_empty() {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if !self.upload_info_accepted
+                    || self.awaiting_send_object.is_some()
+                    || self.pending_upload_data {
+                    self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                } else {
+                    self.awaiting_send_object = Some(header.transaction_id);
+                }
+            }
             operation::DELETE_OBJECT => {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
@@ -936,10 +1029,52 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             };
-            if header.kind != ContainerType::Command
-                || header.length < CONTAINER_HEADER_LEN as u32
-                || header.length as usize > length
+            if header.length < CONTAINER_HEADER_LEN as u32
+                || header.length as usize != length
             {
+                diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+            if header.kind == ContainerType::Data {
+                match header.code {
+                    operation::SEND_OBJECT_INFO
+                        if self.awaiting_send_object_info == Some(header.transaction_id) =>
+                    {
+                        match UploadObjectInfo::decode(&packet[CONTAINER_HEADER_LEN..length]) {
+                            Ok(info) => {
+                                self.pending_send_object_info = Some((header.transaction_id, info));
+                                self.awaiting_send_object_info = None;
+                            }
+                            Err(_) => {
+                                self.awaiting_send_object_info = None;
+                                self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                            }
+                        }
+                    }
+                    operation::SEND_OBJECT
+                        if self.awaiting_send_object == Some(header.transaction_id) =>
+                    {
+                        let payload_len = length - CONTAINER_HEADER_LEN;
+                        if payload_len <= self.upload_data.len()
+                            && payload_len == self.upload_expected_size
+                            && !self.pending_upload_data
+                        {
+                            self.upload_data[..payload_len]
+                                .copy_from_slice(&packet[CONTAINER_HEADER_LEN..length]);
+                            self.upload_data_len = payload_len;
+                            self.upload_data_transaction = header.transaction_id;
+                            self.pending_upload_data = true;
+                            self.awaiting_send_object = None;
+                        } else {
+                            self.finish_upload();
+                            self.queue_response(response::INCOMPLETE_TRANSFER, header.transaction_id);
+                        }
+                    }
+                    _ => diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
+                }
+                return;
+            }
+            if header.kind != ContainerType::Command {
                 diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             }
