@@ -854,24 +854,42 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.queue_data(operation::GET_OBJECT_PROPS_SUPPORTED, transaction_id, &data[..18], response::OK);
     }
 
-    fn object_prop_desc(&mut self, transaction_id: u32, property: u32, format: u32) {
-        // ObjectFileName is a writable PTP/MTP STRING property. Windows uses
-        // this descriptor to determine whether the filename can be changed.
-        if property != 0xdc07 || (format != 0 && format != 0x3000 && format != 0x3001) {
-            self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
-            return;
+    fn object_prop_desc(&mut self, transaction_id: u32, property: u32, _format: u32) {
+        // Return a descriptor for every property advertised by
+        // GetObjectPropsSupported. Windows queries ObjectFormat first when
+        // enumerating a storage; returning OBJECT_PROP_NOT_SUPPORTED for an
+        // advertised property makes Explorer abandon object enumeration.
+        //
+        // PTP datatype codes: UINT16=0x0004, UINT32=0x0006,
+        // UINT64=0x0008, STRING=0xffff.
+        let datatype = match property {
+            0xdc01 | 0xdc0b => 0x0006, // StorageID / ParentObject: UINT32
+            0xdc02 | 0xdc03 => 0x0004, // ObjectFormat / ProtectionStatus: UINT16
+            0xdc04 => 0x0008,           // ObjectSize: UINT64
+            0xdc07 | 0xdc09 => 0xffff, // ObjectFileName / DateModified: STRING
+            _ => {
+                self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
+                return;
+            }
+        };
+
+        let get_set = if property == 0xdc07 { 1 } else { 0 };
+        let mut data = [0u8; 32];
+        let mut pos = 0;
+        Self::append_u16(&mut data, &mut pos, property as u16);
+        Self::append_u16(&mut data, &mut pos, datatype);
+        data[pos] = get_set;
+        pos += 1;
+
+        // DefaultValue is encoded using the property's declared datatype.
+        match datatype {
+            0x0004 => Self::append_u16(&mut data, &mut pos, 0),
+            0x0006 => Self::append_u32(&mut data, &mut pos, 0),
+            0x0008 => Self::append_u64(&mut data, &mut pos, 0),
+            0xffff => Self::append_ptp_string(&mut data, &mut pos, ""),
+            _ => unreachable!(),
         }
 
-        let mut data = [0u8; 16];
-        let mut pos = 0;
-        Self::append_u16(&mut data, &mut pos, 0xdc07); // ObjectFileName
-        Self::append_u16(&mut data, &mut pos, 0xffff); // STRING
-        data[pos] = 1; // GetSet: writable
-        pos += 1;
-        // PTP STRING encoding: one UTF-16 code unit (the terminating NUL).
-        data[pos] = 1;
-        pos += 1;
-        Self::append_u16(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0); // GroupCode
         data[pos] = 0; // FormFlag: none
         pos += 1;
