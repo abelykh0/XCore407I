@@ -177,9 +177,8 @@ fn program_page(page: u32) -> Result<ProgramTrace, Error> {
         first: 0,
         last: 0,
     };
-    // Keep ECC disabled for this test. This isolates the raw FSMC NAND
-    // write path from the ECC datapath while preserving the exact data stream.
-    // Program only 16 bytes for this isolation test. NAND supports a
+    // Keep ECC disabled for this raw NAND write test. Program only 16 bytes;
+    // NAND supports a
     // partial-page program; the page is erased immediately before this test.
     for i in 0..16 {
         let value = (i as u8).wrapping_mul(37) ^ ((i >> 3) as u8) ^ 0xA5;
@@ -199,7 +198,7 @@ fn program_page(page: u32) -> Result<ProgramTrace, Error> {
         let ready = unsafe { read_volatile(GPIOD_IDR) } & NAND_RB_MASK != 0;
         if !ready {
             saw_busy = true;
-        } else if trace.saw_busy {
+        } else if saw_busy {
             became_ready = true;
             break;
         }
