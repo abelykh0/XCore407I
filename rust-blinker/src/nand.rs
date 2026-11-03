@@ -428,8 +428,8 @@ fn gpio_control_bus_test() {
         let a_ok = read_a == pattern_a;
         let b_ok = read_b == pattern_b;
         let mut ce_line = *b"CTRL CE HI:0 LO:0";
-        ce_line[12] = if read_ce_high & CE != 0 { b'1' } else { b'0' };
-        ce_line[17] = if read_ce_low & CE == 0 { b'1' } else { b'0' };
+        ce_line[11] = if read_ce_high & CE != 0 { b'1' } else { b'0' };
+        ce_line[16] = if read_ce_low & CE == 0 { b'1' } else { b'0' };
         show_usb_status(&ce_line);
         if a_ok && b_ok && ce_ok {
             show_usb_status(b"GPIO CTRL BUS: OK");
