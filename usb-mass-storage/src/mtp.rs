@@ -197,6 +197,8 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     session_open: bool,
     objects: [MtpObject; 16],
     object_count: usize,
+    capacity_bytes: u64,
+    free_bytes: u64,
 }
 
 impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
@@ -229,6 +231,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             session_open: false,
             objects: [MtpObject::EMPTY; 16],
             object_count: 0,
+            capacity_bytes: 0,
+            free_bytes: 0,
         }
     }
 
@@ -245,6 +249,11 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.objects = [MtpObject::EMPTY; 16];
         self.object_count = objects.len().min(self.objects.len());
         self.objects[..self.object_count].copy_from_slice(&objects[..self.object_count]);
+    }
+
+    pub fn set_storage_stats(&mut self, capacity_bytes: u64, free_bytes: u64) {
+        self.capacity_bytes = capacity_bytes;
+        self.free_bytes = free_bytes.min(capacity_bytes);
     }
 
     fn object(&self, handle: u32) -> Option<&MtpObject> {
@@ -386,8 +395,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u16(&mut data, &mut pos, 0x0001); // Fixed ROM
         Self::append_u16(&mut data, &mut pos, 0x0002); // Hierarchical filesystem
         Self::append_u16(&mut data, &mut pos, 0x0001); // Read-only
-        Self::append_u64(&mut data, &mut pos, 64 * 1024);
-        Self::append_u64(&mut data, &mut pos, 0);
+        Self::append_u64(&mut data, &mut pos, self.capacity_bytes);
+        Self::append_u64(&mut data, &mut pos, self.free_bytes);
         Self::append_u32(&mut data, &mut pos, 0);
         Self::append_ptp_string(&mut data, &mut pos, "Data");
         Self::append_ptp_string(&mut data, &mut pos, "XCORE407I");
