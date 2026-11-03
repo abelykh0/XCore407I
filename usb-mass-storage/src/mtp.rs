@@ -706,7 +706,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response_with_params(response::OK, header.transaction_id, &[self.object_count as u32]);
                 } else {
                     // One embedded test object at the storage root.
-                    let mut handles = [0u8; 4 + 16 * 4];
+                    let mut handles = [0u8; 4 + 17 * 4];
                     handles[..4].copy_from_slice(&(self.object_count as u32).to_le_bytes());
                     for (i, object) in self.objects[..self.object_count].iter().enumerate() {
                         let at = 4 + i * 4;
@@ -762,10 +762,13 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                         let mut payload = [0u8; 384];
                         let payload_len = diagnostics::write_status(&mut payload);
                         payload[payload_len..].fill(b' ');
+                        // ObjectInfo advertises exactly 384 bytes. Send the
+                        // complete object, including padding, so the MTP data
+                        // container length agrees with the advertised size.
                         self.queue_data(
                             operation::GET_OBJECT,
                             header.transaction_id,
-                            &payload[..payload_len],
+                            &payload,
                             response::OK,
                         );
                     } else if self.object(handle).map(|object| object.name()) == Some("MTP-README.txt") {
