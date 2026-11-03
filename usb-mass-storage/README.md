@@ -44,11 +44,10 @@ Implemented:
 Bring-up firmware now exists (`src/main.rs`). It initializes the 168 MHz clock, configures the USB3300 ULPI pins, constructs the OTG_HS bus and MTP interface, and polls `usb-device`. It handles the initial MTP identity/session exchange and exposes a read-only `Data` store containing an embedded `README.txt` test object. This is protocol bring-up only; it does not mount LittleFS or access NAND.
 
 Not yet implemented:
-- Complete MTP transaction state machine, data-phase recovery, and Windows interoperability.
 - LittleFS-backed object metadata and object-handle/path database.
 - LittleFS-backed implementation of `MtpStorage`.
 - NAND ECC, bad-block management, and power-fail-safe LittleFS block device.
-- MTP transaction state machine, USB reset/cancel handling, and hardware validation.
+- Data-phase recovery, USB reset/cancel handling, and hardware validation.
 
 Do not connect this prototype to valuable NAND contents until the NAND driver,
 LittleFS backend, and host-side interoperability tests are complete.
