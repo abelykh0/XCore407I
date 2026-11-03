@@ -78,6 +78,10 @@ pub mod diagnostics {
     pub static GET_OBJECT_BYTES_READ: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_CHUNKS_QUEUED: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_READ_ERRORS: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_USB_SUBMITTED: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_USB_COMPLETED: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_USB_BYTES: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_RESPONSE_COMPLETED: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -113,6 +117,10 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"GRD=", GET_OBJECT_BYTES_READ.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GCH=", GET_OBJECT_CHUNKS_QUEUED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GER=", GET_OBJECT_READ_ERRORS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_TX=", GET_OBJECT_USB_SUBMITTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_CPL=", GET_OBJECT_USB_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_B=", GET_OBJECT_USB_BYTES.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_RSP=", GET_OBJECT_RESPONSE_COMPLETED.load(Ordering::Relaxed));
         append(out, &mut pos, b"----\r\n");
         append_counter(out, &mut pos, b"OUT=", OUT_PACKETS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"BAD=", OUT_INVALID.load(Ordering::Relaxed));
@@ -370,6 +378,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     tx_pending: bool,
     tx_in_flight: bool,
     tx_is_response: bool,
+    get_object_tx_active: bool,
     // MTP commands are serialized: retain one OUT command that arrives while
     // the current transaction's data/response is still being transmitted.
     transaction_active: bool,
@@ -430,6 +439,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             tx_pending: false,
             tx_in_flight: false,
             tx_is_response: false,
+            get_object_tx_active: false,
             transaction_active: false,
             data_transfer_active: false,
             pending_command: [0; BULK_MAX_PACKET_SIZE as usize],
@@ -570,6 +580,12 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             return false;
         }
         if first {
+            use core::sync::atomic::Ordering;
+            diagnostics::GET_OBJECT_USB_SUBMITTED.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_USB_COMPLETED.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_USB_BYTES.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_RESPONSE_COMPLETED.store(0, Ordering::Relaxed);
+            self.get_object_tx_active = true;
             let length = CONTAINER_HEADER_LEN as u32 + total_size;
             self.tx[..4].copy_from_slice(&length.to_le_bytes());
             self.tx[4..6].copy_from_slice(&(ContainerType::Data as u16).to_le_bytes());
@@ -734,6 +750,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         match self.bulk_in.write(&self.tx[self.tx_offset..self.tx_offset + chunk_len]) {
             Ok(length) if length == chunk_len => {
                 diagnostics::IN_SUBMIT_OK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                if self.get_object_tx_active && !self.tx_is_response {
+                    diagnostics::GET_OBJECT_USB_SUBMITTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    diagnostics::GET_OBJECT_USB_BYTES.fetch_add(chunk_len as u32, core::sync::atomic::Ordering::Relaxed);
+                }
                 self.tx_pending = false;
                 self.tx_in_flight = true;
                 self.tx_chunk_len = chunk_len;
@@ -1587,7 +1607,14 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         diagnostics::IN_COMPLETE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         if self.tx_is_response {
             diagnostics::RESPONSE_IN_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        } else if self.pending_response.is_some() {
+            if self.get_object_tx_active {
+                diagnostics::GET_OBJECT_RESPONSE_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                self.get_object_tx_active = false;
+            }
+        } else if self.get_object_tx_active {
+            diagnostics::GET_OBJECT_USB_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+        if !self.tx_is_response && self.pending_response.is_some() {
             diagnostics::DATA_IN_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
         self.tx_in_flight = false;
