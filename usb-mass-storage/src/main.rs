@@ -437,6 +437,10 @@ fn service_upload_data(
     let name = core::str::from_utf8(&info.name[..info.name_len as usize]).unwrap_or("");
     let Ok(relative_path) = PathBuf::try_from(name) else {
         let _ = fs.remove(&path!("/.mtp-upload.tmp"));
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        mtp.finish_upload();
+        unsafe { NVIC::unmask(Interrupt::TIM2); }
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::INVALID_PARAMETER,
             transaction_id,
