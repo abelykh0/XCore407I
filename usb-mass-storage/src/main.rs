@@ -134,21 +134,6 @@ fn main() -> ! {
             core::hint::spin_loop();
         }
     });
-        // Main and TIM2 share the MTP class. Mask TIM2 while updating its
-        // diagnostic object so the ISR cannot observe a partially copied value.
-        unsafe { NVIC::mask(Interrupt::TIM2); }
-        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
-        let _ = mtp.set_readme(&report[..report_len]);
-        peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
-        unsafe {
-            NVIC::unpend(Interrupt::TIM2);
-            NVIC::unmask(Interrupt::TIM2);
-        }
-
-        loop {
-            core::hint::spin_loop();
-        }
-    });
     let _ = mounted;
     loop {
         core::hint::spin_loop();
