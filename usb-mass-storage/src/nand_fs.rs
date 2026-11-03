@@ -285,6 +285,44 @@ pub fn with_mounted<R>(
         .map_err(|_| InitError::MountFailed)
 }
 
+/// Mount the existing volume once, publish its diagnostic report, and keep
+/// the filesystem mounted for the entire service closure.
+///
+/// Unlike initialize_and_mount_report(), this does not mount and immediately
+/// unmount before the caller starts using the filesystem. It never formats.
+pub fn with_mounted_report<R>(
+    service: impl FnOnce(&Filesystem<'_, NandStorage>, &[u8], usize) -> LfsResult<R>,
+) -> Result<R, InitError> {
+    let mut storage = NandStorage::new()?;
+    if !Filesystem::<NandStorage>::is_mountable(&mut storage) {
+        return Err(InitError::MountFailed);
+    }
+
+    let mut report = [0u8; 192];
+    let mut len = 0;
+    append(&mut report, &mut len, b"XCore407I NAND / LittleFS\\r\\n");
+    append(&mut report, &mut len, b"Factory bad blocks: ");
+    append_hex(&mut report, &mut len, storage.factory_bad_blocks() as u32, 4);
+    append(&mut report, &mut len, b"\\r\\n");
+    append(&mut report, &mut len, b"LittleFS: existing volume mounted\\r\\n");
+    append(&mut report, &mut len, b"Capacity: ");
+
+    Filesystem::<NandStorage>::mount_and_then(&mut storage, |fs| {
+        append_hex(&mut report, &mut len, fs.total_space() as u32, 8);
+        append(&mut report, &mut len, b" bytes\\r\\nFree: ");
+        append_hex(
+            &mut report,
+            &mut len,
+            fs.available_space().unwrap_or(0) as u32,
+            8,
+        );
+        append(&mut report, &mut len, b" bytes\\r\\n");
+        append(&mut report, &mut len, b"ECC: OFF (raw NAND)\\r\\n");
+        service(fs, &report, len)
+    })
+    .map_err(|_| InitError::MountFailed)
+}
+
 /// Set true only for the initial provisioning flash. After README reports
 /// "LittleFS: formatted and mounted", change this to false and rebuild.
 /// With this false, an absent/corrupt filesystem is never reformatted.
