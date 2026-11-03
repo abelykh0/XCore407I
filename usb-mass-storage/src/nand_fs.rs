@@ -231,8 +231,8 @@ impl Storage for NandStorage {
 
         for (index, page_data) in data.chunks_exact(PAGE_SIZE).enumerate() {
             let absolute = off + index * PAGE_SIZE;
-            let logical_block = absolute / BLOCK_SIZE;
-            let page_in_block = (absolute % BLOCK_SIZE) / PAGE_SIZE;
+            let logical_block = absolute / ERASE_BLOCK_SIZE;
+            let page_in_block = (absolute % ERASE_BLOCK_SIZE) / PAGE_SIZE;
             let physical = self.physical_block(logical_block).ok_or(LfsError::IO)?;
             let page = physical as u32 * PAGES_PER_BLOCK + page_in_block as u32;
             if !program_physical_page(page, page_data) { return Err(LfsError::IO); }
