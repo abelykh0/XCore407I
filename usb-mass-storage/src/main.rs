@@ -27,6 +27,18 @@ use xcore407i_usb_mtp::{
 const USB_POLL_HZ: u32 = 8_000;
 const TIM2_PRIORITY: u8 = 2;
 
+// Deterministic 2 KiB payload for testing multi-packet MTP reads.
+const fn make_test_pattern() -> [u8; 2048] {
+    let mut bytes = [0u8; 2048];
+    let mut i = 0;
+    while i < bytes.len() {
+        bytes[i] = (i as u8).wrapping_mul(37).wrapping_add(11);
+        i += 1;
+    }
+    bytes
+}
+static TEST_PATTERN: [u8; 2048] = make_test_pattern();
+
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
 type BoardMtpClass = MtpUsbClass<'static, BoardUsbBus>;
@@ -93,6 +105,11 @@ fn main() -> ! {
     // mount, then the same mounted filesystem remains alive while the main
     // context services future MTP requests. No NAND/LittleFS work runs in TIM2.
     let mounted = nand_fs::with_mounted_report::<()>(|fs, report, report_len| {
+        // Seed a few real files into the existing LittleFS volume. Each file
+        // is created only when absent, so normal boots never overwrite user
+        // data. These writes happen in main context, never in TIM2.
+        seed_test_files(fs)?;
+
         // Build a bounded snapshot of the LittleFS root directory in main
         // context. Directory entries are copied out; no LittleFS object is
         // accessed by the USB polling interrupt.
@@ -157,6 +174,38 @@ fn main() -> ! {
     }
 }
 
+
+/// Create test content once, without replacing existing files.
+fn seed_test_files(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+) -> littlefs2::io::Result<()> {
+    if !fs.exists(path!("/MTP-README.txt")) {
+        fs.write(
+            path!("/MTP-README.txt"),
+            b"XCore407I MTP / LittleFS test files\r\n\r\n\
+These files are stored on the NAND chip in the existing LittleFS volume.\r\n\
+They are exposed to the host through USB High Speed MTP.\r\n\r\n\
+HELLO.txt is a small text read test.\r\n\
+PATTERN.BIN is a 2048-byte deterministic binary test pattern.\r\n\
+EMPTY.TXT is intentionally zero bytes long.\r\n\r\n\
+PATTERN.BIN byte[n] = (n * 37 + 11) modulo 256.\r\n",
+        )?;
+    }
+    if !fs.exists(path!("/HELLO.txt")) {
+        fs.write(
+            path!("/HELLO.txt"),
+            b"Hello from XCore407I!\r\n\
+This file is stored in NAND using LittleFS and read over USB MTP.\r\n",
+        )?;
+    }
+    if !fs.exists(path!("/PATTERN.BIN")) {
+        fs.write(path!("/PATTERN.BIN"), &TEST_PATTERN)?;
+    }
+    if !fs.exists(path!("/EMPTY.TXT")) {
+        fs.write(path!("/EMPTY.TXT"), &[])?;
+    }
+    Ok(())
+}
 
 /// Stream one root-level LittleFS file to the host. Each MTP data container is
 /// emitted in bounded 244-byte payload chunks; no whole-file buffer is used.
