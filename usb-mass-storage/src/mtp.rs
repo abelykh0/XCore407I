@@ -23,6 +23,9 @@ pub const EVENT_INTERVAL: u8 = 4;
 pub const CONTAINER_HEADER_LEN: usize = 12;
 /// Temporary read-only placeholder store, replaced by the mounted LittleFS backend.
 const PLACEHOLDER_STORAGE_ID: u32 = 0x0001_0001;
+const DEMO_OBJECT_HANDLE: u32 = 1;
+const DEMO_OBJECT_NAME: &str = "README.txt";
+const DEMO_OBJECT: &[u8] = b"XCore407I MTP test file.\r\nThis is embedded read-only demo data, not NAND/LittleFS content.\r\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
@@ -273,7 +276,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
         Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
 
-        let operations: [u16; 7] = [
+        let operations: [u16; 9] = [
             operation::GET_DEVICE_INFO,
             operation::OPEN_SESSION,
             operation::CLOSE_SESSION,
@@ -281,6 +284,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_STORAGE_INFO,
             operation::GET_NUM_OBJECTS,
             operation::GET_OBJECT_HANDLES,
+            operation::GET_OBJECT_INFO,
+            operation::GET_OBJECT,
         ];
         Self::append_u32(&mut data, &mut pos, operations.len() as u32);
         for value in operations { Self::append_u16(&mut data, &mut pos, value); }
@@ -304,13 +309,13 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             self.queue_response(response::INVALID_STORAGE_ID, transaction_id);
             return;
         }
-        // Read-only, zero-capacity placeholder; NAND/LittleFS is not mounted.
+        // Read-only embedded demo store; NAND/LittleFS is not mounted.
         let mut data = [0u8; 96];
         let mut pos = 0;
-        Self::append_u16(&mut data, &mut pos, 0x0004); // Fixed RAM
+        Self::append_u16(&mut data, &mut pos, 0x0003); // Fixed ROM
         Self::append_u16(&mut data, &mut pos, 0x0002); // Hierarchical filesystem
         Self::append_u16(&mut data, &mut pos, 0x0001); // Read-only
-        Self::append_u64(&mut data, &mut pos, 0);
+        Self::append_u64(&mut data, &mut pos, 64 * 1024);
         Self::append_u64(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
         Self::append_ptp_string(&mut data, &mut pos, "Data");
@@ -321,6 +326,40 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     fn append_u64(out: &mut [u8], pos: &mut usize, value: u64) {
         out[*pos..*pos + 8].copy_from_slice(&value.to_le_bytes());
         *pos += 8;
+    }
+
+    fn object_info(&mut self, transaction_id: u32, storage_id: u32, handle: u32) {
+        if storage_id != PLACEHOLDER_STORAGE_ID {
+            self.queue_response(response::INVALID_STORAGE_ID, transaction_id);
+            return;
+        }
+        if handle != DEMO_OBJECT_HANDLE {
+            self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
+            return;
+        }
+
+        let mut data = [0u8; 160];
+        let mut pos = 0;
+        Self::append_u32(&mut data, &mut pos, PLACEHOLDER_STORAGE_ID);
+        Self::append_u16(&mut data, &mut pos, 0x3004); // Text
+        Self::append_u16(&mut data, &mut pos, 1); // Read-only
+        Self::append_u32(&mut data, &mut pos, DEMO_OBJECT.len() as u32);
+        Self::append_u16(&mut data, &mut pos, 0); // ThumbFormat
+        Self::append_u32(&mut data, &mut pos, 0); // ThumbCompressedSize
+        Self::append_u32(&mut data, &mut pos, 0); // ThumbPixWidth
+        Self::append_u32(&mut data, &mut pos, 0); // ThumbPixHeight
+        Self::append_u32(&mut data, &mut pos, 0); // ImagePixWidth
+        Self::append_u32(&mut data, &mut pos, 0); // ImagePixHeight
+        Self::append_u32(&mut data, &mut pos, 0); // ImageBitDepth
+        Self::append_u32(&mut data, &mut pos, 0xffff_ffff); // ParentObject (root)
+        Self::append_u16(&mut data, &mut pos, 0); // AssociationType
+        Self::append_u32(&mut data, &mut pos, 0); // AssociationDesc
+        Self::append_u32(&mut data, &mut pos, 0); // SequenceNumber
+        Self::append_ptp_string(&mut data, &mut pos, DEMO_OBJECT_NAME);
+        Self::append_ptp_string(&mut data, &mut pos, "");
+        Self::append_ptp_string(&mut data, &mut pos, "");
+        Self::append_ptp_string(&mut data, &mut pos, "");
+        self.queue_data(operation::GET_OBJECT_INFO, transaction_id, &data[..pos], response::OK);
     }
 
     fn handle_command(&mut self, packet: &[u8]) {
@@ -387,11 +426,31 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response(response::INVALID_STORAGE_ID, header.transaction_id);
                 } else if header.code == operation::GET_NUM_OBJECTS {
                     // GetNumObjects returns the count as a response parameter.
-                    self.queue_response_with_params(response::OK, header.transaction_id, &[0]);
+                    self.queue_response_with_params(response::OK, header.transaction_id, &[1]);
                 } else {
-                    // GetObjectHandles returns a data container with a uint32 count.
-                    let empty = [0u8; 4];
-                    self.queue_data(header.code, header.transaction_id, &empty, response::OK);
+                    // One embedded test object at the storage root.
+                    let mut handles = [0u8; 8];
+                    handles[..4].copy_from_slice(&1u32.to_le_bytes());
+                    handles[4..8].copy_from_slice(&DEMO_OBJECT_HANDLE.to_le_bytes());
+                    self.queue_data(header.code, header.transaction_id, &handles, response::OK);
+                }
+            }
+            operation::GET_OBJECT_INFO => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if let (Some(storage_id), Some(handle)) = (parameter(0), parameter(1)) {
+                    self.object_info(header.transaction_id, storage_id, handle);
+                } else {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                }
+            }
+            operation::GET_OBJECT => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if parameter(0) != Some(DEMO_OBJECT_HANDLE) {
+                    self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
+                } else {
+                    self.queue_data(operation::GET_OBJECT, header.transaction_id, DEMO_OBJECT, response::OK);
                 }
             }
             _ => self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id),
