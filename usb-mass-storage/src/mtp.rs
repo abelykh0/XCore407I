@@ -222,7 +222,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             bulk_out,
             bulk_in,
             event_in,
-            tx: [0; 256],
+            tx: [0; 512],
             tx_len: 0,
             tx_pending: false,
             tx_in_flight: false,
