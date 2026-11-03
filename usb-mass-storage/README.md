@@ -36,16 +36,16 @@ Implemented:
 - Initial MTP command handling for `GetDeviceInfo`, `OpenSession`,
   `CloseSession`, `GetStorageIDs`, `GetStorageInfo`, `GetNumObjects`, and
   `GetObjectHandles`.
-- A read-only, zero-capacity placeholder storage entry so Windows can exercise
-  storage enumeration. It is explicitly marked `not mounted`; it does not
-  represent the NAND or expose files.
+- A read-only embedded demo store named `Data`, with a synthetic `README.txt`
+  object. This exercises storage enumeration, object discovery, object metadata,
+  and file download without touching NAND or LittleFS.
 - A storage abstraction for bounded file streaming.
 
-Bring-up firmware now exists (`src/main.rs`). It initializes the 168 MHz clock, configures the USB3300 ULPI pins, constructs the OTG_HS bus and MTP interface, and polls `usb-device`. It now handles the initial MTP identity/session exchange and advertises a placeholder storage entry. It still does not mount LittleFS or expose files.
+Bring-up firmware now exists (`src/main.rs`). It initializes the 168 MHz clock, configures the USB3300 ULPI pins, constructs the OTG_HS bus and MTP interface, and polls `usb-device`. It handles the initial MTP identity/session exchange and exposes a read-only `Data` store containing an embedded `README.txt` test object. This is protocol bring-up only; it does not mount LittleFS or access NAND.
 
 Not yet implemented:
 - Complete MTP transaction state machine, data-phase recovery, and Windows interoperability.
-- Device/storage/object-info datasets and object-handle/path database.
+- LittleFS-backed object metadata and object-handle/path database.
 - LittleFS-backed implementation of `MtpStorage`.
 - NAND ECC, bad-block management, and power-fail-safe LittleFS block device.
 - MTP transaction state machine, USB reset/cancel handling, and hardware validation.
