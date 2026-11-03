@@ -170,7 +170,7 @@ fn decode_utf16_filename(units: &[u16], out: &mut [u8]) -> Option<usize> {
     let mut written = 0usize;
     for decoded in core::char::decode_utf16(units.iter().copied()) {
         let ch = decoded.ok()?;
-        if ch.is_control() || matches!(ch, '/' | '\\\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+        if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
             return None;
         }
         let mut encoded = [0u8; 4];
@@ -1476,8 +1476,8 @@ pub enum MtpStorageError {
 
 
 /// Validated root-level file metadata received in an MTP SendObjectInfo data
-/// container. Names are restricted to printable ASCII for now; this avoids
-/// lossy conversion and path traversal on the embedded filesystem.
+/// container. Names are decoded from UTF-16 into bounded UTF-8 and validated
+/// before they are passed to the embedded filesystem.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UploadObjectInfo {
     pub storage_id: u32,
@@ -1627,6 +1627,21 @@ mod filename_unicode_tests {
         let mut out = [0u8; 64];
         assert!(decode_utf16_filename(&[0xd800], &mut out).is_none());
         assert!(decode_utf16_filename(&[b'a' as u16, b'/' as u16], &mut out).is_none());
+    }
+
+    #[test]
+    fn upload_object_info_decodes_unicode_filename() {
+        let units = [0x4e2d, 0x6587, 0xd83d, 0xde00, b'.' as u16, b't' as u16, b'x' as u16, b't' as u16];
+        let mut data = [0u8; 52 + 1 + (units.len() + 1) * 2 + 3];
+        data[0..4].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
+        data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
+        data[52] = (units.len() + 1) as u8;
+        for (index, unit) in units.iter().enumerate() {
+            let at = 53 + index * 2;
+            data[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        let parsed = UploadObjectInfo::decode(&data).unwrap();
+        assert_eq!(&parsed.name[..parsed.name_len as usize], "中文😀.txt".as_bytes());
     }
 }
 
