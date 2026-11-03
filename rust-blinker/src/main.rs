@@ -14,7 +14,6 @@ use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
 use xcore407i_blinker::camera::{initialize_demo_canvas, service_camera_mode_change};
 use tinyusb_sys as tusb;
-use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
@@ -82,9 +81,6 @@ fn main() -> ! {
     core.SCB.enable_fpu();
 
     let mut device = pac::Peripherals::take().unwrap();
-
-    let _ = rtc::initialize();
-    // update_clock_from_rtc(); // Temporarily disable the RTC clock overlay.
 
     enable_cycle_counter(&mut core);
 
