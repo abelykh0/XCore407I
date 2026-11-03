@@ -183,8 +183,8 @@ fn main() -> ! {
         }
 
         let mut next_object_handle = object_count as u32 + 1;
-        let mut pending_upload: Option<(UploadObjectInfo, u32)> = None;
-        let mut upload_buffer = [0u8; 500];
+        let mut pending_upload: Option<(UploadObjectInfo, u32, usize)> = None;
+        let mut upload_buffer = [0u8; 512];
 
         loop {
             // Pull commands out of the USB ISR and perform all LittleFS work
@@ -224,7 +224,7 @@ fn main() -> ! {
                     &mut next_object_handle,
                     &mut pending_upload,
                 );
-            } else if let Some((transaction_id, length)) = upload_data {
+            } else if let Some((transaction_id, length, final_packet)) = upload_data {
                 service_upload_data(
                     fs,
                     &upload_buffer,
@@ -232,6 +232,7 @@ fn main() -> ! {
                     &mut objects,
                     &mut object_count,
                     transaction_id,
+                    final_packet,
                     &mut pending_upload,
                 );
             } else if let Some((handle, transaction_id)) = delete_request {
@@ -326,9 +327,9 @@ fn service_send_object_info(
     info: UploadObjectInfo,
     transaction_id: u32,
     next_object_handle: &mut u32,
-    pending_upload: &mut Option<(UploadObjectInfo, u32)>,
+    pending_upload: &mut Option<(UploadObjectInfo, u32, usize)>,
 ) {
-    if info.size > 500 || object_count >= objects.len() || pending_upload.is_some() {
+    if object_count >= objects.len() || pending_upload.is_some() {
         xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_PREFLIGHT_REJECT.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::STORE_FULL,
@@ -403,7 +404,7 @@ fn service_send_object_info(
     };
     *next_object_handle = next;
 
-    *pending_upload = Some((info, handle));
+    *pending_upload = Some((info, handle, 0));
     loop {
         NVIC::mask(Interrupt::TIM2);
         let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
@@ -423,23 +424,96 @@ fn service_send_object_info(
 /// to its final name. Existing files are never truncated or replaced.
 fn service_upload_data(
     fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
-    data: &[u8; 500],
+    data: &[u8; 512],
     length: usize,
     objects: &mut [MtpObject; 17],
     object_count: &mut usize,
     transaction_id: u32,
-    pending_upload: &mut Option<(UploadObjectInfo, u32)>,
+    final_packet: bool,
+    pending_upload: &mut Option<(UploadObjectInfo, u32, usize)>,
 ) {
-    let Some((info, handle)) = pending_upload.take() else {
+    let Some((info, handle, written_so_far)) = pending_upload.as_mut() else {
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::GENERAL_ERROR,
             transaction_id,
         );
         return;
     };
+
+    let next_written = match written_so_far.checked_add(length) {
+        Some(total) if total <= info.size as usize => total,
+        _ => {
+            let _ = fs.remove(&path!("/.mtp-upload.tmp"));
+            pending_upload.take();
+            NVIC::mask(Interrupt::TIM2);
+            let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+            mtp.finish_upload();
+            unsafe { NVIC::unmask(Interrupt::TIM2); }
+            queue_main_mtp_response(
+                xcore407i_usb_mtp::mtp::response::INCOMPLETE_TRANSFER,
+                transaction_id,
+            );
+            return;
+        }
+    };
+
+    let temp_path = path!("/.mtp-upload.tmp");
+    let write_result = fs.open_file_with_options_and_then(
+        |options| options.write(true).append(true),
+        &temp_path,
+        |file| {
+            if length != 0 {
+                let count = file.write(&data[..length])?;
+                if count != length {
+                    return Err(littlefs2::io::Error::IO);
+                }
+            }
+            if final_packet { file.sync()?; }
+            Ok(())
+        },
+    );
+
+    if write_result.is_err() {
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_WRITE_FAIL.fetch_add(1, Ordering::Relaxed);
+        let _ = fs.remove(&temp_path);
+        pending_upload.take();
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        mtp.finish_upload();
+        unsafe { NVIC::unmask(Interrupt::TIM2); }
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INCOMPLETE_TRANSFER,
+            transaction_id,
+        );
+        return;
+    }
+    xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_WRITE_OK.fetch_add(1, Ordering::Relaxed);
+
+    if !final_packet {
+        *written_so_far = next_written;
+        return;
+    }
+
+    if next_written != info.size as usize {
+        let _ = fs.remove(&temp_path);
+        pending_upload.take();
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        mtp.finish_upload();
+        unsafe { NVIC::unmask(Interrupt::TIM2); }
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INCOMPLETE_TRANSFER,
+            transaction_id,
+        );
+        return;
+    }
+
+    let info = *info;
+    let handle = *handle;
     let name = core::str::from_utf8(&info.name[..info.name_len as usize]).unwrap_or("");
     let Ok(relative_path) = PathBuf::try_from(name) else {
-        let _ = fs.remove(&path!("/.mtp-upload.tmp"));
+        let _ = fs.remove(&temp_path);
+        pending_upload.take();
         NVIC::mask(Interrupt::TIM2);
         let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
         mtp.finish_upload();
@@ -451,41 +525,15 @@ fn service_upload_data(
         return;
     };
     let final_path = path!("/").join(relative_path.as_path());
-    let temp_path = path!("/.mtp-upload.tmp");
-
-    let write_result = if length == info.size as usize {
-        fs.open_file_with_options_and_then(
-            |options| options.write(true).append(true),
-            &temp_path,
-            |file| {
-                if length != 0 {
-                    let written = file.write(&data[..length])?;
-                    if written != length {
-                        return Err(littlefs2::io::Error::IO);
-                    }
-                }
-                file.sync()
-            },
-        )
-    } else {
-        Err(littlefs2::io::Error::IO)
-    };
-
-    if write_result.is_err() {
-        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_WRITE_FAIL.fetch_add(1, Ordering::Relaxed);
-    } else {
-        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_WRITE_OK.fetch_add(1, Ordering::Relaxed);
-    }
-    let rename_result = if write_result.is_ok() && !fs.exists(&final_path) {
+    let rename_result = if !fs.exists(&final_path) {
         fs.rename(&temp_path, &final_path)
     } else {
         Err(littlefs2::io::Error::IO)
     };
-    if write_result.is_err() || rename_result.is_err() {
-        if write_result.is_ok() {
-            xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_RENAME_FAIL.fetch_add(1, Ordering::Relaxed);
-        }
+    if rename_result.is_err() {
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_RENAME_FAIL.fetch_add(1, Ordering::Relaxed);
         let _ = fs.remove(&temp_path);
+        pending_upload.take();
         NVIC::mask(Interrupt::TIM2);
         let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
         mtp.finish_upload();
@@ -505,6 +553,7 @@ fn service_upload_data(
     object.size = info.size;
     object.is_dir = false;
     *object_count += 1;
+    pending_upload.take();
 
     let capacity_bytes = fs.total_space() as u64;
     let free_bytes = fs.available_space().unwrap_or(0) as u64;
