@@ -11,6 +11,7 @@ pub mod board;
 pub mod bus;
 pub mod fat16;
 pub mod image;
+pub mod littlefs_image;
 pub mod msc;
 pub mod scsi;
 pub mod usb_hs;
