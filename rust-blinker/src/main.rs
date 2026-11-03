@@ -42,9 +42,6 @@ pub extern "C" fn tusb_time_millis_api() -> u32 {
 pub static SystemCoreClock: u32 = 168_000_000;
 
 
-const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
-const CORE_CLOCK_HZ: u64 = 168_000_000;
-static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
 static LOAD_TETRIS_PENDING: AtomicBool = AtomicBool::new(false);
 // TIM3 schedules TinyUSB host work; the actual task runs in thread context.
 static USB_HOST_TASK_PENDING: AtomicBool = AtomicBool::new(false);
@@ -312,8 +309,7 @@ pub extern "C" fn tuh_hid_mount_cb(dev_addr: u8, instance: u8, _desc: *const u8,
     // interpreting reports as the standard 8-byte boot-keyboard packet.
     if unsafe { tusb::tuh_hid_get_protocol(dev_addr, instance) } != 0 {
         // Request boot protocol; the completion callback starts reception.
-        if !unsafe { tusb::tuh_hid_set_protocol(dev_addr, instance, 0) } {
-        }
+        let _ = unsafe { tusb::tuh_hid_set_protocol(dev_addr, instance, 0) };
     } else {
         unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
     }
@@ -338,7 +334,6 @@ pub extern "C" fn tuh_hid_set_protocol_complete_cb(_dev_addr: u8, _instance: u8,
             KEYBOARD_DEVICE.load(Ordering::Acquire),
             KEYBOARD_INSTANCE.load(Ordering::Acquire),
         ); }
-    } else {
     }
 }
 
@@ -493,55 +488,6 @@ fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: boo
     }
 }
 
-fn special_key_label(key: u8, num: bool) -> Option<&'static [u8]> {
-    match key {
-        0x28 => Some(b"[ENTER]"),
-        0x29 => Some(b"[ESC]"),
-        0x2a => Some(b"[BACKSPACE]"),
-        0x2b => Some(b"[TAB]"),
-        0x39 => Some(b"[CAPS]"),
-        0x46 => Some(b"[PRTSC]"),
-        0x47 => Some(b"[SCROLL]"),
-        0x48 => Some(b"[PAUSE]"),
-        0x49 => Some(b"[INS]"),
-        0x4a => Some(b"[HOME]"),
-        0x4b => Some(b"[PGUP]"),
-        0x4c => Some(b"[DEL]"),
-        0x4d => Some(b"[END]"),
-        0x4e => Some(b"[PGDN]"),
-        0x4f => Some(b"[RIGHT]"),
-        0x50 => Some(b"[LEFT]"),
-        0x51 => Some(b"[DOWN]"),
-        0x52 => Some(b"[UP]"),
-        0x53 => Some(b"[NUM]"),
-        0x59 if !num => Some(b"[KP-END]"),
-        0x5a if !num => Some(b"[KP-DOWN]"),
-        0x5b if !num => Some(b"[KP-PGDN]"),
-        0x5c if !num => Some(b"[KP-LEFT]"),
-        0x5d if !num => Some(b"[KP5]"),
-        0x5e if !num => Some(b"[KP-RIGHT]"),
-        0x5f if !num => Some(b"[KP-HOME]"),
-        0x60 if !num => Some(b"[KP-UP]"),
-        0x61 if !num => Some(b"[KP-PGUP]"),
-        0x62 if !num => Some(b"[KP-INS]"),
-        0x63 if !num => Some(b"[KP-DEL]"),
-        0x3a => Some(b"[F1]"),
-        0x3b => Some(b"[F2]"),
-        0x3c => Some(b"[F3]"),
-        0x3d => Some(b"[F4]"),
-        0x3e => Some(b"[F5]"),
-        0x3f => Some(b"[F6]"),
-        0x40 => Some(b"[F7]"),
-        0x41 => Some(b"[F8]"),
-        0x42 => Some(b"[F9]"),
-        0x43 => Some(b"[F10]"),
-        0x44 => Some(b"[F11]"),
-        0x45 => Some(b"[F12]"),
-        0x65 => Some(b"[MENU]"),
-        _ => None,
-    }
-}
-
 /// TIM2 fires at 8 kHz. This is the only place that calls UsbDevice::poll().
 #[interrupt]
 fn TIM2() {
@@ -565,28 +511,6 @@ fn TIM2() {
 
     let _ = usb.poll(&mut [camera]);
 
-    /*
-    // CPU load reporting
-    let now = TICKS.load(Ordering::Relaxed);
-    let last = LAST_CPU_SAMPLE.load(Ordering::Relaxed);
-
-    if now.wrapping_sub(last) >= CPU_SAMPLE_INTERVAL_MS {
-        LAST_CPU_SAMPLE.store(now, Ordering::Relaxed);
-
-        let (busy, generate, submit) = take_uvc_cycle_metrics();
-
-        let busy_cycles = busy as u64;
-        let busy_percent = ((busy_cycles * 100) / CORE_CLOCK_HZ).min(100) as u8;
-        let generate_percent = (((generate as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
-        let submit_percent = (((submit as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
-
-        camera.set_cpu_metrics(
-            100 - busy_percent,
-            generate_percent,
-            submit_percent,
-        );
-    }
-    */
 }
 
 /// Configure TIM3 as a 1 kHz scheduler tick for the TinyUSB FS host task.
