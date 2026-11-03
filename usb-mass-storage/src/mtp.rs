@@ -273,6 +273,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     upload_expected_size: usize,
     awaiting_send_object: Option<u32>,
     pending_upload_data: bool,
+    pending_upload_abort: bool,
     upload_data_transaction: u32,
     upload_data_len: usize,
     upload_data: [u8; 500],
@@ -323,6 +324,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             upload_expected_size: 0,
             awaiting_send_object: None,
             pending_upload_data: false,
+            pending_upload_abort: false,
             upload_data_transaction: 0,
             upload_data_len: 0,
             upload_data: [0; 500],
@@ -373,6 +375,13 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     pub fn accept_upload_info(&mut self, info: UploadObjectInfo) {
         self.upload_expected_size = info.size as usize;
         self.upload_info_accepted = true;
+    }
+
+    /// Consume a pending upload-abort notification in main context.
+    pub fn take_upload_abort(&mut self) -> bool {
+        let pending = self.pending_upload_abort;
+        self.pending_upload_abort = false;
+        pending
     }
 
     /// Copy a completed single-packet SendObject payload into main context.
@@ -476,6 +485,11 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.clear_transport_stalls();
         self.session_open = false;
         self.pending_get_object = None;
+        if self.upload_info_accepted || self.awaiting_send_object.is_some()
+            || self.awaiting_send_object_info.is_some() || self.pending_upload_data
+        {
+            self.pending_upload_abort = true;
+        }
         self.pending_delete_object = None;
         self.awaiting_send_object_info = None;
         self.pending_send_object_info = None;
@@ -852,7 +866,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::SEND_OBJECT_INFO => {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                } else if params.len() != 12 {
+                } else if params.len() != 8 {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 } else if parameter(0) != Some(PLACEHOLDER_STORAGE_ID)
                     || (parameter(1) != Some(0) && parameter(1) != Some(0xffff_ffff)) {
@@ -1066,6 +1080,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                             self.pending_upload_data = true;
                             self.awaiting_send_object = None;
                         } else {
+                            self.pending_upload_abort = true;
                             self.finish_upload();
                             self.queue_response(response::INCOMPLETE_TRANSFER, header.transaction_id);
                         }
