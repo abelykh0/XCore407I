@@ -258,7 +258,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     pending_response: Option<(u16, u32)>,
     pending_get_object: Option<(u32, u32)>,
     session_open: bool,
-    objects: [MtpObject; 16],
+    objects: [MtpObject; 17],
     object_count: usize,
     capacity_bytes: u64,
     free_bytes: u64,
@@ -297,7 +297,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             pending_response: None,
             pending_get_object: None,
             session_open: false,
-            objects: [MtpObject::EMPTY; 16],
+            objects: [MtpObject::EMPTY; 17],
             object_count: 0,
             capacity_bytes: 0,
             free_bytes: 0,
@@ -314,7 +314,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
     /// Replace the bounded root-directory snapshot. Handles remain stable until refreshed.
     pub fn set_objects(&mut self, objects: &[MtpObject]) {
-        self.objects = [MtpObject::EMPTY; 16];
+        self.objects = [MtpObject::EMPTY; 17];
         self.object_count = objects.len().min(self.objects.len());
         self.objects[..self.object_count].copy_from_slice(&objects[..self.object_count]);
     }
