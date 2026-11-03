@@ -266,6 +266,17 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     readme_len: usize,
     pending_response: Option<(u16, u32)>,
     pending_get_object: Option<(u32, u32)>,
+    pending_delete_object: Option<(u32, u32)>,
+    awaiting_send_object_info: Option<u32>,
+    pending_send_object_info: Option<(u32, UploadObjectInfo)>,
+    upload_info_accepted: bool,
+    upload_expected_size: usize,
+    awaiting_send_object: Option<u32>,
+    pending_upload_data: bool,
+    pending_upload_abort: bool,
+    upload_data_transaction: u32,
+    upload_data_len: usize,
+    upload_data: [u8; 500],
     session_open: bool,
     objects: [MtpObject; 17],
     object_count: usize,
@@ -306,6 +317,17 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             readme_len: DEFAULT_README.len(),
             pending_response: None,
             pending_get_object: None,
+            pending_delete_object: None,
+            awaiting_send_object_info: None,
+            pending_send_object_info: None,
+            upload_info_accepted: false,
+            upload_expected_size: 0,
+            awaiting_send_object: None,
+            pending_upload_data: false,
+            pending_upload_abort: false,
+            upload_data_transaction: 0,
+            upload_data_len: 0,
+            upload_data: [0; 500],
             session_open: false,
             objects: [MtpObject::EMPTY; 17],
             object_count: 0,
@@ -337,6 +359,55 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     /// Take a GET_OBJECT request for processing in the main context.
     pub fn take_get_object_request(&mut self) -> Option<(u32, u32)> {
         self.pending_get_object.take()
+    }
+
+    /// Take a DELETE_OBJECT request for processing by LittleFS in main context.
+    pub fn take_delete_object_request(&mut self) -> Option<(u32, u32)> {
+        self.pending_delete_object.take()
+    }
+
+    /// Take a validated SendObjectInfo request for main-context filesystem work.
+    pub fn take_send_object_info_request(&mut self) -> Option<(u32, UploadObjectInfo)> {
+        self.pending_send_object_info.take()
+    }
+
+    /// Mark a new destination file as safely created in LittleFS.
+    pub fn accept_upload_info(&mut self, info: UploadObjectInfo) {
+        self.upload_expected_size = info.size as usize;
+        self.upload_info_accepted = true;
+    }
+
+    /// Consume a pending upload-abort notification in main context.
+    pub fn take_upload_abort(&mut self) -> bool {
+        let pending = self.pending_upload_abort;
+        self.pending_upload_abort = false;
+        pending
+    }
+
+    /// Copy a completed single-packet SendObject payload into main context.
+    pub fn take_upload_data(&mut self, out: &mut [u8; 500]) -> Option<(u32, usize)> {
+        if !self.pending_upload_data { return None; }
+        let len = self.upload_data_len;
+        out[..len].copy_from_slice(&self.upload_data[..len]);
+        self.pending_upload_data = false;
+        Some((self.upload_data_transaction, len))
+    }
+
+    /// Clear upload state after finalization or an error.
+    pub fn finish_upload(&mut self) {
+        self.upload_info_accepted = false;
+        self.upload_expected_size = 0;
+        self.awaiting_send_object = None;
+        self.pending_upload_data = false;
+        self.upload_data_len = 0;
+    }
+
+    /// Queue a response with parameters from the main context.
+    pub fn queue_main_response_with_params(&mut self, code: u16, transaction_id: u32, params: &[u32]) -> bool {
+        if !self.object_tx_ready() { return false; }
+        self.data_transfer_active = false;
+        self.queue_response_with_params(code, transaction_id, params);
+        true
     }
 
     /// True when the previous bulk-IN packet has completed and another chunk
@@ -414,6 +485,19 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.clear_transport_stalls();
         self.session_open = false;
         self.pending_get_object = None;
+        if self.upload_info_accepted || self.awaiting_send_object.is_some()
+            || self.awaiting_send_object_info.is_some() || self.pending_upload_data
+        {
+            self.pending_upload_abort = true;
+        }
+        self.pending_delete_object = None;
+        self.awaiting_send_object_info = None;
+        self.pending_send_object_info = None;
+        self.awaiting_send_object = None;
+        self.pending_upload_data = false;
+        self.upload_info_accepted = false;
+        self.upload_expected_size = 0;
+        self.upload_data_len = 0;
         self.pending_response = None;
         self.pending_command_len = 0;
         self.transaction_active = false;
@@ -516,7 +600,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
         Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
 
-        let operations: [u16; 11] = [
+        let operations: [u16; 14] = [
             operation::GET_DEVICE_INFO,
             operation::OPEN_SESSION,
             operation::CLOSE_SESSION,
@@ -526,6 +610,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_OBJECT_HANDLES,
             operation::GET_OBJECT_INFO,
             operation::GET_OBJECT,
+            operation::DELETE_OBJECT,
+            operation::SEND_OBJECT_INFO,
+            operation::SEND_OBJECT,
             operation::GET_OBJECT_PROPS_SUPPORTED,
             operation::GET_OBJECT_PROP_LIST,
         ];
@@ -552,12 +639,12 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             self.queue_response(response::INVALID_STORAGE_ID, transaction_id);
             return;
         }
-        // Read-only embedded demo store; NAND/LittleFS is not mounted.
+        // Fixed RAM-backed hierarchical filesystem with read/write access.
         let mut data = [0u8; 96];
         let mut pos = 0;
-        Self::append_u16(&mut data, &mut pos, 0x0001); // Fixed ROM
+        Self::append_u16(&mut data, &mut pos, 0x0003); // Fixed RAM
         Self::append_u16(&mut data, &mut pos, 0x0002); // Hierarchical filesystem
-        Self::append_u16(&mut data, &mut pos, 0x0001); // Read-only
+        Self::append_u16(&mut data, &mut pos, 0x0000); // Read/write
         Self::append_u64(&mut data, &mut pos, self.capacity_bytes);
         Self::append_u64(&mut data, &mut pos, self.free_bytes);
         Self::append_u32(&mut data, &mut pos, 0);
@@ -580,7 +667,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let mut pos = 0;
         Self::append_u32(&mut data, &mut pos, PLACEHOLDER_STORAGE_ID);
         Self::append_u16(&mut data, &mut pos, if object.is_dir { 0x3001 } else { 0x3000 });
-        Self::append_u16(&mut data, &mut pos, 1); // Read-only
+        Self::append_u16(&mut data, &mut pos, 0); // Read/write
         Self::append_u32(&mut data, &mut pos, object.size);
         Self::append_u16(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
@@ -661,7 +748,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let h = object.handle;
         Self::append_prop_u32(&mut data, &mut pos, h, 0xdc01, PLACEHOLDER_STORAGE_ID);
         Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, if object.is_dir { 0x3001 } else { 0x3000 });
-        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 1);
+        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 0);
         Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, object.size as u64);
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
@@ -701,6 +788,15 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else {
+                    if self.upload_info_accepted || self.pending_send_object_info.is_some()
+                        || self.awaiting_send_object_info.is_some() || self.awaiting_send_object.is_some()
+                        || self.pending_upload_data
+                    {
+                        self.pending_upload_abort = true;
+                        self.finish_upload();
+                        self.pending_send_object_info = None;
+                        self.awaiting_send_object_info = None;
+                    }
                     self.session_open = false;
                     self.queue_response(response::OK, header.transaction_id);
                 }
@@ -772,6 +868,55 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let Some(handle) = parameter(0) {
                     self.object_prop_list(header.transaction_id, handle);
+                } else {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                }
+            }
+            operation::SEND_OBJECT_INFO => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if params.len() != 8 {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if parameter(0) != Some(PLACEHOLDER_STORAGE_ID)
+                    || (parameter(1) != Some(0) && parameter(1) != Some(0xffff_ffff)) {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if self.awaiting_send_object_info.is_some()
+                    || self.pending_send_object_info.is_some()
+                    || self.upload_info_accepted {
+                    self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                } else {
+                    self.awaiting_send_object_info = Some(header.transaction_id);
+                }
+            }
+            operation::SEND_OBJECT => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if !params.is_empty() {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if !self.upload_info_accepted
+                    || self.awaiting_send_object.is_some()
+                    || self.pending_upload_data {
+                    self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                } else {
+                    self.awaiting_send_object = Some(header.transaction_id);
+                }
+            }
+            operation::DELETE_OBJECT => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if (params.len() != 4 && params.len() != 8) {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if let Some(handle) = parameter(0) {
+                    if self.object(handle).is_none() {
+                        self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
+                    } else if self.object(handle).map(|object| object.name()) == Some("MTP-README.txt")
+                        || self.object(handle).map(|object| object.name()) == Some("MTP-STATUS.txt") {
+                        self.queue_response(response::ACCESS_DENIED, header.transaction_id);
+                    } else if self.pending_delete_object.is_some() {
+                        self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                    } else {
+                        self.pending_delete_object = Some((handle, header.transaction_id));
+                    }
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
@@ -862,6 +1007,12 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 || self.tx_pending
                 || self.tx_in_flight
                 || self.pending_get_object.is_some()
+                || self.pending_delete_object.is_some()
+                || self.pending_send_object_info.is_some()
+                || self.awaiting_send_object_info.is_some()
+                || self.upload_info_accepted
+                || self.awaiting_send_object.is_some()
+                || self.pending_upload_data
             {
                 0x2019u16 // Device Busy
             } else {
@@ -906,10 +1057,53 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             };
-            if header.kind != ContainerType::Command
-                || header.length < CONTAINER_HEADER_LEN as u32
-                || header.length as usize > length
+            if header.length < CONTAINER_HEADER_LEN as u32
+                || header.length as usize != length
             {
+                diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+            if header.kind == ContainerType::Data {
+                match header.code {
+                    operation::SEND_OBJECT_INFO
+                        if self.awaiting_send_object_info == Some(header.transaction_id) =>
+                    {
+                        match UploadObjectInfo::decode(&packet[CONTAINER_HEADER_LEN..length]) {
+                            Ok(info) => {
+                                self.pending_send_object_info = Some((header.transaction_id, info));
+                                self.awaiting_send_object_info = None;
+                            }
+                            Err(_) => {
+                                self.awaiting_send_object_info = None;
+                                self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                            }
+                        }
+                    }
+                    operation::SEND_OBJECT
+                        if self.awaiting_send_object == Some(header.transaction_id) =>
+                    {
+                        let payload_len = length - CONTAINER_HEADER_LEN;
+                        if payload_len <= self.upload_data.len()
+                            && payload_len == self.upload_expected_size
+                            && !self.pending_upload_data
+                        {
+                            self.upload_data[..payload_len]
+                                .copy_from_slice(&packet[CONTAINER_HEADER_LEN..length]);
+                            self.upload_data_len = payload_len;
+                            self.upload_data_transaction = header.transaction_id;
+                            self.pending_upload_data = true;
+                            self.awaiting_send_object = None;
+                        } else {
+                            self.pending_upload_abort = true;
+                            self.finish_upload();
+                            self.queue_response(response::INCOMPLETE_TRANSFER, header.transaction_id);
+                        }
+                    }
+                    _ => diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
+                }
+                return;
+            }
+            if header.kind != ContainerType::Command {
                 diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             }
@@ -998,4 +1192,118 @@ pub enum MtpStorageError {
     ReadOnly,
     NoSpace,
     Io,
+}
+
+
+/// Validated root-level file metadata received in an MTP SendObjectInfo data
+/// container. Names are restricted to printable ASCII for now; this avoids
+/// lossy conversion and path traversal on the embedded filesystem.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UploadObjectInfo {
+    pub storage_id: u32,
+    pub parent: u32,
+    pub size: u32,
+    pub name: [u8; 64],
+    pub name_len: u8,
+}
+
+impl UploadObjectInfo {
+    /// Parse the fixed fields and PTP UTF-16 string in an ObjectInfo dataset.
+    /// This parser intentionally accepts only root-level regular files.
+    pub fn decode(dataset: &[u8]) -> core::result::Result<Self, MtpError> {
+        const FIXED_LEN: usize = 52;
+        if dataset.len() < FIXED_LEN + 1 {
+            return Err(MtpError::InvalidContainerLength);
+        }
+        let u16_at = |at: usize| u16::from_le_bytes([dataset[at], dataset[at + 1]]);
+        let u32_at = |at: usize| u32::from_le_bytes([
+            dataset[at], dataset[at + 1], dataset[at + 2], dataset[at + 3],
+        ]);
+
+        let storage_id = u32_at(0);
+        let format = u16_at(4);
+        let protection = u16_at(6);
+        let size = u32_at(8);
+        let parent = u32_at(38);
+        let association_type = u16_at(42);
+        let count = dataset[FIXED_LEN] as usize;
+        if storage_id != PLACEHOLDER_STORAGE_ID
+            || format == 0x3001
+            || protection != 0
+            || association_type != 0
+            || (parent != 0 && parent != 0xffff_ffff)
+            || count < 2
+        {
+            return Err(MtpError::InvalidContainerLength);
+        }
+
+        let string_bytes = count.checked_mul(2).ok_or(MtpError::InvalidContainerLength)?;
+        let end = FIXED_LEN + 1 + string_bytes;
+        if end > dataset.len() {
+            return Err(MtpError::InvalidContainerLength);
+        }
+        let mut name = [0u8; 64];
+        let mut name_len = 0usize;
+        for index in 0..count - 1 {
+            let at = FIXED_LEN + 1 + index * 2;
+            let unit = u16::from_le_bytes([dataset[at], dataset[at + 1]]);
+            if !(0x20..=0x7e).contains(&unit) {
+                return Err(MtpError::InvalidContainerLength);
+            }
+            let byte = unit as u8;
+            if matches!(byte, b'/' | b'\\' | b':' | b'*' | b'?' | b'"' | b'<' | b'>' | b'|') {
+                return Err(MtpError::InvalidContainerLength);
+            }
+            if name_len == name.len() {
+                return Err(MtpError::InvalidContainerLength);
+            }
+            name[name_len] = byte;
+            name_len += 1;
+        }
+        let terminator_at = FIXED_LEN + 1 + (count - 1) * 2;
+        if u16::from_le_bytes([dataset[terminator_at], dataset[terminator_at + 1]]) != 0
+            || name_len == 0
+            || &name[..name_len] == b"."
+            || &name[..name_len] == b".."
+        {
+            return Err(MtpError::InvalidContainerLength);
+        }
+
+        Ok(Self { storage_id, parent, size, name, name_len: name_len as u8 })
+    }
+}
+
+#[cfg(test)]
+mod upload_info_tests {
+    use super::*;
+
+    #[test]
+    fn decodes_root_file_object_info() {
+        let mut data = [0u8; 52 + 1 + 12];
+        data[0..4].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
+        data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
+        data[8..12].copy_from_slice(&1234u32.to_le_bytes());
+        data[38..42].copy_from_slice(&0u32.to_le_bytes());
+        data[52] = 6;
+        for (index, unit) in [b't' as u16, b'e' as u16, b's' as u16, b't' as u16, b'.' as u16].iter().enumerate() {
+            let at = 53 + index * 2;
+            data[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        let parsed = UploadObjectInfo::decode(&data).unwrap();
+        assert_eq!(parsed.size, 1234);
+        assert_eq!(&parsed.name[..parsed.name_len as usize], b"test.");
+    }
+
+    #[test]
+    fn rejects_path_separators() {
+        let mut data = [0u8; 52 + 1 + 8];
+        data[0..4].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
+        data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
+        data[52] = 4;
+        for (index, unit) in [b'a' as u16, b'/' as u16, b'b' as u16].iter().enumerate() {
+            let at = 53 + index * 2;
+            data[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(UploadObjectInfo::decode(&data), Err(MtpError::InvalidContainerLength));
+    }
 }

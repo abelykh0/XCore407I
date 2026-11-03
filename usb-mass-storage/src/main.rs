@@ -10,6 +10,7 @@ use panic_halt as _;
 use littlefs2::path;
 use littlefs2::path::PathBuf;
 use littlefs2::io::Read as LittleFsRead;
+use littlefs2::io::Write as LittleFsWrite;
 use stm32f4::stm32f407::{interrupt, Interrupt};
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
@@ -19,7 +20,7 @@ use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidP
 use xcore407i_usb_mtp::{
     board,
     bus::usb_bus,
-    mtp::{MtpObject, MtpUsbClass},
+    mtp::{MtpObject, MtpUsbClass, UploadObjectInfo},
     nand_fs,
     usb_hs::F407UsbHs,
 };
@@ -181,19 +182,67 @@ fn main() -> ! {
             NVIC::unmask(Interrupt::TIM2);
         }
 
+        let mut next_object_handle = object_count as u32 + 1;
+        let mut pending_upload: Option<(UploadObjectInfo, u32)> = None;
+        let mut upload_buffer = [0u8; 500];
+
         loop {
             // Pull commands out of the USB ISR and perform all LittleFS work
             // here, with TIM2 free to keep servicing USB HS.
             NVIC::mask(Interrupt::TIM2);
-            let request = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) }
-                .take_get_object_request();
+            let (get_request, delete_request, info_request, upload_data, upload_abort) = {
+                let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+                (
+                    mtp.take_get_object_request(),
+                    mtp.take_delete_object_request(),
+                    mtp.take_send_object_info_request(),
+                    mtp.take_upload_data(&mut upload_buffer),
+                    mtp.take_upload_abort(),
+                )
+            };
             peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
             unsafe {
                 NVIC::unpend(Interrupt::TIM2);
                 NVIC::unmask(Interrupt::TIM2);
             }
 
-            if let Some((handle, transaction_id)) = request {
+            if upload_abort {
+                pending_upload = None;
+                let temp_path = path!("/.mtp-upload.tmp");
+                if fs.exists(&temp_path) {
+                    let _ = fs.remove(&temp_path);
+                }
+            }
+
+            if let Some((transaction_id, info)) = info_request {
+                service_send_object_info(
+                    fs,
+                    &objects,
+                    object_count,
+                    info,
+                    transaction_id,
+                    &mut next_object_handle,
+                    &mut pending_upload,
+                );
+            } else if let Some((transaction_id, length)) = upload_data {
+                service_upload_data(
+                    fs,
+                    &upload_buffer,
+                    length,
+                    &mut objects,
+                    &mut object_count,
+                    transaction_id,
+                    &mut pending_upload,
+                );
+            } else if let Some((handle, transaction_id)) = delete_request {
+                service_delete_object(
+                    fs,
+                    &mut objects,
+                    &mut object_count,
+                    handle,
+                    transaction_id,
+                );
+            } else if let Some((handle, transaction_id)) = get_request {
                 service_get_object(fs, &objects, object_count, handle, transaction_id);
             } else {
                 core::hint::spin_loop();
@@ -268,6 +317,256 @@ fn test_hello_readback(
         return b"LittleFS readback: DATA MISMATCH in HELLO.txt\r\n";
     }
     b"LittleFS readback: PASS (HELLO.txt, 90 bytes)\r\n"
+}
+
+/// Reserve a new root-level upload destination. This first implementation
+/// intentionally caps files at 500 bytes so each MTP data container fits in
+/// one USB HS OUT packet and can be handed off without a packet ring.
+fn service_send_object_info(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    objects: &[MtpObject; 17],
+    object_count: usize,
+    info: UploadObjectInfo,
+    transaction_id: u32,
+    next_object_handle: &mut u32,
+    pending_upload: &mut Option<(UploadObjectInfo, u32)>,
+) {
+    if info.size > 500 || object_count >= objects.len() || pending_upload.is_some() {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::STORE_FULL,
+            transaction_id,
+        );
+        return;
+    }
+
+    let name = core::str::from_utf8(&info.name[..info.name_len as usize]).unwrap_or("");
+    let Ok(relative_path) = PathBuf::try_from(name) else {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INVALID_PARAMETER,
+            transaction_id,
+        );
+        return;
+    };
+    let final_path = path!("/").join(relative_path.as_path());
+    let name_conflicts = objects[..object_count].iter().any(|object| {
+        core::str::from_utf8(&object.name[..object.name_len as usize])
+            .unwrap_or("")
+            .eq_ignore_ascii_case(name)
+    });
+    if name.eq_ignore_ascii_case("MTP-README.txt")
+        || name.eq_ignore_ascii_case("MTP-STATUS.txt")
+        || name.eq_ignore_ascii_case(".mtp-upload.tmp")
+        || name_conflicts
+        || fs.exists(&final_path)
+    {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
+            transaction_id,
+        );
+        return;
+    }
+
+    let temp_path = path!("/.mtp-upload.tmp");
+    // Never delete an unrecognized file at the reserved temporary path.
+    // An interrupted upload is cleaned up by the main-loop abort handler.
+    if fs.exists(&temp_path) {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
+            transaction_id,
+        );
+        return;
+    }
+    let create_result = fs.open_file_with_options_and_then(
+        |options| options.write(true).create_new(true),
+        &temp_path,
+        |file| file.sync(),
+    );
+    if create_result.is_err() {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
+            transaction_id,
+        );
+        return;
+    }
+
+    let handle = *next_object_handle;
+    let Some(next) = handle.checked_add(1) else {
+        let _ = fs.remove(&temp_path);
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::GENERAL_ERROR,
+            transaction_id,
+        );
+        return;
+    };
+    *next_object_handle = next;
+
+    *pending_upload = Some((info, handle));
+    loop {
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        mtp.accept_upload_info(info);
+        let queued = mtp.queue_main_response_with_params(
+            xcore407i_usb_mtp::mtp::response::OK,
+            transaction_id,
+            &[info.storage_id, info.parent, handle],
+        );
+        unsafe { NVIC::unmask(Interrupt::TIM2); }
+        if queued { break; }
+        core::hint::spin_loop();
+    }
+}
+
+/// Persist a received upload to the temporary file, then atomically rename it
+/// to its final name. Existing files are never truncated or replaced.
+fn service_upload_data(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    data: &[u8; 500],
+    length: usize,
+    objects: &mut [MtpObject; 17],
+    object_count: &mut usize,
+    transaction_id: u32,
+    pending_upload: &mut Option<(UploadObjectInfo, u32)>,
+) {
+    let Some((info, handle)) = pending_upload.take() else {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::GENERAL_ERROR,
+            transaction_id,
+        );
+        return;
+    };
+    let name = core::str::from_utf8(&info.name[..info.name_len as usize]).unwrap_or("");
+    let Ok(relative_path) = PathBuf::try_from(name) else {
+        let _ = fs.remove(&path!("/.mtp-upload.tmp"));
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        mtp.finish_upload();
+        unsafe { NVIC::unmask(Interrupt::TIM2); }
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INVALID_PARAMETER,
+            transaction_id,
+        );
+        return;
+    };
+    let final_path = path!("/").join(relative_path.as_path());
+    let temp_path = path!("/.mtp-upload.tmp");
+
+    let write_result = if length == info.size as usize {
+        fs.open_file_with_options_and_then(
+            |options| options.write(true).append(true),
+            &temp_path,
+            |file| {
+                if length != 0 {
+                    let written = file.write(&data[..length])?;
+                    if written != length {
+                        return Err(littlefs2::io::Error::IO);
+                    }
+                }
+                file.sync()
+            },
+        )
+    } else {
+        Err(littlefs2::io::Error::IO)
+    };
+
+    if write_result.is_err() || fs.exists(&final_path) || fs.rename(&temp_path, &final_path).is_err() {
+        let _ = fs.remove(&temp_path);
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        mtp.finish_upload();
+        unsafe { NVIC::unmask(Interrupt::TIM2); }
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INCOMPLETE_TRANSFER,
+            transaction_id,
+        );
+        return;
+    }
+
+    let object = &mut objects[*object_count];
+    object.handle = handle;
+    object.name[..info.name_len as usize].copy_from_slice(&info.name[..info.name_len as usize]);
+    object.name_len = info.name_len;
+    object.size = info.size;
+    object.is_dir = false;
+    *object_count += 1;
+
+    let capacity_bytes = fs.total_space() as u64;
+    let free_bytes = fs.available_space().unwrap_or(0) as u64;
+    NVIC::mask(Interrupt::TIM2);
+    let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+    mtp.set_objects(&objects[..*object_count]);
+    mtp.set_storage_stats(capacity_bytes, free_bytes);
+    mtp.finish_upload();
+    let _ = mtp.queue_main_response(
+        xcore407i_usb_mtp::mtp::response::OK,
+        transaction_id,
+    );
+    unsafe { NVIC::unmask(Interrupt::TIM2); }
+}
+
+/// Delete a host-selected regular file in main context, then publish the
+/// compacted directory snapshot before acknowledging the MTP transaction.
+fn service_delete_object(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    objects: &mut [MtpObject; 17],
+    object_count: &mut usize,
+    handle: u32,
+    transaction_id: u32,
+) {
+    let Some(index) = objects[..*object_count]
+        .iter()
+        .position(|object| object.handle == handle)
+    else {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INVALID_OBJECT_HANDLE,
+            transaction_id,
+        );
+        return;
+    };
+
+    let object = objects[index];
+    if object.is_dir {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::OPERATION_NOT_SUPPORTED,
+            transaction_id,
+        );
+        return;
+    }
+    let name = core::str::from_utf8(&object.name[..object.name_len as usize]).unwrap_or("");
+    let Ok(relative_path) = PathBuf::try_from(name) else {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::GENERAL_ERROR,
+            transaction_id,
+        );
+        return;
+    };
+    let full_path = path!("/").join(relative_path.as_path());
+    if fs.remove(&full_path).is_err() {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
+            transaction_id,
+        );
+        return;
+    }
+
+    // Preserve the handles of remaining entries; only the removed slot is
+    // compacted away. Handles are not reassigned during a live session.
+    for slot in index..(*object_count - 1) {
+        objects[slot] = objects[slot + 1];
+    }
+    *object_count -= 1;
+    objects[*object_count] = MtpObject::EMPTY;
+
+    let capacity_bytes = fs.total_space() as u64;
+    let free_bytes = fs.available_space().unwrap_or(0) as u64;
+    NVIC::mask(Interrupt::TIM2);
+    let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+    mtp.set_objects(&objects[..*object_count]);
+    mtp.set_storage_stats(capacity_bytes, free_bytes);
+    let _ = mtp.queue_main_response(
+        xcore407i_usb_mtp::mtp::response::OK,
+        transaction_id,
+    );
+    unsafe { NVIC::unmask(Interrupt::TIM2); }
 }
 
 /// Stream one root-level LittleFS file to the host. Each MTP data container is
