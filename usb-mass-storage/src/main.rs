@@ -149,7 +149,9 @@ fn main() -> ! {
         // not the seeded LittleFS README text. Make ObjectInfo advertise the
         // exact length returned by that response.
         for object in &mut objects[..object_count] {
-            if object.name() == "MTP-README.txt" {
+            if object.name_len as usize == 14
+                && &object.name[..14] == b"MTP-README.txt"
+            {
                 object.size = report_len as u32;
             }
         }
