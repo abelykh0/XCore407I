@@ -65,6 +65,10 @@ pub mod diagnostics {
     pub static UPLOAD_PATH_REJECT: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_NAME_REJECT: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_TEMP_EXISTS: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_PROPS_SUPPORTED_COMMANDS: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_PROP_DESC_COMMANDS: AtomicU32 = AtomicU32::new(0);
+    pub static SET_OBJECT_PROP_VALUE_COMMANDS: AtomicU32 = AtomicU32::new(0);
+    pub static SET_OBJECT_PROP_VALUE_DATA: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -136,6 +140,10 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"PATH=", UPLOAD_PATH_REJECT.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"NAME=", UPLOAD_NAME_REJECT.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"TMP=", UPLOAD_TEMP_EXISTS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPS=", GET_OBJECT_PROPS_SUPPORTED_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPD=", GET_OBJECT_PROP_DESC_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SOPC=", SET_OBJECT_PROP_VALUE_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SOPD=", SET_OBJECT_PROP_VALUE_DATA.load(Ordering::Relaxed));
         pos
     }
 }
@@ -1085,6 +1093,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 }
             }
             operation::GET_OBJECT_PROPS_SUPPORTED => {
+                diagnostics::GET_OBJECT_PROPS_SUPPORTED_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let Some(format) = parameter(0) {
@@ -1094,6 +1103,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 }
             }
             operation::GET_OBJECT_PROP_DESC => {
+                diagnostics::GET_OBJECT_PROP_DESC_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let (Some(property), Some(format)) = (parameter(0), parameter(1)) {
@@ -1114,6 +1124,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 }
             }
             operation::SET_OBJECT_PROP_VALUE => {
+                diagnostics::SET_OBJECT_PROP_VALUE_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if params.len() != 8 {
@@ -1363,6 +1374,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 match header.code {
                     operation::SET_OBJECT_PROP_VALUE
                         if self.awaiting_set_object_prop_value.map(|(_, tx)| tx) == Some(header.transaction_id) =>
+                        diagnostics::SET_OBJECT_PROP_VALUE_DATA.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     {
                         if header.length as usize != length || length < CONTAINER_HEADER_LEN + 3 {
                             self.awaiting_set_object_prop_value = None;
