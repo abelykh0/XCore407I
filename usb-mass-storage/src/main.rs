@@ -11,6 +11,7 @@ use xcore407i_usb_mtp::{
     board,
     bus::usb_bus,
     mtp::MtpUsbClass,
+    nand_diag,
 };
 
 /// Minimal USB/MTP bring-up firmware.
@@ -32,9 +33,15 @@ fn main() -> ! {
         peripherals.GPIOH,
         peripherals.GPIOI,
     );
+    board::configure_nand(&mut rcc, peripherals.GPIOD, peripherals.GPIOE);
+
+    // Scan factory bad-block markers before USB enumeration and publish the
+    // result as README.txt over MTP. This diagnostic never erases/programs NAND.
+    let (nand_report, nand_report_len) = nand_diag::create_report();
 
     let bus = usb_bus().expect("USB HS bus already initialized");
     let mut mtp = MtpUsbClass::new(bus);
+    let _ = mtp.set_readme(&nand_report[..nand_report_len]);
 
     let strings = [
         StringDescriptors::new(LangID::EN_US)
