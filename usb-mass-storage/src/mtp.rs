@@ -54,6 +54,7 @@ pub mod diagnostics {
     pub static SEND_OBJECT_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static SEND_OBJECT_DATA: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_DATA_REJECTED: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_ORPHAN_OUT: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_INFO_ACCEPTED: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_FS_CREATE_OK: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_FS_CREATE_FAIL: AtomicU32 = AtomicU32::new(0);
@@ -132,6 +133,7 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"SOC=", SEND_OBJECT_COMMANDS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOD=", SEND_OBJECT_DATA.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"REJ=", UPLOAD_DATA_REJECTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"ORPH=", UPLOAD_ORPHAN_OUT.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"INFO=", UPLOAD_INFO_ACCEPTED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"CR+=", UPLOAD_FS_CREATE_OK.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"CR-=", UPLOAD_FS_CREATE_FAIL.load(Ordering::Relaxed));
@@ -1408,6 +1410,15 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
 
             // Once the first SendObject packet has supplied the 12-byte MTP
             // header, subsequent USB packets are continuation payload only.
+            // If upload metadata is still active but continuation mode has
+            // unexpectedly cleared, count packets before trying to parse their
+            // raw payload as a new MTP container.
+            if self.upload_info_accepted
+                && self.awaiting_send_object.is_none()
+                && !self.upload_data_active
+            {
+                diagnostics::UPLOAD_ORPHAN_OUT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            }
             if self.upload_data_active {
                 let next_received = self.upload_received.checked_add(length);
                 if length == 0
