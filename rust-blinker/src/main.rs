@@ -90,14 +90,14 @@ fn main() -> ! {
 
     enable_cycle_counter(&mut core);
 
-    // BK emulator initialization is temporarily disabled for the NAND test.
-    // unsafe {
-    //     bk_platform_init(
-    //         xcore407i_blinker::rom::MONITOR_ROM.as_ptr(),
-    //         xcore407i_blinker::rom::BASIC_ROM.as_ptr(),
-    //         xcore407i_blinker::rom::BASIC_ROM.len() as u32,
-    //     );
-    // }
+    // BK emulator initialization
+    unsafe {
+         bk_platform_init(
+             xcore407i_blinker::rom::MONITOR_ROM.as_ptr(),
+             xcore407i_blinker::rom::BASIC_ROM.as_ptr(),
+             xcore407i_blinker::rom::BASIC_ROM.len() as u32,
+         );
+    }
 
     // initialize_demo_canvas();
     clear_demo_canvas(0x10);
@@ -223,21 +223,20 @@ fn main() -> ! {
     // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
 
     loop {
-        // BK instruction execution and keyboard forwarding are temporarily
-        // disabled while the NAND bring-up test is active.
-        // unsafe { bk_loop(); }
-        // let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
-        // if input_len > 0 {
-        //     let mut buffer = [0u8; 32];
-        //     unsafe {
-        //         ptr::copy_nonoverlapping(
-        //             core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
-        //             buffer.as_mut_ptr(),
-        //             input_len as usize,
-        //         );
-        //         sendInput(buffer.as_mut_ptr(), input_len);
-        //     }
-        // }
+        // BK instruction execution and keyboard forwarding
+        unsafe { bk_loop(); }
+        let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
+        if input_len > 0 {
+            let mut buffer = [0u8; 32];
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
+                    buffer.as_mut_ptr(),
+                    input_len as usize,
+                );
+                sendInput(buffer.as_mut_ptr(), input_len);
+            }
+        }
 
         // Canvas clearing is deferred to thread context; TIM2 emits black
         // frames until the new mode's canvas has been cleared.
@@ -255,7 +254,7 @@ fn main() -> ! {
         if USB_HOST_TASK_PENDING.swap(false, Ordering::AcqRel) {
             unsafe { tusb::tuh_task_ext(0, false); }
         }
-
+/*
         let status = USB_FS_STATUS.swap(0, Ordering::AcqRel);
         let message: &[u8] = match status {
             1 => b"USB FS: WAITING FOR DEVICE",
@@ -270,7 +269,7 @@ fn main() -> ! {
             _ => b"",
         };
         if !message.is_empty() { show_usb_status(message); }
-
+*/
         // rotozoom.render_next();
     }
 }
