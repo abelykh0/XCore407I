@@ -52,14 +52,9 @@ pub fn geometry(total_sectors: u32) -> Result<Fat16Geometry, BlockError> {
 /// the boot sector and both FAT headers. Peak scratch RAM is 4 KiB.
 pub fn format<F: ImageFile>(image: &mut F, total_sectors: u32) -> Result<Fat16Geometry, BlockError> {
     let g = geometry(total_sectors)?;
-    let total_bytes = total_sectors as u64 * SECTOR_SIZE as u64;
-    let mut zeros = [0u8; 4096];
-    let mut offset = 0u64;
-    while offset < total_bytes {
-        let n = (total_bytes - offset).min(zeros.len() as u64) as usize;
-        image.write_at(offset, &zeros[..n])?;
-        offset += n as u64;
-    }
+    // Clear old FAT metadata and file data. LittleFS-backed images override
+    // reset() with truncate/extend so this is one filesystem operation.
+    image.reset()?;
 
     let mut boot = [0u8; SECTOR_SIZE];
     boot[0..3].copy_from_slice(&[0xeb, 0x3c, 0x90]);
