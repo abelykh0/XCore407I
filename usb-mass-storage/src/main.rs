@@ -7,6 +7,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use cortex_m::peripheral::NVIC;
 use cortex_m_rt::entry;
 use panic_halt as _;
+use littlefs2::path;
 use stm32f4::stm32f407::{interrupt, Interrupt};
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
@@ -16,7 +17,7 @@ use usb_device::device::{StringDescriptors, UsbDevice, UsbDeviceBuilder, UsbVidP
 use xcore407i_usb_mtp::{
     board,
     bus::usb_bus,
-    mtp::MtpUsbClass,
+    mtp::{MtpObject, MtpUsbClass},
     nand_fs,
     usb_hs::F407UsbHs,
 };
@@ -89,7 +90,47 @@ fn main() -> ! {
     // Mount the existing volume once. The report is generated from this
     // mount, then the same mounted filesystem remains alive while the main
     // context services future MTP requests. No NAND/LittleFS work runs in TIM2.
-    let mounted = nand_fs::with_mounted_report::<()>(|_fs, report, report_len| {
+    let mounted = nand_fs::with_mounted_report::<()>(|fs, report, report_len| {
+        // Build a bounded snapshot of the LittleFS root directory in main
+        // context. Directory entries are copied out; no LittleFS object is
+        // accessed by the USB polling interrupt.
+        let mut objects = [MtpObject::EMPTY; 16];
+        let mut object_count = 0usize;
+        fs.read_dir_and_then(path!("/"), |entries| {
+            for entry in entries.skip(2) {
+                let entry = entry?;
+                if object_count == objects.len() {
+                    break;
+                }
+                let name = entry.file_name().as_ref().as_bytes();
+                let name_len = name.len().min(objects[object_count].name.len());
+                objects[object_count].name[..name_len].copy_from_slice(&name[..name_len]);
+                objects[object_count].name_len = name_len as u8;
+                objects[object_count].handle = object_count as u32 + 1;
+                let metadata = entry.metadata();
+                objects[object_count].size = metadata.len().min(u32::MAX as usize) as u32;
+                objects[object_count].is_dir = metadata.is_dir();
+                object_count += 1;
+            }
+            Ok(())
+        })?;
+
+        // Publish the diagnostic text and root snapshot atomically relative
+        // to TIM2. Handles are 1..N and refer to this snapshot.
+        unsafe { NVIC::mask(Interrupt::TIM2); }
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        let _ = mtp.set_readme(&report[..report_len]);
+        mtp.set_objects(&objects[..object_count]);
+        peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
+        unsafe {
+            NVIC::unpend(Interrupt::TIM2);
+            NVIC::unmask(Interrupt::TIM2);
+        }
+
+        loop {
+            core::hint::spin_loop();
+        }
+    });
         // Main and TIM2 share the MTP class. Mask TIM2 while updating its
         // diagnostic object so the ISR cannot observe a partially copied value.
         unsafe { NVIC::mask(Interrupt::TIM2); }
