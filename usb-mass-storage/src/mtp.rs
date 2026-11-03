@@ -835,7 +835,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
     fn object_props_supported(&mut self, transaction_id: u32, format: u32) {
         if format != 0 && format != 0x3000 && format != 0x3001 {
-            self.queue_response(response::OK, transaction_id);
+            // GetObjectPropsSupported always has a data phase. An unsupported
+            // format is represented by an empty property-code array.
+            self.queue_data(
+                operation::GET_OBJECT_PROPS_SUPPORTED,
+                transaction_id,
+                &[0, 0, 0, 0],
+                response::OK,
+            );
             return;
         }
         // StorageID, ObjectFormat, ProtectionStatus, ObjectSize, ObjectFileName,
