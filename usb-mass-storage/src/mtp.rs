@@ -44,6 +44,8 @@ pub mod diagnostics {
     pub static OBJ_BAD_LENGTH: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_STORAGE: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_LAST_STORAGE_ID: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_LAST_DATASET_LEN: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_EXPECTED_DATASET_LEN: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_FORMAT: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_PROTECTION: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_ASSOC: AtomicU32 = AtomicU32::new(0);
@@ -113,6 +115,8 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"OLEN=", OBJ_BAD_LENGTH.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OSTO=", OBJ_BAD_STORAGE.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OSID=", OBJ_LAST_STORAGE_ID.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"ODL=", OBJ_LAST_DATASET_LEN.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OEX=", OBJ_EXPECTED_DATASET_LEN.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OFMT=", OBJ_BAD_FORMAT.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OPRT=", OBJ_BAD_PROTECTION.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OASC=", OBJ_BAD_ASSOC.load(Ordering::Relaxed));
@@ -1274,7 +1278,9 @@ impl UploadObjectInfo {
     /// This parser intentionally accepts only root-level regular files.
     pub fn decode(dataset: &[u8]) -> core::result::Result<Self, MtpError> {
         const FIXED_LEN: usize = 52;
+        diagnostics::OBJ_LAST_DATASET_LEN.store(dataset.len() as u32, core::sync::atomic::Ordering::Relaxed);
         if dataset.len() < FIXED_LEN + 1 {
+            diagnostics::OBJ_EXPECTED_DATASET_LEN.store((FIXED_LEN + 1) as u32, core::sync::atomic::Ordering::Relaxed);
             diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
@@ -1322,6 +1328,7 @@ impl UploadObjectInfo {
 
         let string_bytes = count.checked_mul(2).ok_or(MtpError::InvalidContainerLength)?;
         let end = FIXED_LEN + 1 + string_bytes;
+        diagnostics::OBJ_EXPECTED_DATASET_LEN.store(end as u32, core::sync::atomic::Ordering::Relaxed);
         if end != dataset.len() {
             diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
