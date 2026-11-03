@@ -28,6 +28,12 @@ use xcore407i_usb_mtp::{
 const USB_POLL_HZ: u32 = 8_000;
 const TIM2_PRIORITY: u8 = 2;
 
+// LittleFS user attributes reserved for persistent MTP object identifiers.
+const MTP_PUID_ATTRIBUTE_ID: u8 = b'P';
+const MTP_PUID_COUNTER_ATTRIBUTE_ID: u8 = b'C';
+const MTP_PUID_MAX_COUNTER: u32 = 0xffff_fffd;
+const MTP_STATUS_PUID_COUNTER: u32 = 0xffff_fffe;
+
 // Deterministic 2 KiB payload for testing multi-packet MTP reads.
 const fn make_test_pattern() -> [u8; 2048] {
     let mut bytes = [0u8; 2048];
@@ -158,6 +164,28 @@ fn main() -> ! {
             Ok(())
         })?;
 
+        // Persistent object identifiers are stored as LittleFS attributes.
+        // Reconcile the allocator with existing attributes before assigning
+        // identifiers to files created before this feature was installed.
+        let device_uid = read_device_uid()?;
+        ensure_puid_counter(fs, objects, object_count, &device_uid)?;
+        for index in 0..object_count {
+            let name = core::str::from_utf8(
+                &objects[index].name[..objects[index].name_len as usize],
+            )
+            .map_err(|_| littlefs2::io::Error::INVALID)?;
+            let relative_path = PathBuf::try_from(name)
+                .map_err(|_| littlefs2::io::Error::INVALID)?;
+            let full_path = path!("/").join(relative_path.as_path());
+            let mut puid = load_or_create_puid(fs, &full_path, &device_uid)?;
+            if objects[..index].iter().any(|previous| previous.puid == puid) {
+                // A copied or otherwise duplicated attribute must not expose
+                // the same persistent identifier for two distinct objects.
+                puid = allocate_puid(fs, &full_path, &device_uid)?;
+            }
+            objects[index].puid = puid;
+        }
+
         // The special in-memory README response contains the NAND report,
         // not the seeded LittleFS README text. Make ObjectInfo advertise the
         // exact length returned by that response.
@@ -178,6 +206,7 @@ fn main() -> ! {
             status.handle = object_count as u32 + 1;
             status.size = 480;
             status.is_dir = false;
+            status.puid = make_puid(&device_uid, MTP_STATUS_PUID_COUNTER);
             object_count += 1;
         }
 
@@ -271,6 +300,152 @@ fn main() -> ! {
     }
 }
 
+
+
+/// Read the STM32F407's factory-programmed 96-bit unique device identifier.
+fn read_device_uid() -> littlefs2::io::Result<[u8; 12]> {
+    let words = unsafe {
+        [
+            ptr::read_volatile(0x1fff_7a10 as *const u32),
+            ptr::read_volatile(0x1fff_7a14 as *const u32),
+            ptr::read_volatile(0x1fff_7a18 as *const u32),
+        ]
+    };
+    let mut uid = [0u8; 12];
+    for (index, word) in words.iter().enumerate() {
+        uid[index * 4..index * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+    if uid.iter().all(|byte| *byte == 0) || uid.iter().all(|byte| *byte == 0xff) {
+        return Err(littlefs2::io::Error::CORRUPTION);
+    }
+    Ok(uid)
+}
+
+/// Compose a 128-bit MTP identifier from the device UID and allocation number.
+fn make_puid(device_uid: &[u8; 12], counter: u32) -> [u8; 16] {
+    let mut puid = [0u8; 16];
+    puid[..12].copy_from_slice(device_uid);
+    puid[12..].copy_from_slice(&counter.to_le_bytes());
+    puid
+}
+
+/// Ensure the root-directory allocation counter cannot reuse an identifier
+/// already present on disk, including after a copied or repaired filesystem.
+fn ensure_puid_counter(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    objects: &[MtpObject],
+    object_count: usize,
+    device_uid: &[u8; 12],
+) -> littlefs2::io::Result<()> {
+    let mut highest_existing = 0u32;
+    let mut stored_counter = [0u8; 4];
+
+    for object in &objects[..object_count] {
+        let name = core::str::from_utf8(&object.name[..object.name_len as usize])
+            .map_err(|_| littlefs2::io::Error::INVALID)?;
+        let relative_path = PathBuf::try_from(name)
+            .map_err(|_| littlefs2::io::Error::INVALID)?;
+        let full_path = path!("/").join(relative_path.as_path());
+        let mut stored_puid = [0u8; 16];
+        if let Some(attribute) = fs.attribute(&full_path, MTP_PUID_ATTRIBUTE_ID, &mut stored_puid)? {
+            if attribute.total_size() != 16 || attribute.data().len() != 16 {
+                return Err(littlefs2::io::Error::CORRUPTION);
+            }
+            if &stored_puid[..12] == device_uid {
+                let counter = u32::from_le_bytes(stored_puid[12..16].try_into().unwrap());
+                if counter == 0 || counter > MTP_PUID_MAX_COUNTER {
+                    return Err(littlefs2::io::Error::CORRUPTION);
+                }
+                highest_existing = highest_existing.max(counter);
+            }
+        }
+    }
+
+    let stored = match fs.attribute(
+        path!("/"),
+        MTP_PUID_COUNTER_ATTRIBUTE_ID,
+        &mut stored_counter,
+    )? {
+        Some(attribute) if attribute.total_size() == 4 && attribute.data().len() == 4 => {
+            u32::from_le_bytes(stored_counter)
+        }
+        Some(_) => return Err(littlefs2::io::Error::CORRUPTION),
+        None => 1,
+    };
+
+    if stored == 0 || stored > MTP_PUID_MAX_COUNTER + 1 {
+        return Err(littlefs2::io::Error::CORRUPTION);
+    }
+    let minimum_next = highest_existing
+        .checked_add(1)
+        .ok_or(littlefs2::io::Error::NO_SPACE)?;
+    let next = stored.max(minimum_next);
+    if next > MTP_PUID_MAX_COUNTER + 1 {
+        return Err(littlefs2::io::Error::NO_SPACE);
+    }
+    if next != stored || fs.attribute(
+        path!("/"),
+        MTP_PUID_COUNTER_ATTRIBUTE_ID,
+        &mut [0u8; 4],
+    )?.is_none() {
+        fs.set_attribute(
+            path!("/"),
+            MTP_PUID_COUNTER_ATTRIBUTE_ID,
+            &next.to_le_bytes(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Allocate and persist the next identifier before writing it to the object.
+/// A power loss can consume a number, but cannot cause that number to be reused.
+fn allocate_puid(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    object_path: &littlefs2::path::Path,
+    device_uid: &[u8; 12],
+) -> littlefs2::io::Result<[u8; 16]> {
+    let mut counter_bytes = [0u8; 4];
+    let counter = match fs.attribute(
+        path!("/"),
+        MTP_PUID_COUNTER_ATTRIBUTE_ID,
+        &mut counter_bytes,
+    )? {
+        Some(attribute) if attribute.total_size() == 4 && attribute.data().len() == 4 => {
+            u32::from_le_bytes(counter_bytes)
+        }
+        _ => return Err(littlefs2::io::Error::CORRUPTION),
+    };
+    if counter == 0 || counter > MTP_PUID_MAX_COUNTER {
+        return Err(littlefs2::io::Error::NO_SPACE);
+    }
+
+    let next = counter + 1;
+    fs.set_attribute(
+        path!("/"),
+        MTP_PUID_COUNTER_ATTRIBUTE_ID,
+        &next.to_le_bytes(),
+    )?;
+    let puid = make_puid(device_uid, counter);
+    fs.set_attribute(object_path, MTP_PUID_ATTRIBUTE_ID, &puid)?;
+    Ok(puid)
+}
+
+/// Load an existing identifier or allocate one for a file created before MTP
+/// PUID support was added.
+fn load_or_create_puid(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    object_path: &littlefs2::path::Path,
+    device_uid: &[u8; 12],
+) -> littlefs2::io::Result<[u8; 16]> {
+    let mut puid = [0u8; 16];
+    match fs.attribute(object_path, MTP_PUID_ATTRIBUTE_ID, &mut puid)? {
+        Some(attribute) if attribute.total_size() == 16 && attribute.data().len() == 16 => {
+            Ok(puid)
+        }
+        Some(_) => Err(littlefs2::io::Error::CORRUPTION),
+        None => allocate_puid(fs, object_path, device_uid),
+    }
+}
 
 /// Create test content once, without replacing existing files.
 fn seed_test_files(
@@ -561,12 +736,30 @@ fn service_upload_data(
     }
 
     xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_RENAME_OK.fetch_add(1, Ordering::Relaxed);
+    let device_uid = read_device_uid();
+    let puid = match device_uid.and_then(|uid| load_or_create_puid(fs, &final_path, &uid)) {
+        Ok(puid) => puid,
+        Err(_) => {
+            let _ = fs.remove(&final_path);
+            pending_upload.take();
+            NVIC::mask(Interrupt::TIM2);
+            let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+            mtp.finish_upload();
+            unsafe { NVIC::unmask(Interrupt::TIM2); }
+            queue_main_mtp_response(
+                xcore407i_usb_mtp::mtp::response::INCOMPLETE_TRANSFER,
+                transaction_id,
+            );
+            return;
+        }
+    };
     let object = &mut objects[*object_count];
     object.handle = handle;
     object.name[..info.name_len as usize].copy_from_slice(&info.name[..info.name_len as usize]);
     object.name_len = info.name_len;
     object.size = info.size;
     object.is_dir = false;
+    object.puid = puid;
     *object_count += 1;
     pending_upload.take();
 
