@@ -70,3 +70,27 @@ pub fn configure_ulpi(
         i.pi11.into_alternate::<10>().speed(Speed::VeryHigh), // DIR
     );
 }
+
+
+/// Configure the XCore407I K9F1G08U0E NAND interface on FSMC bank 2 (AF12).
+/// The NAND uses PD0/1, PD4..7, PD11/12, PD14/15 and PE7..10.
+pub fn configure_nand(rcc: &mut pac::RCC, gpiod: pac::GPIOD, gpioe: pac::GPIOE) {
+    let d = gpiod.split(rcc);
+    let e = gpioe.split(rcc);
+    let _nand_pins = (
+        d.pd0.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd1.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd4.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd5.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd6.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd7.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd11.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd12.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd14.into_alternate::<12>().speed(Speed::VeryHigh),
+        d.pd15.into_alternate::<12>().speed(Speed::VeryHigh),
+        e.pe7.into_alternate::<12>().speed(Speed::VeryHigh),
+        e.pe8.into_alternate::<12>().speed(Speed::VeryHigh),
+        e.pe9.into_alternate::<12>().speed(Speed::VeryHigh),
+        e.pe10.into_alternate::<12>().speed(Speed::VeryHigh),
+    );
+}
