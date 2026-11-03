@@ -761,6 +761,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                         // this is read-only and does not touch LittleFS.
                         let mut payload = [0u8; 384];
                         let payload_len = diagnostics::write_status(&mut payload);
+                        payload[payload_len..].fill(b' ');
                         self.queue_data(
                             operation::GET_OBJECT,
                             header.transaction_id,
