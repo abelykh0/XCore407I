@@ -699,9 +699,11 @@ fn service_rename_object(
     let old_path = path!("/").join(old_relative.as_path());
     let new_path = path!("/").join(new_relative.as_path());
     if fs.exists(&new_path) || fs.rename(&old_path, &new_path).is_err() {
+        xcore407i_usb_mtp::mtp::diagnostics::RENAME_FS_FAIL.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::ACCESS_DENIED, transaction_id);
         return;
     }
+    xcore407i_usb_mtp::mtp::diagnostics::RENAME_FS_OK.fetch_add(1, Ordering::Relaxed);
     objects[index].name.fill(0);
     objects[index].name[..new_name.len()].copy_from_slice(new_name);
     objects[index].name_len = new_name.len() as u8;
