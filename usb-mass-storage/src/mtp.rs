@@ -1030,18 +1030,45 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     && parameter(0) != Some(0xffff_ffff)
                 {
                     self.queue_response(response::INVALID_STORAGE_ID, header.transaction_id);
-                } else if header.code == operation::GET_NUM_OBJECTS {
-                    // GetNumObjects returns the count as a response parameter.
-                    self.queue_response_with_params(response::OK, header.transaction_id, &[self.object_count as u32]);
                 } else {
-                    // One embedded test object at the storage root.
-                    let mut handles = [0u8; 4 + MTP_OBJECT_CAPACITY * 4];
-                    handles[..4].copy_from_slice(&(self.object_count as u32).to_le_bytes());
-                    for (i, object) in self.objects[..self.object_count].iter().enumerate() {
-                        let at = 4 + i * 4;
-                        handles[at..at + 4].copy_from_slice(&object.handle.to_le_bytes());
+                    // ObjectFormatCode is optional; zero (or omission) means
+                    // all formats. This implementation exposes files (0x3000)
+                    // and directories (0x3001).
+                    let format = parameter(1).unwrap_or(0);
+                    if format != 0 && format != 0x3000 && format != 0x3001 {
+                        if header.code == operation::GET_NUM_OBJECTS {
+                            self.queue_response_with_params(response::OK, header.transaction_id, &[0]);
+                        } else {
+                            self.queue_data(header.code, header.transaction_id, &[0, 0, 0, 0], response::OK);
+                        }
+                    } else {
+                        let matching_count = self.objects[..self.object_count]
+                            .iter()
+                            .filter(|object| format == 0
+                                || (object.is_dir && format == 0x3001)
+                                || (!object.is_dir && format == 0x3000))
+                            .count();
+
+                        if header.code == operation::GET_NUM_OBJECTS {
+                            // GetNumObjects returns the filtered count as a response parameter.
+                            self.queue_response_with_params(response::OK, header.transaction_id, &[matching_count as u32]);
+                        } else {
+                            let mut handles = [0u8; 4 + MTP_OBJECT_CAPACITY * 4];
+                            handles[..4].copy_from_slice(&(matching_count as u32).to_le_bytes());
+                            let mut index = 0;
+                            for object in self.objects[..self.object_count].iter() {
+                                if format == 0
+                                    || (object.is_dir && format == 0x3001)
+                                    || (!object.is_dir && format == 0x3000)
+                                {
+                                    let at = 4 + index * 4;
+                                    handles[at..at + 4].copy_from_slice(&object.handle.to_le_bytes());
+                                    index += 1;
+                                }
+                            }
+                            self.queue_data(header.code, header.transaction_id, &handles[..4 + matching_count * 4], response::OK);
+                        }
                     }
-                    self.queue_data(header.code, header.transaction_id, &handles[..4 + self.object_count * 4], response::OK);
                 }
             }
             operation::GET_OBJECT_INFO => {
