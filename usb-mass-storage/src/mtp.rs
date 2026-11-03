@@ -400,7 +400,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn object_info(&mut self, transaction_id: u32, handle: u32) {
-        if handle != DEMO_OBJECT_HANDLE {
+        if self.object(handle).is_none() {
             self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
             return;
         }
@@ -410,7 +410,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u32(&mut data, &mut pos, PLACEHOLDER_STORAGE_ID);
         Self::append_u16(&mut data, &mut pos, 0x3004); // Text
         Self::append_u16(&mut data, &mut pos, 1); // Read-only
-        Self::append_u32(&mut data, &mut pos, self.readme_len as u32);
+        Self::append_u32(&mut data, &mut pos, self.object(handle).map(|o| o.size).unwrap_or(0));
         Self::append_u16(&mut data, &mut pos, 0); // ThumbFormat
         Self::append_u32(&mut data, &mut pos, 0); // ThumbCompressedSize
         Self::append_u32(&mut data, &mut pos, 0); // ThumbPixWidth
@@ -422,7 +422,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u16(&mut data, &mut pos, 0); // AssociationType
         Self::append_u32(&mut data, &mut pos, 0); // AssociationDesc
         Self::append_u32(&mut data, &mut pos, 0); // SequenceNumber
-        Self::append_ptp_string(&mut data, &mut pos, DEMO_OBJECT_NAME);
+        Self::append_ptp_string(&mut data, &mut pos, self.object(handle).map(|o| o.name()).unwrap_or(""));
         Self::append_ptp_string(&mut data, &mut pos, "");
         Self::append_ptp_string(&mut data, &mut pos, "");
         Self::append_ptp_string(&mut data, &mut pos, "");
@@ -475,7 +475,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn object_prop_list(&mut self, transaction_id: u32, handle: u32) {
-        if handle != 0 && handle != DEMO_OBJECT_HANDLE && handle != 0xffff_ffff {
+        if handle != 0 && handle != 0xffff_ffff && self.object(handle).is_none() {
             self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
             return;
         }
@@ -558,13 +558,16 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response(response::INVALID_STORAGE_ID, header.transaction_id);
                 } else if header.code == operation::GET_NUM_OBJECTS {
                     // GetNumObjects returns the count as a response parameter.
-                    self.queue_response_with_params(response::OK, header.transaction_id, &[1]);
+                    self.queue_response_with_params(response::OK, header.transaction_id, &[self.object_count as u32]);
                 } else {
                     // One embedded test object at the storage root.
-                    let mut handles = [0u8; 8];
-                    handles[..4].copy_from_slice(&1u32.to_le_bytes());
-                    handles[4..8].copy_from_slice(&DEMO_OBJECT_HANDLE.to_le_bytes());
-                    self.queue_data(header.code, header.transaction_id, &handles, response::OK);
+                    let mut handles = [0u8; 4 + 16 * 4];
+                    handles[..4].copy_from_slice(&(self.object_count as u32).to_le_bytes());
+                    for (i, object) in self.objects[..self.object_count].iter().enumerate() {
+                        let at = 4 + i * 4;
+                        handles[at..at + 4].copy_from_slice(&object.handle.to_le_bytes());
+                    }
+                    self.queue_data(header.code, header.transaction_id, &handles[..4 + self.object_count * 4], response::OK);
                 }
             }
             operation::GET_OBJECT_INFO => {
@@ -601,12 +604,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_OBJECT => {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                } else if parameter(0) != Some(DEMO_OBJECT_HANDLE) {
+                } else if parameter(0).and_then(|handle| self.object(handle)).is_none() {
                     self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
                 } else {
-                    let mut object = [0u8; 192];
-                    object[..self.readme_len].copy_from_slice(&self.readme[..self.readme_len]);
-                    self.queue_data(operation::GET_OBJECT, header.transaction_id, &object[..self.readme_len], response::OK);
+                    self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id);
                 }
             }
             _ => self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id),
