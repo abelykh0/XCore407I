@@ -62,6 +62,8 @@ static mut MTP: MaybeUninit<BoardMtpClass> = MaybeUninit::uninit();
 // Large filesystem and upload buffers live in main SRAM, not on the stack.
 static mut OBJECTS: [MtpObject; MTP_OBJECT_CAPACITY] = [MtpObject::EMPTY; MTP_OBJECT_CAPACITY];
 static mut UPLOAD_STAGING: [u8; nand_fs::PAGE_SIZE] = [0; nand_fs::PAGE_SIZE];
+// GET_OBJECT staging fills the 4 KiB MTP transport buffer in one batch.
+static mut GET_OBJECT_STAGING: [u8; 4084] = [0; 4084];
 
 #[entry]
 fn main() -> ! {
@@ -1017,7 +1019,8 @@ fn service_get_object(
         // 4 KiB transport buffer and splits each batch into 512-byte USB
         // packets, so the main loop need not wait after every individual
         // packet. Keep this staging buffer modest to avoid stack pressure.
-        let mut buffer = [0u8; 1024];
+        // Static SRAM staging avoids consuming 4 KiB of the main stack.
+        let buffer = unsafe { &mut *ptr::addr_of_mut!(GET_OBJECT_STAGING) };
         loop {
             // Keep every non-final USB packet full. The first batch reserves
             // 12 bytes in the MTP transport buffer for the container header.
