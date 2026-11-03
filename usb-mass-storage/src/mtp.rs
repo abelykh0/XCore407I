@@ -312,7 +312,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         // Read-only embedded demo store; NAND/LittleFS is not mounted.
         let mut data = [0u8; 96];
         let mut pos = 0;
-        Self::append_u16(&mut data, &mut pos, 0x0003); // Fixed ROM
+        Self::append_u16(&mut data, &mut pos, 0x0001); // Fixed ROM
         Self::append_u16(&mut data, &mut pos, 0x0002); // Hierarchical filesystem
         Self::append_u16(&mut data, &mut pos, 0x0001); // Read-only
         Self::append_u64(&mut data, &mut pos, 64 * 1024);
