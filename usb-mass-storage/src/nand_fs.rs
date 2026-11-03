@@ -369,6 +369,7 @@ fn append_init_error(out: &mut [u8; 192], len: &mut usize, error: InitError) {
         InitError::WrongDevice => b"wrong device",
         InitError::MarkerRead => b"bad-block marker read",
         InitError::TooManyBadBlocks => b"not enough good blocks",
+        InitError::MountFailed => b"LittleFS mount failed",
     };
     append(out, len, message);
 }
