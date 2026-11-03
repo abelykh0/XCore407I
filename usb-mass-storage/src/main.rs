@@ -145,6 +145,15 @@ fn main() -> ! {
             Ok(())
         })?;
 
+        // The special in-memory README response contains the NAND report,
+        // not the seeded LittleFS README text. Make ObjectInfo advertise the
+        // exact length returned by that response.
+        for object in &mut objects[..object_count] {
+            if object.name() == "MTP-README.txt" {
+                object.size = report_len as u32;
+            }
+        }
+
         // A virtual status object exposes live USB/MTP counters without
         // writing diagnostics to NAND. Its payload is generated on each read.
         if object_count < objects.len() {
