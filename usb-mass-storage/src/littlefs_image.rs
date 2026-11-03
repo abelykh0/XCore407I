@@ -142,4 +142,20 @@ impl<S: Storage> ImageFile for LittleFsImage<'_, '_, S> {
     fn sync(&mut self) -> Result<(), BlockError> {
         self.flush_cache()
     }
+
+    fn reset(&mut self) -> Result<(), BlockError> {
+        let size = self.image_bytes as usize;
+        self.fs.open_file_with_options_and_then(
+            |options| options.read(true).write(true),
+            IMAGE_PATH,
+            |file| {
+                file.set_len(0)?;
+                file.set_len(size)?;
+                file.sync()
+            },
+        ).map_err(|_| BlockError::Io)?;
+        self.cached_block = None;
+        self.dirty = false;
+        Ok(())
+    }
 }
