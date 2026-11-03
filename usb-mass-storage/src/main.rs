@@ -580,7 +580,7 @@ fn service_upload_data(
 /// compacted directory snapshot before acknowledging the MTP transaction.
 fn service_delete_object(
     fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
-    objects: &mut [MtpObject; 17],
+    objects: &mut [MtpObject],
     object_count: &mut usize,
     handle: u32,
     transaction_id: u32,
