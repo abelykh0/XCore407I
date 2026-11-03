@@ -167,6 +167,6 @@ pub fn create_report() -> ([u8; 192], usize) {
     }
     append(&mut report, &mut len, b")\r\n");
     append(&mut report, &mut len, b"ECC: not applied; raw marker scan only.\r\n");
-    append(&mut report, &mut len, b"No NAND blocks erased or programmed.\r\n");
+    append(&mut report, &mut len, b"Erase/program: none.\r\n");
     (report, len)
 }
