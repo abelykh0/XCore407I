@@ -355,7 +355,7 @@ fn service_send_object_info(
     );
     if create_result.is_err() {
         queue_main_mtp_response(
-            xcore407i_usb_mtp_mtp::mtp::response::ACCESS_DENIED,
+            xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
             transaction_id,
         );
         return;
