@@ -23,6 +23,8 @@ pub const EVENT_INTERVAL: u8 = 4;
 pub const CONTAINER_HEADER_LEN: usize = 12;
 /// Temporary read-only placeholder store, replaced by the mounted LittleFS backend.
 const PLACEHOLDER_STORAGE_ID: u32 = 0x0001_0001;
+const DEMO_OBJECT_HANDLE: u32 = 1;
+const DEMO_OBJECT_NAME: &str = "README.txt";
 const DEFAULT_README: &[u8] = b"XCore407I NAND diagnostic pending.\r\n";
 
 /// One entry in the bounded root-directory snapshot supplied by the main loop.
