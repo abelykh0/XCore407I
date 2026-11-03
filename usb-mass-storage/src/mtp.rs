@@ -194,6 +194,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     // MTP commands are serialized: retain one OUT command that arrives while
     // the current transaction's data/response is still being transmitted.
     transaction_active: bool,
+    data_transfer_active: bool,
     pending_command: [u8; BULK_MAX_PACKET_SIZE as usize],
     pending_command_len: usize,
     readme: [u8; 192],
@@ -232,6 +233,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             tx_pending: false,
             tx_in_flight: false,
             transaction_active: false,
+            data_transfer_active: false,
             pending_command: [0; BULK_MAX_PACKET_SIZE as usize],
             pending_command_len: 0,
             readme: { let mut bytes = [0u8; 192]; bytes[..DEFAULT_README.len()].copy_from_slice(DEFAULT_README); bytes },
@@ -301,6 +303,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx[header_len..header_len + bytes.len()].copy_from_slice(bytes);
         self.tx_len = header_len + bytes.len();
         self.tx_pending = true;
+        if first {
+            self.data_transfer_active = true;
+        }
         if last {
             self.pending_response = Some((response::OK, transaction_id));
         }
@@ -322,6 +327,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         if !self.object_tx_ready() {
             return false;
         }
+        self.data_transfer_active = false;
         self.queue_response(code, transaction_id);
         true
     }
@@ -376,6 +382,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx_len = length;
         self.tx_pending = true;
         self.pending_response = Some((response_code, transaction_id));
+        self.data_transfer_active = true;
     }
 
     fn queue_response(&mut self, code: u16, transaction_id: u32) {
@@ -760,7 +767,14 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         // A data container is followed by its MTP response. The transaction
         // remains active until that response has itself completed.
         if let Some((code, transaction_id)) = self.pending_response.take() {
+            self.data_transfer_active = false;
             self.queue_response(code, transaction_id);
+            return;
+        }
+
+        // Non-final chunks complete without an MTP response. Keep the
+        // transaction locked until the main loop queues the next chunk.
+        if self.data_transfer_active {
             return;
         }
 
@@ -789,6 +803,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         self.pending_response = None;
         self.pending_command_len = 0;
         self.transaction_active = false;
+        self.data_transfer_active = false;
         self.tx_len = 0;
         self.tx_pending = false;
         self.tx_in_flight = false;
