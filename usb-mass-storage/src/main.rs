@@ -282,7 +282,7 @@ fn main() -> ! {
                     transaction_id,
                     final_packet,
                     &mut pending_upload,
-                    &mut upload_staging,
+                    &mut *upload_staging,
                     &mut upload_staging_len,
                 );
             } else if let Some((handle, transaction_id, name, name_len)) = rename_request {
