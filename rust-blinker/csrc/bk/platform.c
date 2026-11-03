@@ -47,6 +47,11 @@ void bk_platform_init(const uint8_t *monitor, const uint8_t *basic,
     bk_reset();
 }
 
+void bk_set_pc(uint16_t start)
+{
+    pdp.regs[PC] = start;
+}
+
 void bk_reset(void)
 {
     unsigned i;
