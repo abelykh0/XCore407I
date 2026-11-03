@@ -189,19 +189,28 @@ fn main() -> ! {
             // Pull commands out of the USB ISR and perform all LittleFS work
             // here, with TIM2 free to keep servicing USB HS.
             NVIC::mask(Interrupt::TIM2);
-            let (get_request, delete_request, info_request, upload_data) = {
+            let (get_request, delete_request, info_request, upload_data, upload_abort) = {
                 let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
                 (
                     mtp.take_get_object_request(),
                     mtp.take_delete_object_request(),
                     mtp.take_send_object_info_request(),
                     mtp.take_upload_data(&mut upload_buffer),
+                    mtp.take_upload_abort(),
                 )
             };
             peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
             unsafe {
                 NVIC::unpend(Interrupt::TIM2);
                 NVIC::unmask(Interrupt::TIM2);
+            }
+
+            if upload_abort {
+                pending_upload = None;
+                let temp_path = path!("/.mtp-upload.tmp");
+                if fs.exists(&temp_path) {
+                    let _ = fs.remove(&temp_path);
+                }
             }
 
             if let Some((transaction_id, info)) = info_request {
@@ -328,8 +337,16 @@ fn service_send_object_info(
     }
 
     let name = core::str::from_utf8(&info.name[..info.name_len as usize]).unwrap_or("");
+    let Ok(relative_path) = PathBuf::try_from(name) else {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INVALID_PARAMETER,
+            transaction_id,
+        );
+        return;
+    };
+    let final_path = path!("/").join(relative_path.as_path());
     if name == "MTP-README.txt" || name == "MTP-STATUS.txt"
-        || name == ".mtp-upload.tmp" || fs.exists(&path!("/").join(PathBuf::try_from(name).unwrap().as_path()))
+        || name == ".mtp-upload.tmp" || fs.exists(&final_path)
     {
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
@@ -339,9 +356,9 @@ fn service_send_object_info(
     }
 
     let temp_path = path!("/.mtp-upload.tmp");
-    // A stale temporary file can only be left by an interrupted firmware
-    // upload; remove it before creating a fresh exclusive temporary file.
-    if fs.exists(&temp_path) && fs.remove(&temp_path).is_err() {
+    // Never delete an unrecognized file at the reserved temporary path.
+    // An interrupted upload is cleaned up by the main-loop abort handler.
+    if fs.exists(&temp_path) {
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
             transaction_id,
