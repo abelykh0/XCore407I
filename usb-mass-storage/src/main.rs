@@ -59,8 +59,9 @@ static MTP_PTR: AtomicPtr<BoardMtpClass> = AtomicPtr::new(ptr::null_mut());
 static mut USB_DEVICE: MaybeUninit<BoardUsbDevice> = MaybeUninit::uninit();
 static mut MTP: MaybeUninit<BoardMtpClass> = MaybeUninit::uninit();
 
-// Large filesystem snapshot lives in main SRAM, not on the stack.
+// Large filesystem and upload buffers live in main SRAM, not on the stack.
 static mut OBJECTS: [MtpObject; MTP_OBJECT_CAPACITY] = [MtpObject::EMPTY; MTP_OBJECT_CAPACITY];
+static mut UPLOAD_STAGING: [u8; nand_fs::PAGE_SIZE] = [0; nand_fs::PAGE_SIZE];
 
 #[entry]
 fn main() -> ! {
@@ -226,9 +227,9 @@ fn main() -> ! {
         let mut next_object_handle = object_count as u32 + 1;
         let mut pending_upload: Option<(UploadObjectInfo, u32, usize)> = None;
         let mut upload_buffer = [0u8; 512];
-        // Match the NAND page size so four USB HS packets are staged into one
-        // LittleFS append operation.
-        let mut upload_staging = [0u8; nand_fs::PAGE_SIZE];
+        // Only main context accesses this staging buffer; keep it out of the
+        // relatively small exception/main stack.
+        let upload_staging = unsafe { &mut *ptr::addr_of_mut!(UPLOAD_STAGING) };
         let mut upload_staging_len = 0usize;
 
         loop {
