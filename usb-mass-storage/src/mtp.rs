@@ -863,7 +863,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             let at = 4 + i * 2;
             data[at..at + 2].copy_from_slice(&prop.to_le_bytes());
         }
-        self.queue_data(operation::GET_OBJECT_PROPS_SUPPORTED, transaction_id, &data[..18], response::OK);
+        self.queue_data(operation::GET_OBJECT_PROPS_SUPPORTED, transaction_id, &data[..20], response::OK);
     }
 
     fn object_prop_desc(&mut self, transaction_id: u32, property: u32, format: u32) {
