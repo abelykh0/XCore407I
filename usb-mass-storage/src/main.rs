@@ -950,17 +950,27 @@ fn service_get_object(
     handle: u32,
     transaction_id: u32,
 ) {
+    use xcore407i_usb_mtp::mtp::diagnostics as diag;
+    diag::GET_OBJECT_REQUESTS.fetch_add(1, Ordering::Relaxed);
+    diag::GET_OBJECT_LAST_SIZE.store(0, Ordering::Relaxed);
+    diag::GET_OBJECT_BYTES_READ.store(0, Ordering::Relaxed);
+    diag::GET_OBJECT_CHUNKS_QUEUED.store(0, Ordering::Relaxed);
+    diag::GET_OBJECT_READ_ERRORS.store(0, Ordering::Relaxed);
     let Some(object) = objects[..object_count].iter().find(|item| item.handle == handle).copied() else {
+        diag::GET_OBJECT_READ_ERRORS.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::INVALID_OBJECT_HANDLE, transaction_id);
         return;
     };
+    diag::GET_OBJECT_LAST_SIZE.store(object.size, Ordering::Relaxed);
     if object.is_dir {
+        diag::GET_OBJECT_READ_ERRORS.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::OPERATION_NOT_SUPPORTED, transaction_id);
         return;
     }
 
     let name = core::str::from_utf8(&object.name[..object.name_len as usize]).unwrap_or("");
     let Ok(relative_path) = PathBuf::try_from(name) else {
+        diag::GET_OBJECT_READ_ERRORS.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::GENERAL_ERROR, transaction_id);
         return;
     };
@@ -978,10 +988,12 @@ fn service_get_object(
                     return Err(littlefs2::io::Error::IO);
                 }
                 total += count;
+                diag::GET_OBJECT_BYTES_READ.store(total as u32, Ordering::Relaxed);
             }
             Ok(())
         });
         if read_result.is_err() || total != object.size as usize {
+            diag::GET_OBJECT_READ_ERRORS.fetch_add(1, Ordering::Relaxed);
             queue_main_mtp_response(
                 xcore407i_usb_mtp::mtp::response::INCOMPLETE_TRANSFER,
                 transaction_id,
@@ -989,6 +1001,7 @@ fn service_get_object(
             return;
         }
         queue_main_mtp_object_data(transaction_id, &contents[..total]);
+        diag::GET_OBJECT_CHUNKS_QUEUED.fetch_add(1, Ordering::Relaxed);
         return;
     }
 
@@ -1009,6 +1022,7 @@ fn service_get_object(
                     return Err(littlefs2::io::Error::IO);
                 }
                 count += read;
+                diag::GET_OBJECT_BYTES_READ.fetch_add(read as u32, Ordering::Relaxed);
             }
             remaining -= count;
             let last = remaining == 0;
@@ -1019,6 +1033,7 @@ fn service_get_object(
                 first,
                 last,
             );
+            diag::GET_OBJECT_CHUNKS_QUEUED.fetch_add(1, Ordering::Relaxed);
             first = false;
             if last {
                 break;
@@ -1028,6 +1043,7 @@ fn service_get_object(
     });
 
     if result.is_err() {
+        diag::GET_OBJECT_READ_ERRORS.fetch_add(1, Ordering::Relaxed);
         // If a NAND read fails after a partial data container, terminate the
         // transfer with an explicit incomplete-transfer response.
         queue_main_mtp_response(
