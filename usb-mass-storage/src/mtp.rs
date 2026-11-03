@@ -277,7 +277,7 @@ pub mod operation {
     pub const DELETE_OBJECT: u16 = 0x100b;
     pub const SEND_OBJECT_INFO: u16 = 0x100c;
     pub const SEND_OBJECT: u16 = 0x100d;
-    pub const SET_OBJECT_PROP_VALUE: u16 = 0x1016;
+    pub const SET_OBJECT_PROP_VALUE: u16 = 0x9804;
     pub const GET_DEVICE_PROP_DESC: u16 = 0x1014;
     pub const GET_DEVICE_PROP_VALUE: u16 = 0x1015;
     pub const GET_OBJECT_PROPS_SUPPORTED: u16 = 0x9801;
