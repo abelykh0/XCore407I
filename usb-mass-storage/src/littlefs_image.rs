@@ -108,7 +108,9 @@ impl<'fs, 'storage, S: Storage> LittleFsImage<'fs, 'storage, S> {
     fn flush_cache(&mut self) -> Result<(), BlockError> {
         if self.dirty {
             let block = self.cached_block.ok_or(BlockError::Io)?;
-            Self::write_file(self.fs, block as u64 * CACHE_BYTES as u64, &self.cache)?;
+            let offset = block as u64 * CACHE_BYTES as u64;
+            let valid = (self.image_bytes - offset).min(CACHE_BYTES as u64) as usize;
+            Self::write_file(self.fs, offset, &self.cache[..valid])?;
             self.dirty = false;
         }
         Ok(())
@@ -117,7 +119,10 @@ impl<'fs, 'storage, S: Storage> LittleFsImage<'fs, 'storage, S> {
     fn load_block(&mut self, block: u32) -> Result<(), BlockError> {
         if self.cached_block == Some(block) { return Ok(()); }
         self.flush_cache()?;
-        Self::read_file(self.fs, block as u64 * CACHE_BYTES as u64, &mut self.cache)?;
+        let offset = block as u64 * CACHE_BYTES as u64;
+        let valid = (self.image_bytes - offset).min(CACHE_BYTES as u64) as usize;
+        self.cache.fill(0);
+        Self::read_file(self.fs, offset, &mut self.cache[..valid])?;
         self.cached_block = Some(block);
         self.dirty = false;
         Ok(())
