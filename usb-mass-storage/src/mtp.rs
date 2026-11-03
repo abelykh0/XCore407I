@@ -104,6 +104,9 @@ pub mod diagnostics {
     pub static GET_OBJECT_COMMANDS_WHILE_ACTIVE: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_LAST_COMMAND_CODE: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_LAST_COMMAND_TXID: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_COMMAND_PARAM0: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_RESPONSE_CODE: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_RESPONSE_TXID: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -150,6 +153,9 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"GACTIVE_CMD=", GET_OBJECT_COMMANDS_WHILE_ACTIVE.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GLAST_OP=", GET_OBJECT_LAST_COMMAND_CODE.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GLAST_TID=", GET_OBJECT_LAST_COMMAND_TXID.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GCMD_P0=", LAST_COMMAND_PARAM0.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GRSP_CODE=", LAST_RESPONSE_CODE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GRSP_TID=", LAST_RESPONSE_TXID.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"INC=", IN_COMPLETE.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"RESP=", RESPONSE_IN_COMPLETED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"RST=", USB_RESETS.load(Ordering::Relaxed));
@@ -797,6 +803,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn queue_response_with_params(&mut self, code: u16, transaction_id: u32, params: &[u32]) {
+        diagnostics::LAST_RESPONSE_CODE.store(code as u32, core::sync::atomic::Ordering::Relaxed);
+        diagnostics::LAST_RESPONSE_TXID.store(transaction_id, core::sync::atomic::Ordering::Relaxed);
         self.pending_response = None;
         if let Ok(length) = encode_response(transaction_id, code, params, &mut self.tx) {
             self.tx_len = length;
@@ -1141,6 +1149,12 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let Ok(header) = ContainerHeader::decode(packet) else { return; };
         diagnostics::GET_OBJECT_LAST_COMMAND_CODE.store(header.code as u32, core::sync::atomic::Ordering::Relaxed);
         diagnostics::GET_OBJECT_LAST_COMMAND_TXID.store(header.transaction_id, core::sync::atomic::Ordering::Relaxed);
+        diagnostics::LAST_COMMAND_PARAM0.store(
+            if packet.len() >= CONTAINER_HEADER_LEN + 4 {
+                u32::from_le_bytes(packet[CONTAINER_HEADER_LEN..CONTAINER_HEADER_LEN + 4].try_into().unwrap())
+            } else { 0 },
+            core::sync::atomic::Ordering::Relaxed,
+        );
         if header.kind != ContainerType::Command
             || header.length as usize > packet.len()
             || header.length < CONTAINER_HEADER_LEN as u32
