@@ -335,6 +335,95 @@ fn show_bus_configuration() {
     show_register(b"GPIOD IDR:", 0x4002_0C10);
 }
 
+// Temporarily take the eight NAND data pins out of FSMC AF12 and exercise
+// them as GPIO outputs. This verifies the MCU-side data pin mapping and
+// electrical readback without issuing NAND commands or relying on FSMC.
+fn gpio_data_bus_test() {
+    const GPIOD: usize = 0x4002_0C00;
+    const GPIOE: usize = 0x4002_1000;
+    const DATA_D: u32 = (1 << 14) | (1 << 15) | (1 << 0) | (1 << 1);
+    const DATA_E: u32 = 0x0F << 7;
+
+    // D0..D3 map to PD14, PD15, PD0, PD1; D4..D7 map to PE7..PE10.
+    // Preserve all unrelated GPIO configuration bits.
+    unsafe {
+        for (base, mask) in [(GPIOD, DATA_D), (GPIOE, DATA_E)] {
+            let moder = (base + 0x00) as *mut u32;
+            let otyper = (base + 0x04) as *mut u32;
+            let pupdr = (base + 0x0C) as *mut u32;
+            let mut mode = read_volatile(moder);
+            let mut pins = mask;
+            while pins != 0 {
+                let bit = pins.trailing_zeros();
+                mode = (mode & !(0b11 << (bit * 2))) | (0b01 << (bit * 2));
+                pins &= pins - 1;
+            }
+            write_volatile(moder, mode);
+            write_volatile(otyper, read_volatile(otyper) & !mask);
+            let mut pulls = read_volatile(pupdr);
+            let mut pins = mask;
+            while pins != 0 {
+                let bit = pins.trailing_zeros();
+                pulls &= !(0b11 << (bit * 2));
+                pins &= pins - 1;
+            }
+            write_volatile(pupdr, pulls);
+        }
+    }
+
+    fn drive_and_sample(value: u8) -> u8 {
+        let d = (((value as u32) & 0x01) << 14)
+            | ((((value as u32) >> 1) & 0x01) << 15)
+            | ((((value as u32) >> 2) & 0x01) << 0)
+            | ((((value as u32) >> 3) & 0x01) << 1);
+        let e = (((value as u32) >> 4) & 0x0F) << 7;
+        unsafe {
+            // BSRR lower half sets bits; upper half resets bits.
+            write_volatile((GPIOD + 0x18) as *mut u32, d | ((DATA_D & !d) << 16));
+            write_volatile((GPIOE + 0x18) as *mut u32, e | ((DATA_E & !e) << 16));
+            cortex_m::asm::delay(100);
+            let idr_d = read_volatile((GPIOD + 0x10) as *const u32);
+            let idr_e = read_volatile((GPIOE + 0x10) as *const u32);
+            (((idr_d >> 14) & 1) as u8)
+                | ((((idr_d >> 15) & 1) as u8) << 1)
+                | (((idr_d & 1) as u8) << 2)
+                | ((((idr_d >> 1) & 1) as u8) << 3)
+                | ((((idr_e >> 7) & 0x0F) as u8) << 4)
+        }
+    }
+
+    let a5 = drive_and_sample(0xA5);
+    let five_a = drive_and_sample(0x5A);
+
+    // Restore the NAND data pins to AF12. AFR was configured by
+    // configure_board_pins(); only MODER needs to be returned to alternate.
+    unsafe {
+        for (base, mask) in [(GPIOD, DATA_D), (GPIOE, DATA_E)] {
+            let moder = (base + 0x00) as *mut u32;
+            let mut mode = read_volatile(moder);
+            let mut pins = mask;
+            while pins != 0 {
+                let bit = pins.trailing_zeros();
+                mode = (mode & !(0b11 << (bit * 2))) | (0b10 << (bit * 2));
+                pins &= pins - 1;
+            }
+            write_volatile(moder, mode);
+        }
+    }
+
+    let mut line = *b"GPIO BUS A5:00 5A:00";
+    line[12] = hex_digit(a5 >> 4);
+    line[13] = hex_digit(a5);
+    line[18] = hex_digit(five_a >> 4);
+    line[19] = hex_digit(five_a);
+    show_usb_status(&line);
+    if a5 != 0xA5 || five_a != 0x5A {
+        show_usb_status(b"GPIO DATA BUS: FAIL");
+    } else {
+        show_usb_status(b"GPIO DATA BUS: OK");
+    }
+}
+
 fn configure_fsmc() {
     unsafe {
         let rcc_ahb3enr = 0x4002_3838 as *mut u32;
@@ -384,6 +473,7 @@ fn report_error(error: Error) {
 pub fn run_test() {
     show_usb_status(b"NAND: FSMC INIT");
     configure_fsmc();
+    gpio_data_bus_test();
     show_bus_configuration();
 
     write_cmd(CMD_RESET);
