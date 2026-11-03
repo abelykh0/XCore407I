@@ -887,7 +887,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(out, pos, value);
     }
 
-    fn object_prop_list(&mut self, transaction_id: u32, handle: u32, property_code: u32) {
+    fn object_prop_list(&mut self, transaction_id: u32, handle: u32, format_code: u32, property_code: u32) {
         let selected = if handle == 0 || handle == 0xffff_ffff {
             self.objects[..self.object_count].first().copied()
         } else {
@@ -897,6 +897,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
             return;
         };
+
+        // FormatCode == 0 means any format. A nonzero format restricts
+        // the result to objects of that format.
+        let object_format = if object.is_dir { 0x3001 } else { 0x3000 };
+        if format_code != 0 && format_code != object_format {
+            self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
+            return;
+        }
 
         // PropertyCode == 0 requests all properties. Otherwise return only
         // the requested property, as required by GetObjectPropList.
@@ -1070,8 +1078,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_OBJECT_PROP_LIST => {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                } else if let (Some(handle), Some(property_code)) = (parameter(0), parameter(2)) {
-                    self.object_prop_list(header.transaction_id, handle, property_code);
+                } else if let (Some(handle), Some(format_code), Some(property_code)) =
+                    (parameter(0), parameter(1), parameter(2))
+                {
+                    self.object_prop_list(header.transaction_id, handle, format_code, property_code);
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
