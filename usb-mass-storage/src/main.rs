@@ -13,11 +13,10 @@ use xcore407i_usb_mtp::{
     mtp::MtpUsbClass,
 };
 
-/// Minimal USB bring-up firmware.
+/// Minimal USB/MTP bring-up firmware.
 ///
-/// This intentionally exposes only the MTP interface descriptors. No storage
-/// is mounted and no MTP operations are serviced yet; this stage verifies
-/// OTG_HS + ULPI initialization and host enumeration without touching NAND.
+/// Exposes a read-only embedded demo object over MTP. NAND and LittleFS are
+/// deliberately not mounted in this stage.
 #[entry]
 fn main() -> ! {
     board::configure_system_clock_168mhz();
@@ -51,9 +50,7 @@ fn main() -> ! {
         .build();
 
     loop {
-        // Enumeration and control requests are handled by usb-device. The
-        // class currently advertises endpoints only; it does not claim to
-        // implement the MTP transaction protocol yet.
+        // USB enumeration and MTP transactions are handled by the class.
         let _ = usb_dev.poll(&mut [&mut mtp]);
         core::hint::spin_loop();
     }
