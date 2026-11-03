@@ -690,8 +690,15 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                         // Keep one known-good, in-memory object on the original
                         // command/response path. This isolates USB MTP transport
                         // from the deferred LittleFS read path.
-                        let payload = self.readme[..self.readme_len].to_vec();
-                        self.queue_data(operation::GET_OBJECT, header.transaction_id, &payload, response::OK);
+                        let mut payload = [0u8; 192];
+                        let payload_len = self.readme_len;
+                        payload[..payload_len].copy_from_slice(&self.readme[..payload_len]);
+                        self.queue_data(
+                            operation::GET_OBJECT,
+                            header.transaction_id,
+                            &payload[..payload_len],
+                            response::OK,
+                        );
                     } else {
                         self.pending_get_object = Some((handle, header.transaction_id));
                     }
