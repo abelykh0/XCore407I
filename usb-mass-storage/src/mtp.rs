@@ -1153,6 +1153,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 diagnostics::GET_OBJECT_PROPS_SUPPORTED_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if params.len() != 4 {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 } else if let Some(format) = parameter(0) {
                     self.object_props_supported(header.transaction_id, format);
                 } else {
@@ -1163,6 +1165,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 diagnostics::GET_OBJECT_PROP_DESC_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if params.len() != 8 {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 } else if let (Some(property), Some(format)) = (parameter(0), parameter(1)) {
                     self.object_prop_desc(header.transaction_id, property, format);
                 } else {
