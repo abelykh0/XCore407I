@@ -23,3 +23,6 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
+
+[patch.crates-io]
+usb-device = { path = "../rust-blinker/vendor/usb-device" }
