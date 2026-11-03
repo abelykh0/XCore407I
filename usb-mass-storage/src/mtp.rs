@@ -55,14 +55,14 @@ pub mod diagnostics {
             count -= 1;
             append(out, pos, &digits[count..count + 1]);
         }
-        append(out, pos, b"\\r\\n");
+        append(out, pos, b"\r\n");
     }
 
     /// Create a fixed-size text snapshot suitable for a virtual MTP object.
     pub fn write_status(out: &mut [u8]) -> usize {
         use core::sync::atomic::Ordering;
         let mut pos = 0;
-        append(out, &mut pos, b"XCore407I MTP transport diagnostics\\r\\n");
+        append(out, &mut pos, b"XCore407I MTP transport diagnostics\r\n");
         append_counter(out, &mut pos, b"OUT_PACKETS: ", OUT_PACKETS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OUT_INVALID: ", OUT_INVALID.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"COMMANDS_ACCEPTED: ", COMMANDS_ACCEPTED.load(Ordering::Relaxed));
