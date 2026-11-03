@@ -163,7 +163,7 @@ fn main() -> ! {
             status.name[..14].copy_from_slice(b"MTP-STATUS.txt");
             status.name_len = 14;
             status.handle = object_count as u32 + 1;
-            status.size = 384;
+            status.size = 480;
             status.is_dir = false;
             object_count += 1;
         }
