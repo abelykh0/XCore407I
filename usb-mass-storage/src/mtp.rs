@@ -41,6 +41,13 @@ pub mod diagnostics {
     pub static SEND_OBJECT_INFO_DATA: AtomicU32 = AtomicU32::new(0);
     pub static OBJECT_INFO_DECODE_OK: AtomicU32 = AtomicU32::new(0);
     pub static OBJECT_INFO_DECODE_FAIL: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_BAD_LENGTH: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_BAD_STORAGE: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_BAD_FORMAT: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_BAD_PROTECTION: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_BAD_ASSOC: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_BAD_PARENT: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_BAD_NAME: AtomicU32 = AtomicU32::new(0);
     pub static SEND_OBJECT_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static SEND_OBJECT_DATA: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_DATA_REJECTED: AtomicU32 = AtomicU32::new(0);
@@ -102,6 +109,13 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"SOID=", SEND_OBJECT_INFO_DATA.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"DOK=", OBJECT_INFO_DECODE_OK.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"DBAD=", OBJECT_INFO_DECODE_FAIL.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OLEN=", OBJ_BAD_LENGTH.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OSTO=", OBJ_BAD_STORAGE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OFMT=", OBJ_BAD_FORMAT.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OPRT=", OBJ_BAD_PROTECTION.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OASC=", OBJ_BAD_ASSOC.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OPAR=", OBJ_BAD_PARENT.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"ONAM=", OBJ_BAD_NAME.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOC=", SEND_OBJECT_COMMANDS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOD=", SEND_OBJECT_DATA.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"REJ=", UPLOAD_DATA_REJECTED.load(Ordering::Relaxed));
@@ -1259,6 +1273,7 @@ impl UploadObjectInfo {
     pub fn decode(dataset: &[u8]) -> core::result::Result<Self, MtpError> {
         const FIXED_LEN: usize = 52;
         if dataset.len() < FIXED_LEN + 1 {
+            diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
         let u16_at = |at: usize| u16::from_le_bytes([dataset[at], dataset[at + 1]]);
@@ -1273,19 +1288,35 @@ impl UploadObjectInfo {
         let parent = u32_at(38);
         let association_type = u16_at(42);
         let count = dataset[FIXED_LEN] as usize;
-        if storage_id != PLACEHOLDER_STORAGE_ID
-            || format == 0x3001
-            || protection != 0
-            || association_type != 0
-            || (parent != 0 && parent != 0xffff_ffff)
-            || count < 2
-        {
+        if storage_id != PLACEHOLDER_STORAGE_ID {
+            diagnostics::OBJ_BAD_STORAGE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            return Err(MtpError::InvalidContainerLength);
+        }
+        if format == 0x3001 {
+            diagnostics::OBJ_BAD_FORMAT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            return Err(MtpError::InvalidContainerLength);
+        }
+        if protection != 0 {
+            diagnostics::OBJ_BAD_PROTECTION.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            return Err(MtpError::InvalidContainerLength);
+        }
+        if association_type != 0 {
+            diagnostics::OBJ_BAD_ASSOC.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            return Err(MtpError::InvalidContainerLength);
+        }
+        if parent != 0 && parent != 0xffff_ffff {
+            diagnostics::OBJ_BAD_PARENT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            return Err(MtpError::InvalidContainerLength);
+        }
+        if count < 2 {
+            diagnostics::OBJ_BAD_NAME.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
 
         let string_bytes = count.checked_mul(2).ok_or(MtpError::InvalidContainerLength)?;
         let end = FIXED_LEN + 1 + string_bytes;
-        if end > dataset.len() {
+        if end != dataset.len() {
+            diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
         let mut name = [0u8; 64];
@@ -1294,6 +1325,7 @@ impl UploadObjectInfo {
             let at = FIXED_LEN + 1 + index * 2;
             let unit = u16::from_le_bytes([dataset[at], dataset[at + 1]]);
             if !(0x20..=0x7e).contains(&unit) {
+                diagnostics::OBJ_BAD_NAME.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return Err(MtpError::InvalidContainerLength);
             }
             let byte = unit as u8;
