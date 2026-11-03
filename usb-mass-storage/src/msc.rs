@@ -8,7 +8,7 @@ use usb_device::class::{ControlIn, ControlOut, UsbClass};
 use usb_device::control::{Recipient, RequestType};
 use usb_device::descriptor::DescriptorWriter;
 use usb_device::endpoint::{EndpointAddress, EndpointIn, EndpointOut, EndpointType};
-use usb_device::{Result, UsbError};
+use usb_device::Result;
 
 const CBW_LEN: usize = 31;
 const CSW_LEN: usize = 13;
@@ -112,8 +112,8 @@ impl<'a, B: UsbBus, D: BlockDevice> MassStorage<'a, B, D> {
     fn process_cbw(&mut self, cbw: &[u8]) {
         if cbw.len() != CBW_LEN || u32::from_le_bytes(cbw[0..4].try_into().unwrap()) != CBW_SIGNATURE {
             self.phase = Phase::Idle;
-            self.ep_in.set_stalled(true);
-            self.ep_out.set_stalled(true);
+            self.ep_in.stall();
+            self.ep_out.stall();
             return;
         }
 
@@ -249,8 +249,8 @@ impl<B: UsbBus, D: BlockDevice> UsbClass<B> for MassStorage<'_, B, D> {
             self.sectors_left = 0;
             self.residue = 0;
             self.failed = false;
-            self.ep_in.set_stalled(false);
-            self.ep_out.set_stalled(false);
+            self.ep_in.unstall();
+            self.ep_out.unstall();
             let _ = xfer.accept();
         }
     }
@@ -276,7 +276,7 @@ impl<B: UsbBus, D: BlockDevice> UsbClass<B> for MassStorage<'_, B, D> {
         self.sectors_left = 0;
         self.residue = 0;
         self.failed = false;
-        self.ep_in.set_stalled(false);
-        self.ep_out.set_stalled(false);
+        self.ep_in.unstall();
+        self.ep_out.unstall();
     }
 }
