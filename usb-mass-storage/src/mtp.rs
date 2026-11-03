@@ -377,10 +377,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     bulk_out: EndpointOut<'a, B>,
     bulk_in: EndpointIn<'a, B>,
     event_in: EndpointIn<'a, B>,
-    tx: [[u8; 4096]; 2],
-    tx_active: usize,
-    tx_next_len: usize,
-    tx_next_pending: bool,
+    tx: [u8; 4096],
     tx_len: usize,
     tx_offset: usize,
     tx_chunk_len: usize,
@@ -441,10 +438,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             bulk_out,
             bulk_in,
             event_in,
-            tx: [[0; 4096]; 2],
-            tx_active: 0,
-            tx_next_len: 0,
-            tx_next_pending: false,
+            tx: [0; 4096],
             tx_len: 0,
             tx_offset: 0,
             tx_chunk_len: 0,
@@ -577,12 +571,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         !self.tx_pending && !self.tx_in_flight
     }
 
-    /// True when another GET_OBJECT chunk can be queued without waiting for
-    /// the currently transmitting buffer to finish.
-    pub fn object_data_queue_ready(&self) -> bool {
-        !self.tx_next_pending
-    }
-
     /// Queue one piece of a single MTP GetObject data container. The header is
     /// included only in the first chunk; the final chunk schedules the response.
     pub fn queue_object_data_chunk(
@@ -594,21 +582,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         last: bool,
     ) -> bool {
         let header_len = if first { CONTAINER_HEADER_LEN } else { 0 };
-        if bytes.len() + header_len > 4096 {
+        if bytes.len() + header_len > self.tx.len() || !self.object_tx_ready() {
             return false;
         }
-
-        let active_busy = self.tx_pending || self.tx_in_flight;
-        if first && active_busy {
-            return false;
-        }
-        if self.tx_next_pending {
-            return false;
-        }
-
-        // While the active buffer is being transmitted, fill the other buffer.
-        // Otherwise reuse the active slot for the next sequential chunk.
-        let target = if active_busy { 1 - self.tx_active } else { self.tx_active };
         if first {
             use core::sync::atomic::Ordering;
             diagnostics::GET_OBJECT_USB_SUBMITTED.store(0, Ordering::Relaxed);
@@ -617,20 +593,15 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             diagnostics::GET_OBJECT_RESPONSE_COMPLETED.store(0, Ordering::Relaxed);
             self.get_object_tx_active = true;
             let length = CONTAINER_HEADER_LEN as u32 + total_size;
-            self.tx[target][..4].copy_from_slice(&length.to_le_bytes());
-            self.tx[target][4..6].copy_from_slice(&(ContainerType::Data as u16).to_le_bytes());
-            self.tx[target][6..8].copy_from_slice(&operation::GET_OBJECT.to_le_bytes());
-            self.tx[target][8..12].copy_from_slice(&transaction_id.to_le_bytes());
+            self.tx[..4].copy_from_slice(&length.to_le_bytes());
+            self.tx[4..6].copy_from_slice(&(ContainerType::Data as u16).to_le_bytes());
+            self.tx[6..8].copy_from_slice(&operation::GET_OBJECT.to_le_bytes());
+            self.tx[8..12].copy_from_slice(&transaction_id.to_le_bytes());
         }
-        self.tx[target][header_len..header_len + bytes.len()].copy_from_slice(bytes);
-        if active_busy {
-            self.tx_next_len = header_len + bytes.len();
-            self.tx_next_pending = true;
-        } else {
-            self.tx_len = header_len + bytes.len();
-            self.tx_pending = true;
-            self.tx_is_response = false;
-        }
+        self.tx[header_len..header_len + bytes.len()].copy_from_slice(bytes);
+        self.tx_len = header_len + bytes.len();
+        self.tx_pending = true;
+        self.tx_is_response = false;
         if first {
             self.data_transfer_active = true;
         }
@@ -643,7 +614,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     /// Queue a complete small GetObject data container using the same
     /// single-transfer path as the other MTP data responses.
     pub fn queue_object_data(&mut self, transaction_id: u32, payload: &[u8]) -> bool {
-        if payload.len() + CONTAINER_HEADER_LEN > 4096 || !self.object_tx_ready() {
+        if payload.len() + CONTAINER_HEADER_LEN > self.tx.len() || !self.object_tx_ready() {
             return false;
         }
         self.queue_data(operation::GET_OBJECT, transaction_id, payload, response::OK);
@@ -699,8 +670,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.transaction_active = false;
         self.data_transfer_active = false;
         self.tx_len = 0;
-        self.tx_next_len = 0;
-        self.tx_next_pending = false;
         self.tx_offset = 0;
         self.tx_chunk_len = 0;
         self.tx_pending = false;
@@ -741,12 +710,11 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
     fn queue_data(&mut self, code: u16, transaction_id: u32, payload: &[u8], response_code: u16) {
         let length = CONTAINER_HEADER_LEN + payload.len();
-        let tx = &mut self.tx[self.tx_active];
-        tx[..4].copy_from_slice(&(length as u32).to_le_bytes());
-        tx[4..6].copy_from_slice(&(ContainerType::Data as u16).to_le_bytes());
-        tx[6..8].copy_from_slice(&code.to_le_bytes());
-        tx[8..12].copy_from_slice(&transaction_id.to_le_bytes());
-        tx[12..length].copy_from_slice(payload);
+        self.tx[..4].copy_from_slice(&(length as u32).to_le_bytes());
+        self.tx[4..6].copy_from_slice(&(ContainerType::Data as u16).to_le_bytes());
+        self.tx[6..8].copy_from_slice(&code.to_le_bytes());
+        self.tx[8..12].copy_from_slice(&transaction_id.to_le_bytes());
+        self.tx[12..length].copy_from_slice(payload);
         self.tx_len = length;
         self.tx_offset = 0;
         self.tx_chunk_len = 0;
@@ -762,7 +730,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
     fn queue_response_with_params(&mut self, code: u16, transaction_id: u32, params: &[u32]) {
         self.pending_response = None;
-        if let Ok(length) = encode_response(transaction_id, code, params, &mut self.tx[self.tx_active]) {
+        if let Ok(length) = encode_response(transaction_id, code, params, &mut self.tx) {
             self.tx_len = length;
             self.tx_offset = 0;
             self.tx_chunk_len = 0;
@@ -785,7 +753,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         }
         let remaining = self.tx_len.saturating_sub(self.tx_offset);
         let chunk_len = remaining.min(BULK_MAX_PACKET_SIZE as usize);
-        match self.bulk_in.write(&self.tx[self.tx_active][self.tx_offset..self.tx_offset + chunk_len]) {
+        match self.bulk_in.write(&self.tx[self.tx_offset..self.tx_offset + chunk_len]) {
             Ok(length) if length == chunk_len => {
                 diagnostics::IN_SUBMIT_OK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if self.get_object_tx_active && !self.tx_is_response {
@@ -1664,19 +1632,6 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         }
         self.tx_offset = 0;
         self.tx_len = 0;
-
-        // Hand off immediately to the prefetched buffer, if one is ready.
-        // Switching the active index avoids copying 4 KiB inside the USB ISR.
-        if self.tx_next_pending {
-            self.tx_active = 1 - self.tx_active;
-            self.tx_len = self.tx_next_len;
-            self.tx_next_len = 0;
-            self.tx_next_pending = false;
-            self.tx_offset = 0;
-            self.tx_pending = true;
-            self.tx_is_response = false;
-            return;
-        }
 
         // A data container is followed by its MTP response. The transaction
         // remains active until that response has itself completed.
