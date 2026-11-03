@@ -190,7 +190,8 @@ fn service_get_object(
             let count = if remaining == 0 {
                 0
             } else {
-                file.read(&mut buffer[..remaining.min(buffer.len())])?
+                let read_len = remaining.min(buffer.len());
+                file.read(&mut buffer[..read_len])?
             };
             if remaining != 0 && count == 0 {
                 return Err(littlefs2::io::Error::IO);
