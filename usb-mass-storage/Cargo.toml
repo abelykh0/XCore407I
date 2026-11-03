@@ -1,0 +1,23 @@
+[package]
+name = "xcore407i-usb-mass-storage"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+stm32f4 = { version = "0.16.0", default-features = false, features = ["stm32f407", "rt"] }
+stm32f4xx-hal = { version = "0.23.0", default-features = false, features = ["stm32f407"] }
+panic-halt = "1.0.0"
+usb-device = "0.3.2"
+synopsys-usb-otg = { version = "0.5.0", features = ["hs", "internal-dma"] }
+
+[profile.release]
+codegen-units = 1
+debug = 2
+lto = true
+opt-level = "s"
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
