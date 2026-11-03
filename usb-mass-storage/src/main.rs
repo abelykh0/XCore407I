@@ -249,12 +249,46 @@ fn main() -> ! {
             NVIC::mask(Interrupt::TIM2);
             let (get_request, delete_request, rename_request, info_request, upload_data, upload_abort, last_op, last_tid, response_count) = {
                 let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+
+                // These take_* methods consume their pending request. Select
+                // only the highest-priority request so a lower-priority
+                // request is not silently discarded by the if/else service
+                // chain below.
+                let info_request = mtp.take_send_object_info_request();
+                let upload_data = if info_request.is_none() {
+                    mtp.take_upload_data(&mut upload_buffer)
+                } else {
+                    None
+                };
+                let rename_request = if info_request.is_none() && upload_data.is_none() {
+                    mtp.take_rename_object_request()
+                } else {
+                    None
+                };
+                let delete_request = if info_request.is_none()
+                    && upload_data.is_none()
+                    && rename_request.is_none()
+                {
+                    mtp.take_delete_object_request()
+                } else {
+                    None
+                };
+                let get_request = if info_request.is_none()
+                    && upload_data.is_none()
+                    && rename_request.is_none()
+                    && delete_request.is_none()
+                {
+                    mtp.take_get_object_request()
+                } else {
+                    None
+                };
+
                 (
-                    mtp.take_get_object_request(),
-                    mtp.take_delete_object_request(),
-                    mtp.take_rename_object_request(),
-                    mtp.take_send_object_info_request(),
-                    mtp.take_upload_data(&mut upload_buffer),
+                    get_request,
+                    delete_request,
+                    rename_request,
+                    info_request,
+                    upload_data,
                     mtp.take_upload_abort(),
                     xcore407i_usb_mtp::mtp::diagnostics::GET_OBJECT_LAST_COMMAND_CODE.load(Ordering::Relaxed),
                     xcore407i_usb_mtp::mtp::diagnostics::GET_OBJECT_LAST_COMMAND_TXID.load(Ordering::Relaxed),
