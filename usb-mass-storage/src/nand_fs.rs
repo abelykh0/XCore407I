@@ -272,7 +272,7 @@ impl Storage for NandStorage {
 /// Keep the LittleFS mount alive for the duration of the supplied service closure.
 ///
 /// NAND initialization and all filesystem operations run in the caller's
-////// context (never in the USB polling ISR). This is deliberately mount-only:
+/// context (never in the USB polling ISR). This is deliberately mount-only:
 /// it never formats or erases the NAND.
 pub fn with_mounted<R>(
     service: impl FnOnce(&Filesystem<'_, NandStorage>) -> LfsResult<R>,
