@@ -412,16 +412,16 @@ fn gpio_control_bus_test() {
 
         let mut line = *b"CTRL A:0000 B:0000";
         line[7..11].copy_from_slice(&[
-            hex_digit((read_a >> 12) as u8),
-            hex_digit((read_a >> 11) as u8),
-            hex_digit((read_a >> 5) as u8),
-            hex_digit((read_a >> 4) as u8),
+            b'0' + ((read_a >> 12) & 1) as u8,
+            b'0' + ((read_a >> 11) & 1) as u8,
+            b'0' + ((read_a >> 5) & 1) as u8,
+            b'0' + ((read_a >> 4) & 1) as u8,
         ]);
         line[14..18].copy_from_slice(&[
-            hex_digit((read_b >> 12) as u8),
-            hex_digit((read_b >> 11) as u8),
-            hex_digit((read_b >> 5) as u8),
-            hex_digit((read_b >> 4) as u8),
+            b'0' + ((read_b >> 12) & 1) as u8,
+            b'0' + ((read_b >> 11) & 1) as u8,
+            b'0' + ((read_b >> 5) & 1) as u8,
+            b'0' + ((read_b >> 4) & 1) as u8,
         ]);
         show_usb_status(&line);
         let ce_ok = (read_ce_high & CE != 0) && (read_ce_low & CE == 0);
