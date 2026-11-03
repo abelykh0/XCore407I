@@ -20,6 +20,21 @@ pub const BULK_MAX_PACKET_SIZE: u16 = 512;
 pub const EVENT_MAX_PACKET_SIZE: u16 = 64;
 pub const EVENT_INTERVAL: u8 = 4;
 
+/// Live transport counters for debugger inspection. They intentionally use
+/// atomics because callbacks run from the TIM2 USB polling interrupt.
+pub mod diagnostics {
+    use core::sync::atomic::AtomicU32;
+    pub static OUT_PACKETS: AtomicU32 = AtomicU32::new(0);
+    pub static OUT_INVALID: AtomicU32 = AtomicU32::new(0);
+    pub static COMMANDS_ACCEPTED: AtomicU32 = AtomicU32::new(0);
+    pub static COMMANDS_DEFERRED: AtomicU32 = AtomicU32::new(0);
+    pub static IN_SUBMIT_OK: AtomicU32 = AtomicU32::new(0);
+    pub static IN_SUBMIT_WOULDBLOCK: AtomicU32 = AtomicU32::new(0);
+    pub static IN_COMPLETE: AtomicU32 = AtomicU32::new(0);
+    pub static USB_RESETS: AtomicU32 = AtomicU32::new(0);
+    pub static PENDING_COMMAND_OVERFLOW: AtomicU32 = AtomicU32::new(0);
+}
+
 pub const CONTAINER_HEADER_LEN: usize = 12;
 /// Temporary read-only placeholder store, replaced by the mounted LittleFS backend.
 const PLACEHOLDER_STORAGE_ID: u32 = 0x0001_0001;
@@ -408,10 +423,13 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         }
         match self.bulk_in.write(&self.tx[..self.tx_len]) {
             Ok(length) if length == self.tx_len => {
+                diagnostics::IN_SUBMIT_OK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 self.tx_pending = false;
                 self.tx_in_flight = true;
             }
-            Ok(_) | Err(usb_device::UsbError::WouldBlock) => {}
+            Ok(_) | Err(usb_device::UsbError::WouldBlock) => {
+                diagnostics::IN_SUBMIT_WOULDBLOCK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            }
             Err(_) => {
                 // Keep the packet queued. A later poll retries transient bus errors.
             }
@@ -743,16 +761,20 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         if address != self.bulk_out.address() { return; }
         let mut packet = [0u8; BULK_MAX_PACKET_SIZE as usize];
         if let Ok(length) = self.bulk_out.read(&mut packet) {
+            diagnostics::OUT_PACKETS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             if length < CONTAINER_HEADER_LEN {
+                diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             }
             let Ok(header) = ContainerHeader::decode(&packet[..length]) else {
+                diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             };
             if header.kind != ContainerType::Command
                 || header.length < CONTAINER_HEADER_LEN as u32
                 || header.length as usize > length
             {
+                diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             }
             if self.transaction_active {
@@ -761,9 +783,13 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 if self.pending_command_len == 0 && length <= self.pending_command.len() {
                     self.pending_command[..length].copy_from_slice(&packet[..length]);
                     self.pending_command_len = length;
+                    diagnostics::COMMANDS_DEFERRED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                } else {
+                    diagnostics::PENDING_COMMAND_OVERFLOW.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 }
             } else {
                 self.transaction_active = true;
+                diagnostics::COMMANDS_ACCEPTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 self.handle_command(&packet[..length]);
             }
         }
@@ -771,6 +797,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
 
     fn endpoint_in_complete(&mut self, address: usb_device::endpoint::EndpointAddress) {
         if address != self.bulk_in.address() { return; }
+        diagnostics::IN_COMPLETE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.tx_in_flight = false;
 
         // A data container is followed by its MTP response. The transaction
@@ -806,6 +833,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
     }
 
     fn reset(&mut self) {
+        diagnostics::USB_RESETS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.clear_transport_stalls();
         self.session_open = false;
         self.pending_get_object = None;
