@@ -67,6 +67,9 @@ pub mod diagnostics {
     pub static UPLOAD_TEMP_EXISTS: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_PROPS_SUPPORTED_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_PROP_DESC_COMMANDS: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_PROP_LIST_COMMANDS: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_PROP_LIST_LAST_FORMAT: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_PROP_LIST_LAST_PROPERTY: AtomicU32 = AtomicU32::new(0);
     pub static SET_OBJECT_PROP_VALUE_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static SET_OBJECT_PROP_VALUE_DATA: AtomicU32 = AtomicU32::new(0);
 
@@ -142,6 +145,9 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"TMP=", UPLOAD_TEMP_EXISTS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GOPS=", GET_OBJECT_PROPS_SUPPORTED_COMMANDS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GOPD=", GET_OBJECT_PROP_DESC_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPL=", GET_OBJECT_PROP_LIST_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPLF=", GET_OBJECT_PROP_LIST_LAST_FORMAT.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPLP=", GET_OBJECT_PROP_LIST_LAST_PROPERTY.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOPC=", SET_OBJECT_PROP_VALUE_COMMANDS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOPD=", SET_OBJECT_PROP_VALUE_DATA.load(Ordering::Relaxed));
         pos
@@ -1113,11 +1119,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 }
             }
             operation::GET_OBJECT_PROP_LIST => {
+                diagnostics::GET_OBJECT_PROP_LIST_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let (Some(handle), Some(format_code), Some(property_code)) =
                     (parameter(0), parameter(1), parameter(2))
                 {
+                    diagnostics::GET_OBJECT_PROP_LIST_LAST_FORMAT.store(format_code, core::sync::atomic::Ordering::Relaxed);
+                    diagnostics::GET_OBJECT_PROP_LIST_LAST_PROPERTY.store(property_code, core::sync::atomic::Ordering::Relaxed);
                     self.object_prop_list(header.transaction_id, handle, format_code, property_code);
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
