@@ -23,10 +23,22 @@ pub const EVENT_INTERVAL: u8 = 4;
 pub const CONTAINER_HEADER_LEN: usize = 12;
 /// Temporary read-only placeholder store, replaced by the mounted LittleFS backend.
 const PLACEHOLDER_STORAGE_ID: u32 = 0x0001_0001;
-const DEMO_OBJECT_HANDLE: u32 = 1;
-const DEMO_OBJECT_NAME: &str = "README.txt";
 const DEFAULT_README: &[u8] = b"XCore407I NAND diagnostic pending.\r\n";
 
+/// One entry in the bounded root-directory snapshot supplied by the main loop.
+#[derive(Clone, Copy)]
+pub struct MtpObject {
+    pub handle: u32,
+    pub name: [u8; 64],
+    pub name_len: u8,
+    pub size: u32,
+    pub is_dir: bool,
+}
+
+impl MtpObject {
+    pub const EMPTY: Self = Self { handle: 0, name: [0; 64], name_len: 0, size: 0, is_dir: false };
+    fn name(&self) -> &str { core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("") }
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
 pub enum ContainerType {
@@ -181,6 +193,8 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     readme_len: usize,
     pending_response: Option<(u16, u32)>,
     session_open: bool,
+    objects: [MtpObject; 16],
+    object_count: usize,
 }
 
 impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
@@ -211,6 +225,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             readme_len: DEFAULT_README.len(),
             pending_response: None,
             session_open: false,
+            objects: [MtpObject::EMPTY; 16],
+            object_count: 0,
         }
     }
 
@@ -220,6 +236,17 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.readme[..contents.len()].copy_from_slice(contents);
         self.readme_len = contents.len();
         true
+    }
+
+    /// Replace the bounded root-directory snapshot. Handles remain stable until refreshed.
+    pub fn set_objects(&mut self, objects: &[MtpObject]) {
+        self.objects = [MtpObject::EMPTY; 16];
+        self.object_count = objects.len().min(self.objects.len());
+        self.objects[..self.object_count].copy_from_slice(&objects[..self.object_count]);
+    }
+
+    fn object(&self, handle: u32) -> Option<&MtpObject> {
+        self.objects[..self.object_count].iter().find(|object| object.handle == handle)
     }
 
     pub fn bulk_out(&self) -> &EndpointOut<'a, B> { &self.bulk_out }
