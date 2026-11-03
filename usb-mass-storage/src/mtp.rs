@@ -266,6 +266,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     readme_len: usize,
     pending_response: Option<(u16, u32)>,
     pending_get_object: Option<(u32, u32)>,
+    pending_delete_object: Option<(u32, u32)>,
     session_open: bool,
     objects: [MtpObject; 17],
     object_count: usize,
@@ -306,6 +307,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             readme_len: DEFAULT_README.len(),
             pending_response: None,
             pending_get_object: None,
+            pending_delete_object: None,
             session_open: false,
             objects: [MtpObject::EMPTY; 17],
             object_count: 0,
@@ -337,6 +339,11 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     /// Take a GET_OBJECT request for processing in the main context.
     pub fn take_get_object_request(&mut self) -> Option<(u32, u32)> {
         self.pending_get_object.take()
+    }
+
+    /// Take a DELETE_OBJECT request for processing by LittleFS in main context.
+    pub fn take_delete_object_request(&mut self) -> Option<(u32, u32)> {
+        self.pending_delete_object.take()
     }
 
     /// True when the previous bulk-IN packet has completed and another chunk
@@ -414,6 +421,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.clear_transport_stalls();
         self.session_open = false;
         self.pending_get_object = None;
+        self.pending_delete_object = None;
         self.pending_response = None;
         self.pending_command_len = 0;
         self.transaction_active = false;
@@ -516,7 +524,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
         Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
 
-        let operations: [u16; 11] = [
+        let operations: [u16; 14] = [
             operation::GET_DEVICE_INFO,
             operation::OPEN_SESSION,
             operation::CLOSE_SESSION,
@@ -526,6 +534,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_OBJECT_HANDLES,
             operation::GET_OBJECT_INFO,
             operation::GET_OBJECT,
+            operation::DELETE_OBJECT,
+            operation::SEND_OBJECT_INFO,
+            operation::SEND_OBJECT,
             operation::GET_OBJECT_PROPS_SUPPORTED,
             operation::GET_OBJECT_PROP_LIST,
         ];
@@ -557,7 +568,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let mut pos = 0;
         Self::append_u16(&mut data, &mut pos, 0x0001); // Fixed ROM
         Self::append_u16(&mut data, &mut pos, 0x0002); // Hierarchical filesystem
-        Self::append_u16(&mut data, &mut pos, 0x0001); // Read-only
+        Self::append_u16(&mut data, &mut pos, 0x0003); // Fixed RAM
         Self::append_u64(&mut data, &mut pos, self.capacity_bytes);
         Self::append_u64(&mut data, &mut pos, self.free_bytes);
         Self::append_u32(&mut data, &mut pos, 0);
@@ -580,7 +591,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let mut pos = 0;
         Self::append_u32(&mut data, &mut pos, PLACEHOLDER_STORAGE_ID);
         Self::append_u16(&mut data, &mut pos, if object.is_dir { 0x3001 } else { 0x3000 });
-        Self::append_u16(&mut data, &mut pos, 1); // Read-only
+        Self::append_u16(&mut data, &mut pos, 0); // Read/write
         Self::append_u32(&mut data, &mut pos, object.size);
         Self::append_u16(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
@@ -661,7 +672,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let h = object.handle;
         Self::append_prop_u32(&mut data, &mut pos, h, 0xdc01, PLACEHOLDER_STORAGE_ID);
         Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, if object.is_dir { 0x3001 } else { 0x3000 });
-        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 1);
+        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 0);
         Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, object.size as u64);
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
@@ -772,6 +783,26 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let Some(handle) = parameter(0) {
                     self.object_prop_list(header.transaction_id, handle);
+                } else {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                }
+            }
+            operation::DELETE_OBJECT => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if (params.len() != 4 && params.len() != 8) {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if let Some(handle) = parameter(0) {
+                    if self.object(handle).is_none() {
+                        self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
+                    } else if self.object(handle).map(|object| object.name()) == Some("MTP-README.txt")
+                        || self.object(handle).map(|object| object.name()) == Some("MTP-STATUS.txt") {
+                        self.queue_response(response::ACCESS_DENIED, header.transaction_id);
+                    } else if self.pending_delete_object.is_some() {
+                        self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                    } else {
+                        self.pending_delete_object = Some((handle, header.transaction_id));
+                    }
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
