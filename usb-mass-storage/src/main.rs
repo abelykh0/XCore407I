@@ -61,7 +61,7 @@ fn main() -> ! {
     let mtp_ptr = unsafe { (*ptr::addr_of_mut!(MTP)).as_mut_ptr() };
     unsafe {
         mtp_ptr.write(MtpUsbClass::new(bus));
-        (*mtp_ptr).set_readme(b"NAND full-chip test running...\\r\\n");
+        (*mtp_ptr).set_readme(b"Initializing NAND LittleFS...\\r\\n");
     }
 
     let strings = [
@@ -148,5 +148,5 @@ fn configure_usb_poll_timer(rcc: &pac::RCC, tim2: &pac::TIM2, nvic: &mut NVIC) {
 
     tim2.dier().write(|w| w.uie().set_bit());
     tim2.cr1().write(|w| w.cen().set_bit());
-    unsafe { NVIC::unmask(irq::TIM2); }
+    unsafe { NVIC::unmask(interrupt::TIM2); }
 }
