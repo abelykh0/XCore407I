@@ -12,6 +12,9 @@ panic-halt = "1.0.0"
 usb-device = { path = "../rust-blinker/vendor/usb-device" }
 synopsys-usb-otg = { path = "../rust-blinker/vendor/synopsys-usb-otg", version = "0.5.0", features = ["hs", "internal-dma"] }
 
+[patch.crates-io]
+usb-device = { path = "../rust-blinker/vendor/usb-device" }
+
 [profile.release]
 codegen-units = 1
 debug = 2
