@@ -124,7 +124,7 @@ fn main() -> ! {
         // accessed by the USB polling interrupt.
         let capacity_bytes = fs.total_space() as u64;
         let free_bytes = fs.available_space().unwrap_or(0) as u64;
-        let mut objects = [MtpObject::EMPTY; 16];
+        let mut objects = [MtpObject::EMPTY; 17];
         let mut object_count = 0usize;
         fs.read_dir_and_then(path!("/"), |entries| {
             for entry in entries.skip(2) {
@@ -144,6 +144,18 @@ fn main() -> ! {
             }
             Ok(())
         })?;
+
+        // A virtual status object exposes live USB/MTP counters without
+        // writing diagnostics to NAND. Its payload is generated on each read.
+        if object_count < objects.len() {
+            let status = &mut objects[object_count];
+            status.name[..14].copy_from_slice(b"MTP-STATUS.txt");
+            status.name_len = 14;
+            status.handle = object_count as u32 + 1;
+            status.size = 384;
+            status.is_dir = false;
+            object_count += 1;
+        }
 
         // Publish the diagnostic text and root snapshot atomically relative
         // to TIM2. Handles are 1..N and refer to this snapshot.
