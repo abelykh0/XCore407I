@@ -13,6 +13,7 @@ stm32f4 = { version = "0.16.0", default-features = false, features = ["stm32f407
 stm32f4xx-hal = { version = "0.23.0", default-features = false, features = ["stm32f407"] }
 panic-halt = "1.0.0"
 libm = "0.2"
+littlefs2 = { version = "0.8.1", default-features = false, features = ["c-stubs"] }
 usb-device = { version = "0.3.2", features = ["control-buffer-256"] }
 synopsys-usb-otg = { path = "vendor/synopsys-usb-otg", version = "0.5.0", features = ["hs", "internal-dma"] }
 tinyusb-sys = { path = "vendors/tinyusb-sys", default-features = false, features = ["host", "hid", "stm32f4"] }
