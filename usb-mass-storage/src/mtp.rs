@@ -8,7 +8,7 @@ use usb_device::bus::{InterfaceNumber, StringIndex, UsbBusAllocator};
 use usb_device::class::UsbClass;
 use usb_device::descriptor::DescriptorWriter;
 use usb_device::endpoint::{EndpointIn, EndpointOut, EndpointType};
-use usb_device::{Result, UsbError};
+use usb_device::Result;
 
 /// USB Still Image class / PTP subclass / PTP protocol.
 pub const STILL_IMAGE_CLASS: u8 = 0x06;
@@ -230,9 +230,9 @@ pub trait MtpStorage {
     fn capacity_bytes(&self) -> u64;
     fn free_bytes(&self) -> u64;
     fn object_count(&self) -> u32;
-    fn read_object(&mut self, handle: u32, offset: u64, out: &mut [u8]) -> Result<usize, MtpStorageError>;
+    fn read_object(&mut self, handle: u32, offset: u64, out: &mut [u8]) -> core::result::Result<usize, MtpStorageError>;
     fn write_object(&mut self, handle: u32, offset: u64, data: &[u8]) -> Result<usize, MtpStorageError>;
-    fn delete_object(&mut self, handle: u32) -> Result<(), MtpStorageError>;
+    fn delete_object(&mut self, handle: u32) -> core::result::Result<(), MtpStorageError>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
