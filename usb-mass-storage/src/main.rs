@@ -710,8 +710,11 @@ fn service_rename_object(
     NVIC::mask(Interrupt::TIM2);
     let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
     mtp.set_objects(&objects[..*object_count]);
-    let _ = mtp.queue_main_response(xcore407i_usb_mtp::mtp::response::OK, transaction_id);
     unsafe { NVIC::unmask(Interrupt::TIM2); }
+    // Wait for the previous bulk-IN transfer to complete before queueing the
+    // rename response. Dropping this response leaves Windows believing that
+    // the rename did not complete (or waiting on a stale transaction).
+    queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::OK, transaction_id);
 }
 
 /// Stream one root-level LittleFS file to the host. Each MTP data container is
