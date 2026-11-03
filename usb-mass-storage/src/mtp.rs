@@ -1099,7 +1099,9 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                             self.queue_response(response::INCOMPLETE_TRANSFER, header.transaction_id);
                         }
                     }
-                    _ => diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed),
+                    _ => {
+                        diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    },
                 }
                 return;
             }
