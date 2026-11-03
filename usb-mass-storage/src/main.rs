@@ -997,19 +997,20 @@ fn service_get_object(
     let result = fs.open_file_and_then(&full_path, |file| {
         let mut buffer = [0u8; 512];
         loop {
-            let count = if remaining == 0 {
-                0
-            } else {
-                // The first packet reserves 12 bytes for the MTP header;
-                // later packets can use the full 512-byte HS bulk packet.
-                let payload_limit = if first { 500 } else { buffer.len() };
-                let read_len = remaining.min(payload_limit);
-                file.read(&mut buffer[..read_len])?
-            };
-            if remaining != 0 && count == 0 {
-                return Err(littlefs2::io::Error::IO);
+            // Keep every non-final USB packet full. LittleFS may return a
+            // short read before EOF, but sending that as a short USB packet
+            // would terminate the host's bulk transfer prematurely.
+            let payload_limit = if first { 500 } else { buffer.len() };
+            let wanted = remaining.min(payload_limit);
+            let mut count = 0usize;
+            while count < wanted {
+                let read = file.read(&mut buffer[count..wanted])?;
+                if read == 0 {
+                    return Err(littlefs2::io::Error::IO);
+                }
+                count += read;
             }
-            remaining = remaining.saturating_sub(count);
+            remaining -= count;
             let last = remaining == 0;
             wait_and_queue_object_chunk(
                 transaction_id,
