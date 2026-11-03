@@ -1329,7 +1329,7 @@ impl UploadObjectInfo {
         let string_bytes = count.checked_mul(2).ok_or(MtpError::InvalidContainerLength)?;
         let end = FIXED_LEN + 1 + string_bytes;
         diagnostics::OBJ_EXPECTED_DATASET_LEN.store(end as u32, core::sync::atomic::Ordering::Relaxed);
-        if end != dataset.len() {
+        if end > dataset.len() {
             diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
@@ -1361,6 +1361,38 @@ impl UploadObjectInfo {
             return Err(MtpError::InvalidContainerLength);
         }
 
+        // ObjectInfo has four PTP strings: filename, capture date,
+        // modification date, and keywords. Consume the three metadata
+        // strings after the filename; their contents are not needed here.
+        let mut cursor = end;
+        for _ in 0..3 {
+            if cursor >= dataset.len() {
+                diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                return Err(MtpError::InvalidContainerLength);
+            }
+            let metadata_count = dataset[cursor] as usize;
+            let metadata_bytes = metadata_count.checked_mul(2).ok_or(MtpError::InvalidContainerLength)?;
+            let metadata_start = cursor + 1;
+            let metadata_end = metadata_start.checked_add(metadata_bytes).ok_or(MtpError::InvalidContainerLength)?;
+            if metadata_end > dataset.len() {
+                diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                return Err(MtpError::InvalidContainerLength);
+            }
+            if metadata_count != 0 {
+                let terminator = metadata_end - 2;
+                if u16::from_le_bytes([dataset[terminator], dataset[terminator + 1]]) != 0 {
+                    diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    return Err(MtpError::InvalidContainerLength);
+                }
+            }
+            cursor = metadata_end;
+        }
+        diagnostics::OBJ_EXPECTED_DATASET_LEN.store(cursor as u32, core::sync::atomic::Ordering::Relaxed);
+        if cursor != dataset.len() {
+            diagnostics::OBJ_BAD_LENGTH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            return Err(MtpError::InvalidContainerLength);
+        }
+
         Ok(Self { storage_id, parent, size, name, name_len: name_len as u8 })
     }
 }
@@ -1371,7 +1403,7 @@ mod upload_info_tests {
 
     #[test]
     fn decodes_root_file_object_info() {
-        let mut data = [0u8; 52 + 1 + 12];
+        let mut data = [0u8; 52 + 1 + 12 + 3];
         data[0..4].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
         data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
         data[8..12].copy_from_slice(&1234u32.to_le_bytes());
@@ -1388,7 +1420,7 @@ mod upload_info_tests {
 
     #[test]
     fn accepts_unspecified_object_info_storage_id() {
-        let mut data = [0u8; 52 + 1 + 10];
+        let mut data = [0u8; 52 + 1 + 10 + 3];
         data[0..4].copy_from_slice(&0u32.to_le_bytes());
         data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
         data[8..12].copy_from_slice(&1234u32.to_le_bytes());
@@ -1406,7 +1438,7 @@ mod upload_info_tests {
 
     #[test]
     fn rejects_path_separators() {
-        let mut data = [0u8; 52 + 1 + 8];
+        let mut data = [0u8; 52 + 1 + 8 + 3];
         data[0..4].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
         data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
         data[52] = 4;
