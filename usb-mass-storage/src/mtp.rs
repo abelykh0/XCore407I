@@ -25,7 +25,7 @@ pub const CONTAINER_HEADER_LEN: usize = 12;
 const PLACEHOLDER_STORAGE_ID: u32 = 0x0001_0001;
 const DEMO_OBJECT_HANDLE: u32 = 1;
 const DEMO_OBJECT_NAME: &str = "README.txt";
-const DEMO_OBJECT: &[u8] = b"XCore407I MTP test file.\r\nThis is embedded read-only demo data, not NAND/LittleFS content.\r\n";
+const DEFAULT_README: &[u8] = b"XCore407I NAND diagnostic pending.\r\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
@@ -175,6 +175,8 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     event_in: EndpointIn<'a, B>,
     tx: [u8; 256],
     tx_len: usize,
+    readme: [u8; 192],
+    readme_len: usize,
     pending_response: Option<(u16, u32)>,
     session_open: bool,
 }
@@ -201,9 +203,19 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             event_in,
             tx: [0; 256],
             tx_len: 0,
+            readme: { let mut bytes = [0u8; 192]; bytes[..DEFAULT_README.len()].copy_from_slice(DEFAULT_README); bytes },
+            readme_len: DEFAULT_README.len(),
             pending_response: None,
             session_open: false,
         }
+    }
+
+    /// Replace the read-only README.txt contents before USB polling.
+    pub fn set_readme(&mut self, contents: &[u8]) -> bool {
+        if contents.len() > self.readme.len() { return false; }
+        self.readme[..contents.len()].copy_from_slice(contents);
+        self.readme_len = contents.len();
+        true
     }
 
     pub fn bulk_out(&self) -> &EndpointOut<'a, B> { &self.bulk_out }
@@ -342,7 +354,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u32(&mut data, &mut pos, PLACEHOLDER_STORAGE_ID);
         Self::append_u16(&mut data, &mut pos, 0x3004); // Text
         Self::append_u16(&mut data, &mut pos, 1); // Read-only
-        Self::append_u32(&mut data, &mut pos, DEMO_OBJECT.len() as u32);
+        Self::append_u32(&mut data, &mut pos, self.readme_len as u32);
         Self::append_u16(&mut data, &mut pos, 0); // ThumbFormat
         Self::append_u32(&mut data, &mut pos, 0); // ThumbCompressedSize
         Self::append_u32(&mut data, &mut pos, 0); // ThumbPixWidth
@@ -419,7 +431,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_prop_u32(&mut data, &mut pos, h, 0xdc01, PLACEHOLDER_STORAGE_ID);
         Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, 0x3004);
         Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 1);
-        Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, DEMO_OBJECT.len() as u64);
+        Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, self.readme_len as u64);
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, DEMO_OBJECT_NAME);
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
         Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0xffff_ffff);
@@ -536,7 +548,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 } else if parameter(0) != Some(DEMO_OBJECT_HANDLE) {
                     self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
                 } else {
-                    self.queue_data(operation::GET_OBJECT, header.transaction_id, DEMO_OBJECT, response::OK);
+                    self.queue_data(operation::GET_OBJECT, header.transaction_id, &self.readme[..self.readme_len], response::OK);
                 }
             }
             _ => self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id),
