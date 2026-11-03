@@ -851,22 +851,42 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn object_prop_desc(&mut self, transaction_id: u32, property: u32, format: u32) {
-        // ObjectFileName is a writable PTP/MTP STRING property. Windows uses
-        // this descriptor to determine whether the filename can be changed.
-        if property != 0xdc07 || (format != 0 && format != 0x3000 && format != 0x3001) {
+        if format != 0 && format != 0x3000 && format != 0x3001 {
             self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
             return;
         }
 
-        let mut data = [0u8; 16];
+        // Keep descriptors consistent with GetObjectPropsSupported and
+        // GetObjectPropList. Only ObjectFileName is writable.
+        let (data_type, writable) = match property {
+            0xdc01 | 0xdc0b => (0x0006, false), // StorageID, ParentObject: UINT32
+            0xdc02 | 0xdc03 => (0x0004, false), // ObjectFormat, ProtectionStatus: UINT16
+            0xdc04 => (0x0008, false),          // ObjectSize: UINT64
+            0xdc07 => (0xffff, true),           // ObjectFileName: STRING
+            0xdc09 => (0xffff, false),          // DateModified: STRING
+            _ => {
+                self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
+                return;
+            }
+        };
+
+        let mut data = [0u8; 32];
         let mut pos = 0;
-        Self::append_u16(&mut data, &mut pos, 0xdc07); // ObjectFileName
-        Self::append_u16(&mut data, &mut pos, 0xffff); // STRING
-        data[pos] = 1; // GetSet: writable
+        Self::append_u16(&mut data, &mut pos, property as u16);
+        Self::append_u16(&mut data, &mut pos, data_type);
+        data[pos] = if writable { 1 } else { 0 }; // GetSet
         pos += 1;
-        // Empty PTP STRING: zero UTF-16 code units.
-        data[pos] = 0;
-        pos += 1;
+        match data_type {
+            0x0004 => Self::append_u16(&mut data, &mut pos, 0),
+            0x0006 => Self::append_u32(&mut data, &mut pos, 0),
+            0x0008 => Self::append_u64(&mut data, &mut pos, 0),
+            0xffff => {
+                // Empty PTP STRING: zero UTF-16 code units.
+                data[pos] = 0;
+                pos += 1;
+            }
+            _ => unreachable!(),
+        }
         Self::append_u32(&mut data, &mut pos, 0); // GroupCode
         data[pos] = 0; // FormFlag: none
         pos += 1;
