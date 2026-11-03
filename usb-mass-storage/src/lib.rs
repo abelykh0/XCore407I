@@ -5,5 +5,5 @@
 pub mod board;
 pub mod bus;
 pub mod mtp;
-pub mod nand_diag;
+pub mod nand_fs;
 pub mod usb_hs;
