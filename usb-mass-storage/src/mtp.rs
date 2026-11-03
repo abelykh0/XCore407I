@@ -891,6 +891,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 || self.tx_pending
                 || self.tx_in_flight
                 || self.pending_get_object.is_some()
+                || self.pending_delete_object.is_some()
             {
                 0x2019u16 // Device Busy
             } else {
