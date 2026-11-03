@@ -5,9 +5,9 @@ use core::mem::MaybeUninit;
 use core::ptr;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use cortex_m::peripheral::NVIC;
-use cortex_m_rt::{entry, interrupt};
+use cortex_m_rt::entry;
 use panic_halt as _;
-use stm32f4::stm32f407::interrupt as irq;
+use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::descriptor::lang_id::LangID;
@@ -42,6 +42,7 @@ fn main() -> ! {
     board::configure_system_clock_168mhz();
 
     let peripherals = pac::Peripherals::take().unwrap();
+    let mut core = cortex_m::Peripherals::take().unwrap();
     let mut rcc = peripherals.RCC;
 
     board::configure_ulpi(
@@ -83,7 +84,7 @@ fn main() -> ! {
 
     MTP_PTR.store(mtp_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
-    configure_usb_poll_timer(&rcc, &peripherals.TIM2, &mut cortex_m::Peripherals::take().unwrap().NVIC);
+    configure_usb_poll_timer(&rcc, &peripherals.TIM2, &mut core.NVIC);
 
     // The USB controller is now being polled from TIM2, so enumeration can
     // happen while this destructive test erases/programs/verifies NAND.
@@ -91,13 +92,13 @@ fn main() -> ! {
 
     // Update the MTP object between polling interrupts. Mask TIM2 to ensure
     // the ISR cannot access MTP while set_readme() changes its contents.
-    unsafe { NVIC::mask(irq::TIM2); }
+    unsafe { NVIC::mask(interrupt::TIM2); }
     let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
     let _ = mtp.set_readme(&report[..report_len]);
     peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
     unsafe {
-        NVIC::unpend(irq::TIM2);
-        NVIC::unmask(irq::TIM2);
+        NVIC::unpend(interrupt::TIM2);
+        NVIC::unmask(interrupt::TIM2);
     }
 
     loop {
@@ -141,7 +142,7 @@ fn configure_usb_poll_timer(rcc: &pac::RCC, tim2: &pac::TIM2, nvic: &mut NVIC) {
     tim2.sr().write(|w| w.uif().clear_bit());
 
     unsafe {
-        nvic.set_priority(irq::TIM2, TIM2_PRIORITY << 4);
+        nvic.set_priority(interrupt::TIM2, TIM2_PRIORITY << 4);
         NVIC::unpend(irq::TIM2);
     }
 
