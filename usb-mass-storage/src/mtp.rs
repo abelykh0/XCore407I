@@ -39,6 +39,8 @@ pub mod diagnostics {
     pub static CONTROL_DEVICE_RESET: AtomicU32 = AtomicU32::new(0);
     pub static SEND_OBJECT_INFO_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static SEND_OBJECT_INFO_DATA: AtomicU32 = AtomicU32::new(0);
+    pub static OBJECT_INFO_DECODE_OK: AtomicU32 = AtomicU32::new(0);
+    pub static OBJECT_INFO_DECODE_FAIL: AtomicU32 = AtomicU32::new(0);
     pub static SEND_OBJECT_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static SEND_OBJECT_DATA: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_DATA_REJECTED: AtomicU32 = AtomicU32::new(0);
@@ -94,6 +96,8 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"DRESET=", CONTROL_DEVICE_RESET.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOIC=", SEND_OBJECT_INFO_COMMANDS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOID=", SEND_OBJECT_INFO_DATA.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"DOK=", OBJECT_INFO_DECODE_OK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"DBAD=", OBJECT_INFO_DECODE_FAIL.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOC=", SEND_OBJECT_COMMANDS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOD=", SEND_OBJECT_DATA.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"REJ=", UPLOAD_DATA_REJECTED.load(Ordering::Relaxed));
@@ -1098,10 +1102,12 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                         diagnostics::SEND_OBJECT_INFO_DATA.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                         match UploadObjectInfo::decode(&packet[CONTAINER_HEADER_LEN..length]) {
                             Ok(info) => {
+                                diagnostics::OBJECT_INFO_DECODE_OK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                                 self.pending_send_object_info = Some((header.transaction_id, info));
                                 self.awaiting_send_object_info = None;
                             }
                             Err(_) => {
+                                diagnostics::OBJECT_INFO_DECODE_FAIL.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                                 self.awaiting_send_object_info = None;
                                 self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                             }
