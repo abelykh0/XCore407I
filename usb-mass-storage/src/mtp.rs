@@ -1171,12 +1171,21 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 diagnostics::GET_OBJECT_PROP_LIST_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                } else if let (Some(handle), Some(format_code), Some(property_code)) =
-                    (parameter(0), parameter(1), parameter(2))
+                } else if params.len() != 20 {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else if let (Some(handle), Some(format_code), Some(property_code), Some(group_code), Some(depth)) =
+                    (parameter(0), parameter(1), parameter(2), parameter(3), parameter(4))
                 {
-                    diagnostics::GET_OBJECT_PROP_LIST_LAST_FORMAT.store(format_code, core::sync::atomic::Ordering::Relaxed);
-                    diagnostics::GET_OBJECT_PROP_LIST_LAST_PROPERTY.store(property_code, core::sync::atomic::Ordering::Relaxed);
-                    self.object_prop_list(header.transaction_id, handle, format_code, property_code);
+                    // This implementation currently supports only the
+                    // ungrouped, direct-object form. Do not silently ignore
+                    // GroupCode or Depth and return a misleading property set.
+                    if group_code != 0 || depth != 0 {
+                        self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                    } else {
+                        diagnostics::GET_OBJECT_PROP_LIST_LAST_FORMAT.store(format_code, core::sync::atomic::Ordering::Relaxed);
+                        diagnostics::GET_OBJECT_PROP_LIST_LAST_PROPERTY.store(property_code, core::sync::atomic::Ordering::Relaxed);
+                        self.object_prop_list(header.transaction_id, handle, format_code, property_code);
+                    }
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
