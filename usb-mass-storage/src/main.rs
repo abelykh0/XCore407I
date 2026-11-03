@@ -361,16 +361,16 @@ fn ensure_puid_counter(
         }
     }
 
-    let stored = match fs.attribute(
+    let (stored, counter_missing) = match fs.attribute(
         path!("/"),
         MTP_PUID_COUNTER_ATTRIBUTE_ID,
         &mut stored_counter,
     )? {
         Some(attribute) if attribute.total_size() == 4 && attribute.data().len() == 4 => {
-            u32::from_le_bytes(stored_counter)
+            (u32::from_le_bytes(stored_counter), false)
         }
         Some(_) => return Err(littlefs2::io::Error::CORRUPTION),
-        None => 1,
+        None => (1, true),
     };
 
     if stored == 0 || stored > MTP_PUID_MAX_COUNTER + 1 {
@@ -383,11 +383,7 @@ fn ensure_puid_counter(
     if next > MTP_PUID_MAX_COUNTER + 1 {
         return Err(littlefs2::io::Error::NO_SPACE);
     }
-    if next != stored || fs.attribute(
-        path!("/"),
-        MTP_PUID_COUNTER_ATTRIBUTE_ID,
-        &mut [0u8; 4],
-    )?.is_none() {
+    if counter_missing || next != stored {
         fs.set_attribute(
             path!("/"),
             MTP_PUID_COUNTER_ATTRIBUTE_ID,
