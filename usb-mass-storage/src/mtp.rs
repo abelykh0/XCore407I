@@ -1371,7 +1371,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     } else if self.object(handle).map(|object| object.name()) == Some("MTP-STATUS.txt") {
                         // Snapshot counters directly into the transfer buffer;
                         // this is read-only and does not touch LittleFS.
-                        let mut payload = [0u8; 768];
+                        let mut payload = [0u8; 1536];
                         let payload_len = diagnostics::write_status(&mut payload);
                         payload[payload_len..].fill(b' ');
                         // ObjectInfo advertises exactly 768 bytes. Send the
