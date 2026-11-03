@@ -226,6 +226,10 @@ fn main() -> ! {
         let mut next_object_handle = object_count as u32 + 1;
         let mut pending_upload: Option<(UploadObjectInfo, u32, usize)> = None;
         let mut upload_buffer = [0u8; 512];
+        // Match the NAND page size so four USB HS packets are staged into one
+        // LittleFS append operation.
+        let mut upload_staging = [0u8; nand_fs::PAGE_SIZE];
+        let mut upload_staging_len = 0usize;
 
         loop {
             // Pull commands out of the USB ISR and perform all LittleFS work
@@ -250,6 +254,7 @@ fn main() -> ! {
 
             if upload_abort {
                 pending_upload = None;
+                upload_staging_len = 0;
                 let temp_path = path!("/.mtp-upload.tmp");
                 if fs.exists(&temp_path) {
                     let _ = fs.remove(&temp_path);
@@ -276,6 +281,8 @@ fn main() -> ! {
                     transaction_id,
                     final_packet,
                     &mut pending_upload,
+                    &mut upload_staging,
+                    &mut upload_staging_len,
                 );
             } else if let Some((handle, transaction_id, name, name_len)) = rename_request {
                 service_rename_object(fs, objects, &mut object_count, handle, &name[..name_len as usize], transaction_id);
@@ -617,6 +624,8 @@ fn service_upload_data(
     transaction_id: u32,
     final_packet: bool,
     pending_upload: &mut Option<(UploadObjectInfo, u32, usize)>,
+    staging: &mut [u8; nand_fs::PAGE_SIZE],
+    staging_len: &mut usize,
 ) {
     let Some((info, handle, written_so_far)) = pending_upload.as_mut() else {
         queue_main_mtp_response(
@@ -629,6 +638,7 @@ fn service_upload_data(
     let next_written = match written_so_far.checked_add(length) {
         Some(total) if total <= info.size as usize => total,
         _ => {
+            *staging_len = 0;
             let _ = fs.remove(&path!("/.mtp-upload.tmp"));
             pending_upload.take();
             NVIC::mask(Interrupt::TIM2);
@@ -644,22 +654,45 @@ fn service_upload_data(
     };
 
     let temp_path = path!("/.mtp-upload.tmp");
-    let write_result = fs.open_file_with_options_and_then(
-        |options| options.write(true).append(true),
-        &temp_path,
-        |file| {
-            if length != 0 {
-                let count = file.write(&data[..length])?;
-                if count != length {
+    // Stage up to one NAND page before entering LittleFS. The final packet
+    // flushes any short tail, so no data remains buffered at completion.
+    let next_staging_len = *staging_len + length;
+    if next_staging_len > staging.len() {
+        *staging_len = 0;
+        let _ = fs.remove(&temp_path);
+        pending_upload.take();
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        mtp.finish_upload();
+        unsafe { NVIC::unmask(Interrupt::TIM2); }
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INCOMPLETE_TRANSFER,
+            transaction_id,
+        );
+        return;
+    }
+    staging[*staging_len..next_staging_len].copy_from_slice(&data[..length]);
+
+    let flush_staging = next_staging_len == staging.len() || final_packet;
+    let write_result = if flush_staging {
+        fs.open_file_with_options_and_then(
+            |options| options.write(true).append(true),
+            &temp_path,
+            |file| {
+                let count = file.write(&staging[..next_staging_len])?;
+                if count != next_staging_len {
                     return Err(littlefs2::io::Error::IO);
                 }
-            }
-            if final_packet { file.sync()?; }
-            Ok(())
-        },
-    );
+                if final_packet { file.sync()?; }
+                Ok(())
+            },
+        )
+    } else {
+        Ok(())
+    };
 
     if write_result.is_err() {
+        *staging_len = 0;
         xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_WRITE_FAIL.fetch_add(1, Ordering::Relaxed);
         let _ = fs.remove(&temp_path);
         pending_upload.take();
@@ -673,7 +706,12 @@ fn service_upload_data(
         );
         return;
     }
-    xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_WRITE_OK.fetch_add(1, Ordering::Relaxed);
+    if flush_staging {
+        *staging_len = 0;
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_WRITE_OK.fetch_add(1, Ordering::Relaxed);
+    } else {
+        *staging_len = next_staging_len;
+    }
 
     if !final_packet {
         *written_so_far = next_written;
@@ -681,6 +719,7 @@ fn service_upload_data(
     }
 
     if next_written != info.size as usize {
+        *staging_len = 0;
         let _ = fs.remove(&temp_path);
         pending_upload.take();
         NVIC::mask(Interrupt::TIM2);
