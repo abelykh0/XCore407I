@@ -845,10 +845,11 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             );
             return;
         }
-        // StorageID, ObjectFormat, ProtectionStatus, ObjectSize,
-        // ObjectFileName, ParentObject. DateModified is omitted because the
-        // filesystem snapshot does not currently carry modification times.
-        let props: [u16; 6] = [0xdc01, 0xdc02, 0xdc03, 0xdc04, 0xdc07, 0xdc0b];
+        // Required core properties plus the filesystem name and parent. Name
+        // (DC44) is distinct from ObjectFileName (DC07), but both map to the
+        // same root-level LittleFS filename for these generic objects.
+        // DateModified is omitted because no timestamp is available.
+        let props: [u16; 7] = [0xdc01, 0xdc02, 0xdc03, 0xdc04, 0xdc07, 0xdc0b, 0xdc44];
         let mut data = [0u8; 32];
         data[..4].copy_from_slice(&(props.len() as u32).to_le_bytes());
         for (i, prop) in props.iter().enumerate() {
@@ -865,12 +866,12 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         }
 
         // Keep descriptors consistent with GetObjectPropsSupported and
-        // GetObjectPropList. Only ObjectFileName is writable.
+        // GetObjectPropList. Both filename properties are writable aliases.
         let (data_type, writable) = match property {
             0xdc01 | 0xdc0b => (0x0006, false), // StorageID, ParentObject: UINT32
             0xdc02 | 0xdc03 => (0x0004, false), // ObjectFormat, ProtectionStatus: UINT16
             0xdc04 => (0x0008, false),          // ObjectSize: UINT64
-            0xdc07 => (0xffff, true),           // ObjectFileName: STRING
+            0xdc07 | 0xdc44 => (0xffff, true),   // ObjectFileName / Name: STRING
             _ => {
                 self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
                 return;
@@ -955,9 +956,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let include_size = property_code == 0 || property_code == 0xdc04;
         let include_filename = property_code == 0 || property_code == 0xdc07;
         let include_parent = property_code == 0 || property_code == 0xdc0b;
+        let include_name = property_code == 0 || property_code == 0xdc44;
 
         if !(include_storage_id || include_format || include_protection || include_size
-            || include_filename || include_parent)
+            || include_filename || include_parent || include_name)
         {
             self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
             return;
@@ -968,7 +970,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             + include_protection as u32
             + include_size as u32
             + include_filename as u32
-            + include_parent as u32;
+            + include_parent as u32
+            + include_name as u32;
 
         let mut data = [0u8; 256];
         let mut pos = 0;
@@ -991,6 +994,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         }
         if include_parent {
             Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0); // Root-level object
+        }
+        if include_name {
+            Self::append_prop_string(&mut data, &mut pos, h, 0xdc44, object.name());
         }
         self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &data[..pos], response::OK);
     }
@@ -1161,7 +1167,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 } else if params.len() != 8 {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 } else if let (Some(handle), Some(property)) = (parameter(0), parameter(1)) {
-                    if property != 0xdc07 {
+                    if property != 0xdc07 && property != 0xdc44 {
                         self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id);
                     } else if self.object(handle).is_none() {
                         self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
