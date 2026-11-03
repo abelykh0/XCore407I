@@ -715,6 +715,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::SEND_OBJECT_INFO,
             operation::SEND_OBJECT,
             operation::GET_OBJECT_PROPS_SUPPORTED,
+            operation::GET_OBJECT_PROP_DESC,
             operation::GET_OBJECT_PROP_LIST,
             operation::SET_OBJECT_PROP_VALUE,
         ];
@@ -807,6 +808,28 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             data[at..at + 2].copy_from_slice(&prop.to_le_bytes());
         }
         self.queue_data(operation::GET_OBJECT_PROPS_SUPPORTED, transaction_id, &data[..18], response::OK);
+    }
+
+    fn object_prop_desc(&mut self, transaction_id: u32, property: u32, format: u32) {
+        // ObjectFileName is a writable PTP/MTP STRING property. Windows uses
+        // this descriptor to determine whether the filename can be changed.
+        if property != 0xdc07 || (format != 0 && format != 0x3000 && format != 0x3001) {
+            self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
+            return;
+        }
+
+        let mut data = [0u8; 16];
+        let mut pos = 0;
+        Self::append_u16(&mut data, &mut pos, 0xdc07); // ObjectFileName
+        Self::append_u16(&mut data, &mut pos, 0xffff); // STRING
+        data[pos] = 1; // GetSet: writable
+        pos += 1;
+        data[pos] = 0; // DefaultValue: empty PTP string
+        pos += 1;
+        Self::append_u32(&mut data, &mut pos, 0); // GroupCode
+        data[pos] = 0; // FormFlag: none
+        pos += 1;
+        self.queue_data(operation::GET_OBJECT_PROP_DESC, transaction_id, &data[..pos], response::OK);
     }
 
     fn append_prop_u16(out: &mut [u8], pos: &mut usize, handle: u32, code: u16, value: u16) {
@@ -964,6 +987,15 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let Some(format) = parameter(0) {
                     self.object_props_supported(header.transaction_id, format);
+                } else {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                }
+            }
+            operation::GET_OBJECT_PROP_DESC => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if let (Some(property), Some(format)) = (parameter(0), parameter(1)) {
+                    self.object_prop_desc(header.transaction_id, property, format);
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
