@@ -271,6 +271,33 @@ fn service_get_object(
         return;
     };
     let full_path = path!("/").join(relative_path.as_path());
+
+    // Small objects fit in one MTP data container. Use queue_data(), the same
+    // transport path used by the other working MTP data responses.
+    if object.size <= 500 {
+        let mut contents = [0u8; 500];
+        let mut total = 0usize;
+        let read_result = fs.open_file_and_then(&full_path, |file| {
+            while total < object.size as usize {
+                let count = file.read(&mut contents[total..object.size as usize])?;
+                if count == 0 {
+                    return Err(littlefs2::io::Error::IO);
+                }
+                total += count;
+            }
+            Ok(())
+        });
+        if read_result.is_err() || total != object.size as usize {
+            queue_main_mtp_response(
+                xcore407i_usb_mtp::mtp::response::INCOMPLETE_TRANSFER,
+                transaction_id,
+            );
+            return;
+        }
+        queue_main_mtp_object_data(transaction_id, &contents[..total]);
+        return;
+    }
+
     let mut first = true;
     let mut remaining = object.size as usize;
     let result = fs.open_file_and_then(&full_path, |file| {
@@ -333,6 +360,23 @@ fn wait_and_queue_object_chunk(
                 first,
                 last,
             );
+            unsafe { NVIC::unmask(Interrupt::TIM2); }
+            if queued {
+                break;
+            }
+        } else {
+            unsafe { NVIC::unmask(Interrupt::TIM2); }
+        }
+        core::hint::spin_loop();
+    }
+}
+
+fn queue_main_mtp_object_data(transaction_id: u32, payload: &[u8]) {
+    loop {
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        if mtp.object_tx_ready() {
+            let queued = mtp.queue_object_data(transaction_id, payload);
             unsafe { NVIC::unmask(Interrupt::TIM2); }
             if queued {
                 break;
