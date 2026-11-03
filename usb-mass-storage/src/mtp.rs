@@ -1135,8 +1135,11 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
             // Once the first SendObject packet has supplied the 12-byte MTP
             // header, subsequent USB packets are continuation payload only.
             if self.upload_data_active {
+                let next_received = self.upload_received.checked_add(length);
                 if length == 0
-                    || self.upload_received.checked_add(length).map_or(true, |n| n > self.upload_expected_size)
+                    || length < BULK_MAX_PACKET_SIZE as usize
+                        && next_received != Some(self.upload_expected_size)
+                    || next_received.map_or(true, |n| n > self.upload_expected_size)
                 {
                     diagnostics::UPLOAD_DATA_REJECTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     let transaction_id = self.upload_data_transaction;
@@ -1149,6 +1152,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 self.upload_data_len = length;
                 self.upload_received += length;
                 self.pending_upload_final = self.upload_received == self.upload_expected_size;
+                self.upload_data_active = !self.pending_upload_final;
                 self.pending_upload_data = true;
                 return;
             }
@@ -1198,6 +1202,8 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                         if total_payload == self.upload_expected_size
                             && payload_len <= total_payload
                             && header.length as usize >= length
+                            && (length == BULK_MAX_PACKET_SIZE as usize
+                                || header.length as usize == length)
                         {
                             self.upload_data_transaction = header.transaction_id;
                             self.upload_received = payload_len;
