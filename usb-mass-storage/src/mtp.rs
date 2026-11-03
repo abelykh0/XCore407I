@@ -51,6 +51,10 @@ pub mod diagnostics {
     pub static UPLOAD_FS_WRITE_FAIL: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_FS_RENAME_OK: AtomicU32 = AtomicU32::new(0);
     pub static UPLOAD_FS_RENAME_FAIL: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_PREFLIGHT_REJECT: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_PATH_REJECT: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_NAME_REJECT: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_TEMP_EXISTS: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -108,6 +112,10 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"WR-=", UPLOAD_FS_WRITE_FAIL.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"RN+=", UPLOAD_FS_RENAME_OK.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"RN-=", UPLOAD_FS_RENAME_FAIL.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"PRE=", UPLOAD_PREFLIGHT_REJECT.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"PATH=", UPLOAD_PATH_REJECT.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"NAME=", UPLOAD_NAME_REJECT.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"TMP=", UPLOAD_TEMP_EXISTS.load(Ordering::Relaxed));
         pos
     }
 }
