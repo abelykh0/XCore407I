@@ -331,11 +331,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         *pos += 8;
     }
 
-    fn object_info(&mut self, transaction_id: u32, storage_id: u32, handle: u32) {
-        if storage_id != PLACEHOLDER_STORAGE_ID {
-            self.queue_response(response::INVALID_STORAGE_ID, transaction_id);
-            return;
-        }
+    fn object_info(&mut self, transaction_id: u32, handle: u32) {
         if handle != DEMO_OBJECT_HANDLE {
             self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
             return;
@@ -506,8 +502,12 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::GET_OBJECT_INFO => {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                } else if let (Some(storage_id), Some(handle)) = (parameter(0), parameter(1)) {
-                    self.object_info(header.transaction_id, storage_id, handle);
+                } else if let Some(handle) = parameter(0) {
+                    if params.len() == 4 {
+                        self.object_info(header.transaction_id, handle);
+                    } else {
+                        self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                    }
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
