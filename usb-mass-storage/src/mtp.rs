@@ -704,7 +704,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u16(&mut data, &mut pos, 0x0000); // Read/write
         Self::append_u64(&mut data, &mut pos, self.capacity_bytes);
         Self::append_u64(&mut data, &mut pos, self.free_bytes);
-        Self::append_u32(&mut data, &mut pos, 0);
+        // FreeSpaceInObjects is unknown: zero would tell Windows that the
+        // storage has no remaining object slots, which can make its capacity
+        // indicator appear full even when FreeSpaceInBytes is healthy.
+        Self::append_u32(&mut data, &mut pos, 0xffff_ffff);
         Self::append_ptp_string(&mut data, &mut pos, "Data");
         Self::append_ptp_string(&mut data, &mut pos, "XCORE407I");
         self.queue_data(operation::GET_STORAGE_INFO, transaction_id, &data[..pos], response::OK);
