@@ -825,8 +825,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u16(&mut data, &mut pos, 0xffff); // STRING
         data[pos] = 1; // GetSet: writable
         pos += 1;
-        data[pos] = 0; // DefaultValue: empty PTP string
+        // PTP STRING encoding: one UTF-16 code unit (the terminating NUL).
+        data[pos] = 1;
         pos += 1;
+        Self::append_u16(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0); // GroupCode
         data[pos] = 0; // FormFlag: none
         pos += 1;
