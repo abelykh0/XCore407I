@@ -94,6 +94,8 @@ fn main() -> ! {
         // Build a bounded snapshot of the LittleFS root directory in main
         // context. Directory entries are copied out; no LittleFS object is
         // accessed by the USB polling interrupt.
+        let capacity_bytes = fs.total_space() as u64;
+        let free_bytes = fs.available_space().unwrap_or(0) as u64;
         let mut objects = [MtpObject::EMPTY; 16];
         let mut object_count = 0usize;
         fs.read_dir_and_then(path!("/"), |entries| {
@@ -121,6 +123,7 @@ fn main() -> ! {
         let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
         let _ = mtp.set_readme(&report[..report_len]);
         mtp.set_objects(&objects[..object_count]);
+        mtp.set_storage_stats(capacity_bytes, free_bytes);
         peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
         unsafe {
             NVIC::unpend(Interrupt::TIM2);
