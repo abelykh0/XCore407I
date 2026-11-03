@@ -34,8 +34,12 @@ pub const ERASE_BLOCK_SIZE: usize = PAGE_SIZE * PAGES_PER_BLOCK as usize;
 pub const RESERVED_BLOCKS: usize = 16;
 pub const LOGICAL_BLOCKS: usize = PHYSICAL_BLOCKS as usize - RESERVED_BLOCKS;
 
+/// Keep the 2 KiB logical-to-physical map in static RAM, not on the
+/// small startup stack while LittleFS is being mounted/formatted.
+static mut PHYSICAL_BLOCKS: [u16; LOGICAL_BLOCKS] = [0; LOGICAL_BLOCKS];
+
 pub struct NandStorage {
-    physical_blocks: [u16; LOGICAL_BLOCKS],
+    physical_blocks: &'static mut [u16; LOGICAL_BLOCKS],
     good_blocks: usize,
     factory_bad_blocks: u16,
 }
@@ -149,8 +153,15 @@ impl NandStorage {
             return Err(InitError::WrongDevice);
         }
 
+        // The map contains 1,008 u16 entries (2,016 bytes). Keep it out of
+        // the call stack: this routine runs alongside the USB polling ISR.
+        // Only one NandStorage instance is created for this firmware lifetime.
+        let physical_blocks = unsafe {
+            &mut *core::ptr::addr_of_mut!(PHYSICAL_BLOCKS)
+        };
+        physical_blocks.fill(0);
         let mut storage = Self {
-            physical_blocks: [0; LOGICAL_BLOCKS],
+            physical_blocks,
             good_blocks: 0,
             factory_bad_blocks: 0,
         };
