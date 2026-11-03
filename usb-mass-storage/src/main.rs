@@ -241,7 +241,7 @@ fn main() -> ! {
         let mut upload_staging_len = 0usize;
         let mut last_seen_get_object = (0u32, 0u32);
         let mut pending_trace_response: Option<(u32, u32)> = None;
-        let mut pending_trace_final_data: Option<(u32, u32)> = None;
+        let mut pending_trace_final_data: Option<(u32, u32, u32)> = None;
 
         loop {
             // Pull commands out of the USB ISR and perform all LittleFS work
@@ -307,7 +307,7 @@ fn main() -> ! {
                 pending_trace_response = Some((last_tid, response_count.wrapping_add(1)));
                 let final_count = xcore407i_usb_mtp::mtp::diagnostics::GET_OBJECT_FINAL_DATA_COMPLETED
                     .load(Ordering::Relaxed);
-                pending_trace_final_data = Some((last_tid, final_count.wrapping_add(1)));
+                pending_trace_final_data = Some((last_tid, final_count.wrapping_add(1), get_object_timer_us()));
             }
 
             if upload_abort {
@@ -359,7 +359,7 @@ fn main() -> ! {
                 core::hint::spin_loop();
             }
 
-            if let Some((transaction_id, target_final_count)) = pending_trace_final_data {
+            if let Some((transaction_id, target_final_count, started_us)) = pending_trace_final_data {
                 let completed = xcore407i_usb_mtp::mtp::diagnostics::GET_OBJECT_FINAL_DATA_COMPLETED
                     .load(Ordering::Relaxed);
                 if completed.wrapping_sub(target_final_count) < 0x8000_0000 {
@@ -367,6 +367,11 @@ fn main() -> ! {
                     // final data packet completes; it has also queued the MTP
                     // response and incremented GET_OBJECT_RESPONSE_QUEUED.
                     persist_get_object_trace(fs, b"FINAL_DATA_COMPLETED_RESPONSE_QUEUED", transaction_id);
+                    pending_trace_final_data = None;
+                } else if get_object_timer_us().wrapping_sub(started_us) >= 2_000_000 {
+                    // Capture the final-chunk transport counters even when the
+                    // host/endpoint never completes the data phase.
+                    persist_get_object_trace(fs, b"FINAL_DATA_STALLED", transaction_id);
                     pending_trace_final_data = None;
                 }
             }
