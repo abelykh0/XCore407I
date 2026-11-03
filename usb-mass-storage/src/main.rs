@@ -673,7 +673,7 @@ fn service_rename_object(
         queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::INVALID_PARAMETER, transaction_id);
         return;
     };
-    if old_name.eq_ignore_ascii_case(new_name_str) {
+    if old_name == new_name_str {
         queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::OK, transaction_id);
         return;
     }
