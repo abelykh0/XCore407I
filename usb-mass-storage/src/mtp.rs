@@ -168,6 +168,10 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     bulk_out: EndpointOut<'a, B>,
     bulk_in: EndpointIn<'a, B>,
     event_in: EndpointIn<'a, B>,
+    tx: [u8; 256],
+    tx_len: usize,
+    pending_response: Option<(u16, u32)>,
+    session_open: bool,
 }
 
 impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
@@ -184,7 +188,17 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             .alloc(None, EndpointType::Interrupt, EVENT_MAX_PACKET_SIZE, EVENT_INTERVAL)
             .expect("MTP event IN endpoint allocation failed");
 
-        Self { interface, interface_string, bulk_out, bulk_in, event_in }
+        Self {
+            interface,
+            interface_string,
+            bulk_out,
+            bulk_in,
+            event_in,
+            tx: [0; 256],
+            tx_len: 0,
+            pending_response: None,
+            session_open: false,
+        }
     }
 
     pub fn bulk_out(&self) -> &EndpointOut<'a, B> { &self.bulk_out }
