@@ -37,7 +37,7 @@ Implemented:
   `CloseSession`, `GetStorageIDs`, `GetStorageInfo`, `GetNumObjects`, and
   `GetObjectHandles`.
 - A read-only embedded demo store named `Data`, with a synthetic `README.txt`
-  object. This exercises storage enumeration, object discovery, object metadata,
+  object. This exercises storage enumeration, object discovery, object metadata and property enumeration,
   and file download without touching NAND or LittleFS.
 - A storage abstraction for bounded file streaming.
 
