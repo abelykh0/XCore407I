@@ -1008,12 +1008,19 @@ fn service_get_object(
     let mut first = true;
     let mut remaining = object.size as usize;
     let result = fs.open_file_and_then(&full_path, |file| {
-        let mut buffer = [0u8; 512];
+        // Queue two USB packets per batch. MtpUsbClass owns a separate
+        // 4 KiB transport buffer and splits each batch into 512-byte USB
+        // packets, so the main loop need not wait after every individual
+        // packet. Keep this staging buffer modest to avoid stack pressure.
+        let mut buffer = [0u8; 1024];
         loop {
-            // Keep every non-final USB packet full. LittleFS may return a
-            // short read before EOF, but sending that as a short USB packet
-            // would terminate the host's bulk transfer prematurely.
-            let payload_limit = if first { 500 } else { buffer.len() };
+            // Keep every non-final USB packet full. The first batch reserves
+            // 12 bytes in the MTP transport buffer for the container header.
+            let payload_limit = if first {
+                buffer.len() - xcore407i_usb_mtp::mtp::CONTAINER_HEADER_LEN
+            } else {
+                buffer.len()
+            };
             let wanted = remaining.min(payload_limit);
             let mut count = 0usize;
             while count < wanted {
