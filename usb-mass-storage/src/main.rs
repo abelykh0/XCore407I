@@ -104,7 +104,7 @@ fn main() -> ! {
     // Keep LittleFS mounted for the firmware lifetime. The closure owns the
     // mount, so later main-loop MTP requests can be serviced without remounting
     // or exposing NAND operations to the TIM2 USB polling interrupt.
-    let mounted = nand_fs::with_mounted(|_fs| loop {
+    let mounted = nand_fs::with_mounted::<()>(|_fs| loop {
         core::hint::spin_loop();
     });
     let _ = mounted;
