@@ -1291,10 +1291,14 @@ impl UploadObjectInfo {
         let parent = u32_at(38);
         let association_type = u16_at(42);
         let count = dataset[FIXED_LEN] as usize;
-        if storage_id != PLACEHOLDER_STORAGE_ID {
+        // Some Windows MTP clients put 0 (unspecified) in the ObjectInfo
+        // dataset even though SendObjectInfo's command parameter identifies
+        // the advertised storage. Normalize that sentinel to our storage ID.
+        if storage_id != 0 && storage_id != PLACEHOLDER_STORAGE_ID {
             diagnostics::OBJ_BAD_STORAGE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
+        let storage_id = PLACEHOLDER_STORAGE_ID;
         if format == 0x3001 {
             diagnostics::OBJ_BAD_FORMAT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
@@ -1373,6 +1377,24 @@ mod upload_info_tests {
         let parsed = UploadObjectInfo::decode(&data).unwrap();
         assert_eq!(parsed.size, 1234);
         assert_eq!(&parsed.name[..parsed.name_len as usize], b"test.");
+    }
+
+    #[test]
+    fn accepts_unspecified_object_info_storage_id() {
+        let mut data = [0u8; 52 + 1 + 10];
+        data[0..4].copy_from_slice(&0u32.to_le_bytes());
+        data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
+        data[8..12].copy_from_slice(&1234u32.to_le_bytes());
+        data[38..42].copy_from_slice(&0u32.to_le_bytes());
+        data[52] = 5;
+        for (index, unit) in [b't' as u16, b'e' as u16, b's' as u16, b't' as u16].iter().enumerate() {
+            let at = 53 + index * 2;
+            data[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        let parsed = UploadObjectInfo::decode(&data).unwrap();
+        assert_eq!(parsed.storage_id, PLACEHOLDER_STORAGE_ID);
+        assert_eq!(parsed.size, 1234);
+        assert_eq!(&parsed.name[..parsed.name_len as usize], b"test");
     }
 
     #[test]
