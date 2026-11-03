@@ -400,29 +400,28 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn object_info(&mut self, transaction_id: u32, handle: u32) {
-        if self.object(handle).is_none() {
+        let Some(object) = self.object(handle).copied() else {
             self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
             return;
-        }
-
-        let mut data = [0u8; 160];
+        };
+        let mut data = [0u8; 192];
         let mut pos = 0;
         Self::append_u32(&mut data, &mut pos, PLACEHOLDER_STORAGE_ID);
-        Self::append_u16(&mut data, &mut pos, 0x3004); // Text
+        Self::append_u16(&mut data, &mut pos, if object.is_dir { 0x3001 } else { 0x3000 });
         Self::append_u16(&mut data, &mut pos, 1); // Read-only
-        Self::append_u32(&mut data, &mut pos, self.object(handle).map(|o| o.size).unwrap_or(0));
-        Self::append_u16(&mut data, &mut pos, 0); // ThumbFormat
-        Self::append_u32(&mut data, &mut pos, 0); // ThumbCompressedSize
-        Self::append_u32(&mut data, &mut pos, 0); // ThumbPixWidth
-        Self::append_u32(&mut data, &mut pos, 0); // ThumbPixHeight
-        Self::append_u32(&mut data, &mut pos, 0); // ImagePixWidth
-        Self::append_u32(&mut data, &mut pos, 0); // ImagePixHeight
-        Self::append_u32(&mut data, &mut pos, 0); // ImageBitDepth
-        Self::append_u32(&mut data, &mut pos, 0xffff_ffff); // ParentObject (root)
-        Self::append_u16(&mut data, &mut pos, 0); // AssociationType
-        Self::append_u32(&mut data, &mut pos, 0); // AssociationDesc
-        Self::append_u32(&mut data, &mut pos, 0); // SequenceNumber
-        Self::append_ptp_string(&mut data, &mut pos, self.object(handle).map(|o| o.name()).unwrap_or(""));
+        Self::append_u32(&mut data, &mut pos, object.size);
+        Self::append_u16(&mut data, &mut pos, 0);
+        Self::append_u32(&mut data, &mut pos, 0);
+        Self::append_u32(&mut data, &mut pos, 0);
+        Self::append_u32(&mut data, &mut pos, 0);
+        Self::append_u32(&mut data, &mut pos, 0);
+        Self::append_u32(&mut data, &mut pos, 0);
+        Self::append_u32(&mut data, &mut pos, 0);
+        Self::append_u32(&mut data, &mut pos, 0xffff_ffff);
+        Self::append_u16(&mut data, &mut pos, if object.is_dir { 1 } else { 0 });
+        Self::append_u32(&mut data, &mut pos, 0);
+        Self::append_u32(&mut data, &mut pos, 0);
+        Self::append_ptp_string(&mut data, &mut pos, object.name());
         Self::append_ptp_string(&mut data, &mut pos, "");
         Self::append_ptp_string(&mut data, &mut pos, "");
         Self::append_ptp_string(&mut data, &mut pos, "");
@@ -430,7 +429,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn object_props_supported(&mut self, transaction_id: u32, format: u32) {
-        if format != 0 && format != 0x3004 {
+        if format != 0 && format != 0x3000 && format != 0x3001 {
             self.queue_response(response::OK, transaction_id);
             return;
         }
@@ -475,20 +474,24 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn object_prop_list(&mut self, transaction_id: u32, handle: u32) {
-        if handle != 0 && handle != 0xffff_ffff && self.object(handle).is_none() {
-            self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
+        let selected = if handle == 0 || handle == 0xffff_ffff {
+            self.objects[..self.object_count].first().copied()
+        } else {
+            self.object(handle).copied()
+        };
+        let Some(object) = selected else {
+            self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
             return;
-        }
+        };
         let mut data = [0u8; 256];
         let mut pos = 0;
-        // A single object and seven standard properties.
         Self::append_u32(&mut data, &mut pos, 7);
-        let h = DEMO_OBJECT_HANDLE;
+        let h = object.handle;
         Self::append_prop_u32(&mut data, &mut pos, h, 0xdc01, PLACEHOLDER_STORAGE_ID);
-        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, 0x3004);
+        Self::append_prop_u16(&mut data, &mut pos, h, 0xdc02, if object.is_dir { 0x3001 } else { 0x3000 });
         Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 1);
-        Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, self.readme_len as u64);
-        Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, DEMO_OBJECT_NAME);
+        Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, object.size as u64);
+        Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
         Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0xffff_ffff);
         self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &data[..pos], response::OK);
