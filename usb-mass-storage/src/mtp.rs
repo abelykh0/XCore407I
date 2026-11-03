@@ -129,6 +129,34 @@ pub mod diagnostics {
         append(out, pos, b"\r\n");
     }
 
+    /// Compact persistent trace snapshot: retain the transport and transaction
+    /// fields most useful for diagnosing a failed GET_OBJECT sequence.
+    pub fn write_trace_status(out: &mut [u8]) -> usize {
+        use core::sync::atomic::Ordering;
+        let mut pos = 0;
+        append(out, &mut pos, b"XCore407I MTP trace\\r\\n");
+        append_counter(out, &mut pos, b"GOR=", GET_OBJECT_REQUESTS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GSize=", GET_OBJECT_LAST_SIZE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GRD=", GET_OBJECT_BYTES_READ.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GCH=", GET_OBJECT_CHUNKS_QUEUED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GER=", GET_OBJECT_READ_ERRORS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_TX=", GET_OBJECT_USB_SUBMITTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_CPL=", GET_OBJECT_USB_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_B=", GET_OBJECT_USB_BYTES.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_RSP=", GET_OBJECT_RESPONSE_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL=", GET_OBJECT_FINAL_DATA_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GRSPQ=", GET_OBJECT_RESPONSE_QUEUED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GDEF=", GET_OBJECT_NEXT_COMMAND_DEFERRED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GACTIVE_CMD=", GET_OBJECT_COMMANDS_WHILE_ACTIVE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GLAST_OP=", GET_OBJECT_LAST_COMMAND_CODE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GLAST_TID=", GET_OBJECT_LAST_COMMAND_TXID.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"INC=", IN_COMPLETE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"RESP=", RESPONSE_IN_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"RST=", USB_RESETS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"DEF=", COMMANDS_DEFERRED.load(Ordering::Relaxed));
+        pos
+    }
+
     /// Create a fixed-size text snapshot suitable for a virtual MTP object.
     pub fn write_status(out: &mut [u8]) -> usize {
         use core::sync::atomic::Ordering;
