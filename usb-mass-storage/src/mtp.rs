@@ -328,11 +328,14 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     upload_info_accepted: bool,
     upload_expected_size: usize,
     awaiting_send_object: Option<u32>,
+    upload_data_active: bool,
+    upload_received: usize,
     pending_upload_data: bool,
+    pending_upload_final: bool,
     pending_upload_abort: bool,
     upload_data_transaction: u32,
     upload_data_len: usize,
-    upload_data: [u8; 500],
+    upload_data: [u8; BULK_MAX_PACKET_SIZE as usize],
     session_open: bool,
     objects: [MtpObject; 17],
     object_count: usize,
@@ -379,11 +382,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             upload_info_accepted: false,
             upload_expected_size: 0,
             awaiting_send_object: None,
+            upload_data_active: false,
+            upload_received: 0,
             pending_upload_data: false,
+            pending_upload_final: false,
             pending_upload_abort: false,
             upload_data_transaction: 0,
             upload_data_len: 0,
-            upload_data: [0; 500],
+            upload_data: [0; BULK_MAX_PACKET_SIZE as usize],
             session_open: false,
             objects: [MtpObject::EMPTY; 17],
             object_count: 0,
@@ -441,13 +447,16 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         pending
     }
 
-    /// Copy a completed single-packet SendObject payload into main context.
-    pub fn take_upload_data(&mut self, out: &mut [u8; 500]) -> Option<(u32, usize)> {
+    /// Copy one received SendObject packet payload into main context.
+    /// The USB OUT endpoint remains back-pressured until this slot is consumed.
+    pub fn take_upload_data(&mut self, out: &mut [u8; BULK_MAX_PACKET_SIZE as usize]) -> Option<(u32, usize, bool)> {
         if !self.pending_upload_data { return None; }
         let len = self.upload_data_len;
         out[..len].copy_from_slice(&self.upload_data[..len]);
+        let final_packet = self.pending_upload_final;
         self.pending_upload_data = false;
-        Some((self.upload_data_transaction, len))
+        self.pending_upload_final = false;
+        Some((self.upload_data_transaction, len, final_packet))
     }
 
     /// Clear upload state after finalization or an error.
@@ -455,7 +464,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.upload_info_accepted = false;
         self.upload_expected_size = 0;
         self.awaiting_send_object = None;
+        self.upload_data_active = false;
+        self.upload_received = 0;
         self.pending_upload_data = false;
+        self.pending_upload_final = false;
         self.upload_data_len = 0;
     }
 
@@ -551,7 +563,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.awaiting_send_object_info = None;
         self.pending_send_object_info = None;
         self.awaiting_send_object = None;
+        self.upload_data_active = false;
+        self.upload_received = 0;
         self.pending_upload_data = false;
+        self.pending_upload_final = false;
         self.upload_info_accepted = false;
         self.upload_expected_size = 0;
         self.upload_data_len = 0;
@@ -1108,9 +1123,36 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
 
     fn endpoint_out(&mut self, address: usb_device::endpoint::EndpointAddress) {
         if address != self.bulk_out.address() { return; }
+        // Do not consume another OUT packet until main context has copied and
+        // persisted the previous packet. Leaving the endpoint unread applies
+        // USB bulk NAK back-pressure instead of dropping data.
+        if self.pending_upload_data { return; }
+
         let mut packet = [0u8; BULK_MAX_PACKET_SIZE as usize];
         if let Ok(length) = self.bulk_out.read(&mut packet) {
             diagnostics::OUT_PACKETS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+            // Once the first SendObject packet has supplied the 12-byte MTP
+            // header, subsequent USB packets are continuation payload only.
+            if self.upload_data_active {
+                if length == 0
+                    || self.upload_received.checked_add(length).map_or(true, |n| n > self.upload_expected_size)
+                {
+                    diagnostics::UPLOAD_DATA_REJECTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                    let transaction_id = self.upload_data_transaction;
+                    self.pending_upload_abort = true;
+                    self.finish_upload();
+                    self.queue_response(response::INCOMPLETE_TRANSFER, transaction_id);
+                    return;
+                }
+                self.upload_data[..length].copy_from_slice(&packet[..length]);
+                self.upload_data_len = length;
+                self.upload_received += length;
+                self.pending_upload_final = self.upload_received == self.upload_expected_size;
+                self.pending_upload_data = true;
+                return;
+            }
+
             if length < CONTAINER_HEADER_LEN {
                 diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
@@ -1119,17 +1161,20 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             };
-            if header.length < CONTAINER_HEADER_LEN as u32
-                || header.length as usize != length
-            {
+            if header.length < CONTAINER_HEADER_LEN as u32 {
                 diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             }
+
             if header.kind == ContainerType::Data {
                 match header.code {
                     operation::SEND_OBJECT_INFO
                         if self.awaiting_send_object_info == Some(header.transaction_id) =>
                     {
+                        if header.length as usize != length {
+                            diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                            return;
+                        }
                         diagnostics::SEND_OBJECT_INFO_DATA.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                         match UploadObjectInfo::decode(&packet[CONTAINER_HEADER_LEN..length]) {
                             Ok(info) => {
@@ -1149,14 +1194,18 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                     {
                         diagnostics::SEND_OBJECT_DATA.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                         let payload_len = length - CONTAINER_HEADER_LEN;
-                        if payload_len <= self.upload_data.len()
-                            && payload_len == self.upload_expected_size
-                            && !self.pending_upload_data
+                        let total_payload = (header.length as usize).saturating_sub(CONTAINER_HEADER_LEN);
+                        if total_payload == self.upload_expected_size
+                            && payload_len <= total_payload
+                            && header.length as usize >= length
                         {
+                            self.upload_data_transaction = header.transaction_id;
+                            self.upload_received = payload_len;
                             self.upload_data[..payload_len]
                                 .copy_from_slice(&packet[CONTAINER_HEADER_LEN..length]);
                             self.upload_data_len = payload_len;
-                            self.upload_data_transaction = header.transaction_id;
+                            self.upload_data_active = self.upload_received < self.upload_expected_size;
+                            self.pending_upload_final = !self.upload_data_active;
                             self.pending_upload_data = true;
                             self.awaiting_send_object = None;
                         } else {
@@ -1172,13 +1221,11 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 }
                 return;
             }
-            if header.kind != ContainerType::Command {
+            if header.length as usize != length || header.kind != ContainerType::Command {
                 diagnostics::OUT_INVALID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 return;
             }
             if self.transaction_active {
-                // Do not let a new command overwrite a data packet or response
-                // that is still owned by the bulk-IN endpoint.
                 if self.pending_command_len == 0 && length <= self.pending_command.len() {
                     self.pending_command[..length].copy_from_slice(&packet[..length]);
                     self.pending_command_len = length;
