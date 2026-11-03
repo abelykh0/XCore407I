@@ -7,6 +7,9 @@
 //! whether those blocks are backed by LittleFS, NAND, or a test device.
 
 pub mod block;
+pub mod bus;
+pub mod fat16;
+pub mod image;
 pub mod msc;
 pub mod scsi;
 pub mod usb_hs;
