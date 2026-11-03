@@ -641,6 +641,21 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         !self.tx_pending && !self.tx_in_flight
     }
 
+    /// Snapshot the bulk-IN state for persistent GET_OBJECT diagnostics.
+    /// The caller must exclude the USB polling interrupt while reading it.
+    pub fn transport_trace_state(&self) -> [u32; 8] {
+        [
+            self.tx_len as u32,
+            self.tx_offset as u32,
+            self.tx_chunk_len as u32,
+            self.tx_pending as u32,
+            self.tx_in_flight as u32,
+            self.tx_is_response as u32,
+            self.data_transfer_active as u32,
+            self.pending_response.is_some() as u32,
+        ]
+    }
+
     /// Queue one piece of a single MTP GetObject data container. The header is
     /// included only in the first chunk; the final chunk schedules the response.
     pub fn queue_object_data_chunk(
