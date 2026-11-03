@@ -67,7 +67,7 @@ static mut GET_OBJECT_STAGING: [u8; 4096] = [0; 4096];
 
 // Persistent MTP trace snapshots are appended in main context. The file is
 // added to the MTP object snapshot on the next boot, after the test run.
-static mut MTP_TRACE_BUFFER: [u8; 512] = [0; 512];
+static mut MTP_TRACE_BUFFER: [u8; 768] = [0; 768];
 
 
 #[entry]
