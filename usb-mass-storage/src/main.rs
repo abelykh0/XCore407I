@@ -217,8 +217,8 @@ This file is stored in NAND using LittleFS and read over USB MTP.\r\n",
 fn test_hello_readback(
     fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
 ) -> &'static [u8] {
-    const EXPECTED: &[u8] = b"Hello from XCore407I!\\r\\n\\
-This file is stored in NAND using LittleFS and read over USB MTP.\\r\\n";
+    const EXPECTED: &[u8] = b"Hello from XCore407I!\r\n\\
+This file is stored in NAND using LittleFS and read over USB MTP.\r\n";
     let mut actual = [0u8; 128];
     let mut total = 0usize;
     let result = fs.open_file_and_then(path!("/HELLO.txt"), |file| {
@@ -233,15 +233,15 @@ This file is stored in NAND using LittleFS and read over USB MTP.\\r\\n";
     });
 
     if result.is_err() {
-        return b"LittleFS readback: ERROR opening/reading HELLO.txt\\r\\n";
+        return b"LittleFS readback: ERROR opening/reading HELLO.txt\r\n";
     }
     if total != EXPECTED.len() {
-        return b"LittleFS readback: SHORT READ from HELLO.txt\\r\\n";
+        return b"LittleFS readback: SHORT READ from HELLO.txt\r\n";
     }
     if &actual[..total] != EXPECTED {
-        return b"LittleFS readback: DATA MISMATCH in HELLO.txt\\r\\n";
+        return b"LittleFS readback: DATA MISMATCH in HELLO.txt\r\n";
     }
-    b"LittleFS readback: PASS (HELLO.txt, 90 bytes)\\r\\n"
+    b"LittleFS readback: PASS (HELLO.txt, 90 bytes)\r\n"
 }
 
 /// Stream one root-level LittleFS file to the host. Each MTP data container is
