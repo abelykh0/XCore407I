@@ -85,6 +85,8 @@ pub mod diagnostics {
     pub static GET_OBJECT_READ_US: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_WAIT_US: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_TOTAL_US: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_USB_WOULDBLOCK: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_USB_POLL_LATENCY: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -127,6 +129,8 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"GREAD_US=", GET_OBJECT_READ_US.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GWAIT_US=", GET_OBJECT_WAIT_US.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GTOTAL_US=", GET_OBJECT_TOTAL_US.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_WB=", GET_OBJECT_USB_WOULDBLOCK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_POLL=", GET_OBJECT_USB_POLL_LATENCY.load(Ordering::Relaxed));
         append(out, &mut pos, b"----\r\n");
         append_counter(out, &mut pos, b"OUT=", OUT_PACKETS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"BAD=", OUT_INVALID.load(Ordering::Relaxed));
@@ -385,6 +389,8 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     tx_in_flight: bool,
     tx_is_response: bool,
     get_object_tx_active: bool,
+    get_object_poll_count: u32,
+    get_object_submit_poll: u32,
     // MTP commands are serialized: retain one OUT command that arrives while
     // the current transaction's data/response is still being transmitted.
     transaction_active: bool,
@@ -446,6 +452,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             tx_in_flight: false,
             tx_is_response: false,
             get_object_tx_active: false,
+            get_object_poll_count: 0,
+            get_object_submit_poll: 0,
             transaction_active: false,
             data_transfer_active: false,
             pending_command: [0; BULK_MAX_PACKET_SIZE as usize],
@@ -591,6 +599,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             diagnostics::GET_OBJECT_USB_COMPLETED.store(0, Ordering::Relaxed);
             diagnostics::GET_OBJECT_USB_BYTES.store(0, Ordering::Relaxed);
             diagnostics::GET_OBJECT_RESPONSE_COMPLETED.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_USB_WOULDBLOCK.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_USB_POLL_LATENCY.store(0, Ordering::Relaxed);
             self.get_object_tx_active = true;
             let length = CONTAINER_HEADER_LEN as u32 + total_size;
             self.tx[..4].copy_from_slice(&length.to_le_bytes());
@@ -759,6 +769,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 if self.get_object_tx_active && !self.tx_is_response {
                     diagnostics::GET_OBJECT_USB_SUBMITTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     diagnostics::GET_OBJECT_USB_BYTES.fetch_add(chunk_len as u32, core::sync::atomic::Ordering::Relaxed);
+                    self.get_object_submit_poll = self.get_object_poll_count;
                 }
                 self.tx_pending = false;
                 self.tx_in_flight = true;
@@ -766,6 +777,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             }
             Ok(_) | Err(usb_device::UsbError::WouldBlock) => {
                 diagnostics::IN_SUBMIT_WOULDBLOCK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                if self.get_object_tx_active && !self.tx_is_response {
+                    diagnostics::GET_OBJECT_USB_WOULDBLOCK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                }
             }
             Err(_) => {
                 // Keep the packet queued. A later poll retries transient bus errors.
@@ -1611,6 +1625,12 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
     fn endpoint_in_complete(&mut self, address: usb_device::endpoint::EndpointAddress) {
         if address != self.bulk_in.address() { return; }
         diagnostics::IN_COMPLETE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if self.get_object_tx_active && !self.tx_is_response {
+            diagnostics::GET_OBJECT_USB_POLL_LATENCY.fetch_add(
+                self.get_object_poll_count.wrapping_sub(self.get_object_submit_poll),
+                core::sync::atomic::Ordering::Relaxed,
+            );
+        }
         if self.tx_is_response {
             diagnostics::RESPONSE_IN_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             if self.get_object_tx_active {
@@ -1662,6 +1682,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
     }
 
     fn poll(&mut self) {
+        self.get_object_poll_count = self.get_object_poll_count.wrapping_add(1);
         self.transmit_pending();
     }
 
