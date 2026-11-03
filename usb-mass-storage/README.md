@@ -34,10 +34,14 @@ Implemented:
 - High-Speed PTP/MTP interface descriptor with bulk IN/OUT and interrupt IN endpoints.
 - PTP/MTP container header codec and response-container encoder.
 - Initial MTP command handling for `GetDeviceInfo`, `OpenSession`,
-  `CloseSession`, and `GetStorageIDs` (currently reports zero mounted stores).
+  `CloseSession`, `GetStorageIDs`, `GetStorageInfo`, `GetNumObjects`, and
+  `GetObjectHandles`.
+- A read-only, zero-capacity placeholder storage entry so Windows can exercise
+  storage enumeration. It is explicitly marked `not mounted`; it does not
+  represent the NAND or expose files.
 - A storage abstraction for bounded file streaming.
 
-Bring-up firmware now exists (`src/main.rs`). It initializes the 168 MHz clock, configures the USB3300 ULPI pins, constructs the OTG_HS bus and MTP interface, and polls `usb-device`. It now handles the initial MTP identity/session exchange, but does not mount storage or expose files yet.
+Bring-up firmware now exists (`src/main.rs`). It initializes the 168 MHz clock, configures the USB3300 ULPI pins, constructs the OTG_HS bus and MTP interface, and polls `usb-device`. It now handles the initial MTP identity/session exchange and advertises a placeholder storage entry. It still does not mount LittleFS or expose files.
 
 Not yet implemented:
 - Complete MTP transaction state machine, data-phase recovery, and Windows interoperability.
