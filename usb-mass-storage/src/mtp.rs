@@ -78,32 +78,32 @@ pub mod diagnostics {
     pub fn write_status(out: &mut [u8]) -> usize {
         use core::sync::atomic::Ordering;
         let mut pos = 0;
-        append(out, &mut pos, b"XCore407I MTP transport diagnostics\r\n");
-        append_counter(out, &mut pos, b"OUT_PACKETS: ", OUT_PACKETS.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"OUT_INVALID: ", OUT_INVALID.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"COMMANDS_ACCEPTED: ", COMMANDS_ACCEPTED.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"COMMANDS_DEFERRED: ", COMMANDS_DEFERRED.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"IN_SUBMIT_OK: ", IN_SUBMIT_OK.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"IN_SUBMIT_WOULDBLOCK: ", IN_SUBMIT_WOULDBLOCK.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"IN_COMPLETE: ", IN_COMPLETE.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"USB_RESETS: ", USB_RESETS.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"PENDING_COMMAND_OVERFLOW: ", PENDING_COMMAND_OVERFLOW.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"DATA_IN_COMPLETED: ", DATA_IN_COMPLETED.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"RESPONSE_IN_COMPLETED: ", RESPONSE_IN_COMPLETED.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"CONTROL_GET_STATUS: ", CONTROL_GET_STATUS.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"CONTROL_DEVICE_RESET: ", CONTROL_DEVICE_RESET.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"SEND_OBJECT_INFO_COMMANDS: ", SEND_OBJECT_INFO_COMMANDS.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"SEND_OBJECT_INFO_DATA: ", SEND_OBJECT_INFO_DATA.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"SEND_OBJECT_COMMANDS: ", SEND_OBJECT_COMMANDS.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"SEND_OBJECT_DATA: ", SEND_OBJECT_DATA.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"UPLOAD_DATA_REJECTED: ", UPLOAD_DATA_REJECTED.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"UPLOAD_INFO_ACCEPTED: ", UPLOAD_INFO_ACCEPTED.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"UPLOAD_FS_CREATE_OK: ", UPLOAD_FS_CREATE_OK.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"UPLOAD_FS_CREATE_FAIL: ", UPLOAD_FS_CREATE_FAIL.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"UPLOAD_FS_WRITE_OK: ", UPLOAD_FS_WRITE_OK.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"UPLOAD_FS_WRITE_FAIL: ", UPLOAD_FS_WRITE_FAIL.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"UPLOAD_FS_RENAME_OK: ", UPLOAD_FS_RENAME_OK.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"UPLOAD_FS_RENAME_FAIL: ", UPLOAD_FS_RENAME_FAIL.load(Ordering::Relaxed));
+        append(out, &mut pos, b"XCore407I MTP diagnostics\r\n");
+        append_counter(out, &mut pos, b"OUT=", OUT_PACKETS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"BAD=", OUT_INVALID.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"CMD=", COMMANDS_ACCEPTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"DEF=", COMMANDS_DEFERRED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"INOK=", IN_SUBMIT_OK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"INWB=", IN_SUBMIT_WOULDBLOCK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"INC=", IN_COMPLETE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"RST=", USB_RESETS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"QOVF=", PENDING_COMMAND_OVERFLOW.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"DONE=", DATA_IN_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"RESP=", RESPONSE_IN_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"STAT=", CONTROL_GET_STATUS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"DRESET=", CONTROL_DEVICE_RESET.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SOIC=", SEND_OBJECT_INFO_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SOID=", SEND_OBJECT_INFO_DATA.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SOC=", SEND_OBJECT_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SOD=", SEND_OBJECT_DATA.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"REJ=", UPLOAD_DATA_REJECTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"INFO=", UPLOAD_INFO_ACCEPTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"CR+=", UPLOAD_FS_CREATE_OK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"CR-=", UPLOAD_FS_CREATE_FAIL.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"WR+=", UPLOAD_FS_WRITE_OK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"WR-=", UPLOAD_FS_WRITE_FAIL.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"RN+=", UPLOAD_FS_RENAME_OK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"RN-=", UPLOAD_FS_RENAME_FAIL.load(Ordering::Relaxed));
         pos
     }
 }
@@ -397,6 +397,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
     /// Mark a new destination file as safely created in LittleFS.
     pub fn accept_upload_info(&mut self, info: UploadObjectInfo) {
+        diagnostics::UPLOAD_INFO_ACCEPTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         self.upload_expected_size = info.size as usize;
         self.upload_info_accepted = true;
     }
