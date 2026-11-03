@@ -20,6 +20,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: thumbv7em-none-eabihf
+      - name: Install ARM embedded C compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
       - name: Check firmware library
         working-directory: usb-mass-storage
         run: cargo check --lib --target thumbv7em-none-eabihf
