@@ -1,0 +1,25 @@
+name: USB mass storage firmware checks
+
+on:
+  push:
+    paths:
+      - "usb-mass-storage/**"
+      - "rust-blinker/vendor/usb-device/**"
+      - "rust-blinker/vendor/synopsys-usb-otg/**"
+  pull_request:
+    paths:
+      - "usb-mass-storage/**"
+      - "rust-blinker/vendor/usb-device/**"
+      - "rust-blinker/vendor/synopsys-usb-otg/**"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+      - name: Check firmware library
+        working-directory: usb-mass-storage
+        run: cargo check --lib --target thumbv7em-none-eabihf
