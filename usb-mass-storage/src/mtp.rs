@@ -21,6 +21,8 @@ pub const EVENT_MAX_PACKET_SIZE: u16 = 64;
 pub const EVENT_INTERVAL: u8 = 4;
 
 pub const CONTAINER_HEADER_LEN: usize = 12;
+/// Temporary read-only placeholder store, replaced by the mounted LittleFS backend.
+const PLACEHOLDER_STORAGE_ID: u32 = 0x0001_0001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
@@ -267,11 +269,14 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
         Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
 
-        let operations: [u16; 4] = [
+        let operations: [u16; 7] = [
             operation::GET_DEVICE_INFO,
             operation::OPEN_SESSION,
             operation::CLOSE_SESSION,
             operation::GET_STORAGE_IDS,
+            operation::GET_STORAGE_INFO,
+            operation::GET_NUM_OBJECTS,
+            operation::GET_OBJECT_HANDLES,
         ];
         Self::append_u32(&mut data, &mut pos, operations.len() as u32);
         for value in operations { Self::append_u16(&mut data, &mut pos, value); }
@@ -287,6 +292,31 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "XCORE407I-001");
 
         self.queue_data(operation::GET_DEVICE_INFO, transaction_id, &data[..pos], response::OK);
+    }
+
+
+    fn storage_info(&mut self, transaction_id: u32, storage_id: u32) {
+        if storage_id != PLACEHOLDER_STORAGE_ID {
+            self.queue_response(response::INVALID_STORAGE_ID, transaction_id);
+            return;
+        }
+        // Read-only, zero-capacity placeholder; NAND/LittleFS is not mounted.
+        let mut data = [0u8; 96];
+        let mut pos = 0;
+        Self::append_u16(&mut data, &mut pos, 0x0003); // Fixed ROM
+        Self::append_u16(&mut data, &mut pos, 0x0002); // Hierarchical filesystem
+        Self::append_u16(&mut data, &mut pos, 0x0001); // Read-only
+        Self::append_u64(&mut data, &mut pos, 0);
+        Self::append_u64(&mut data, &mut pos, 0);
+        Self::append_u32(&mut data, &mut pos, 0);
+        Self::append_ptp_string(&mut data, &mut pos, "XCore407I (not mounted)");
+        Self::append_ptp_string(&mut data, &mut pos, "XCORE407I");
+        self.queue_data(operation::GET_STORAGE_INFO, transaction_id, &data[..pos], response::OK);
+    }
+
+    fn append_u64(out: &mut [u8], pos: &mut usize, value: u64) {
+        out[*pos..*pos + 8].copy_from_slice(&value.to_le_bytes());
+        *pos += 8;
     }
 
     fn handle_command(&mut self, packet: &[u8]) {
@@ -329,9 +359,31 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else {
-                    // No storage is advertised until a real LittleFS backend is mounted.
-                    let empty_ids = [0u8; 4];
-                    self.queue_data(operation::GET_STORAGE_IDS, header.transaction_id, &empty_ids, response::OK);
+                    let mut ids = [0u8; 8];
+                    ids[..4].copy_from_slice(&1u32.to_le_bytes());
+                    ids[4..8].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
+                    self.queue_data(operation::GET_STORAGE_IDS, header.transaction_id, &ids, response::OK);
+                }
+            }
+            operation::GET_STORAGE_INFO => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if let Some(storage_id) = parameter(0) {
+                    self.storage_info(header.transaction_id, storage_id);
+                } else {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                }
+            }
+            operation::GET_NUM_OBJECTS | operation::GET_OBJECT_HANDLES => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else if parameter(0) != Some(PLACEHOLDER_STORAGE_ID)
+                    && parameter(0) != Some(0xffff_ffff)
+                {
+                    self.queue_response(response::INVALID_STORAGE_ID, header.transaction_id);
+                } else {
+                    let empty = [0u8; 4]; // uint32 object count = 0
+                    self.queue_data(header.code, header.transaction_id, &empty, response::OK);
                 }
             }
             _ => self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id),
