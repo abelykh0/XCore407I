@@ -9,11 +9,19 @@ use usb_device::class::UsbClass;
 use usb_device::descriptor::DescriptorWriter;
 use usb_device::endpoint::{EndpointIn, EndpointOut, EndpointType};
 use usb_device::Result;
+use stm32f4::stm32f407::TIM5;
 
 /// USB Still Image class / PTP subclass / PTP protocol.
 pub const STILL_IMAGE_CLASS: u8 = 0x06;
 pub const PTP_SUBCLASS: u8 = 0x01;
 pub const PTP_PROTOCOL: u8 = 0x01;
+
+/// Read the free-running 1 MHz TIM5 counter used for transfer timing.
+#[inline]
+fn read_tim5_us() -> u32 {
+    // TIM5 is initialized before USB polling is enabled.
+    unsafe { (*TIM5::ptr()).cnt().read().bits() }
+}
 
 /// USB 2.0 High-Speed maximum packet sizes.
 pub const BULK_MAX_PACKET_SIZE: u16 = 512;
@@ -87,6 +95,8 @@ pub mod diagnostics {
     pub static GET_OBJECT_TOTAL_US: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_USB_WOULDBLOCK: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_USB_POLL_LATENCY: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_USB_LATENCY_US: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_USB_LATENCY_MAX_US: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -131,6 +141,8 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"GTOTAL_US=", GET_OBJECT_TOTAL_US.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_WB=", GET_OBJECT_USB_WOULDBLOCK.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_POLL=", GET_OBJECT_USB_POLL_LATENCY.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_LAT_US=", GET_OBJECT_USB_LATENCY_US.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GUSB_LAT_MAX_US=", GET_OBJECT_USB_LATENCY_MAX_US.load(Ordering::Relaxed));
         append(out, &mut pos, b"----\r\n");
         append_counter(out, &mut pos, b"OUT=", OUT_PACKETS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"BAD=", OUT_INVALID.load(Ordering::Relaxed));
@@ -391,6 +403,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     get_object_tx_active: bool,
     get_object_poll_count: u32,
     get_object_submit_poll: u32,
+    get_object_submit_us: u32,
     // MTP commands are serialized: retain one OUT command that arrives while
     // the current transaction's data/response is still being transmitted.
     transaction_active: bool,
@@ -454,6 +467,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             get_object_tx_active: false,
             get_object_poll_count: 0,
             get_object_submit_poll: 0,
+            get_object_submit_us: 0,
             transaction_active: false,
             data_transfer_active: false,
             pending_command: [0; BULK_MAX_PACKET_SIZE as usize],
@@ -601,6 +615,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             diagnostics::GET_OBJECT_RESPONSE_COMPLETED.store(0, Ordering::Relaxed);
             diagnostics::GET_OBJECT_USB_WOULDBLOCK.store(0, Ordering::Relaxed);
             diagnostics::GET_OBJECT_USB_POLL_LATENCY.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_USB_LATENCY_US.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_USB_LATENCY_MAX_US.store(0, Ordering::Relaxed);
             self.get_object_tx_active = true;
             let length = CONTAINER_HEADER_LEN as u32 + total_size;
             self.tx[..4].copy_from_slice(&length.to_le_bytes());
@@ -770,6 +786,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     diagnostics::GET_OBJECT_USB_SUBMITTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     diagnostics::GET_OBJECT_USB_BYTES.fetch_add(chunk_len as u32, core::sync::atomic::Ordering::Relaxed);
                     self.get_object_submit_poll = self.get_object_poll_count;
+                    self.get_object_submit_us = read_tim5_us();
                 }
                 self.tx_pending = false;
                 self.tx_in_flight = true;
@@ -1626,6 +1643,25 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         if address != self.bulk_in.address() { return; }
         diagnostics::IN_COMPLETE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         if self.get_object_tx_active && !self.tx_is_response {
+            let elapsed_us = read_tim5_us().wrapping_sub(self.get_object_submit_us);
+            diagnostics::GET_OBJECT_USB_LATENCY_US.fetch_add(
+                elapsed_us,
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            let mut previous = diagnostics::GET_OBJECT_USB_LATENCY_MAX_US.load(
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            while elapsed_us > previous {
+                match diagnostics::GET_OBJECT_USB_LATENCY_MAX_US.compare_exchange_weak(
+                    previous,
+                    elapsed_us,
+                    core::sync::atomic::Ordering::Relaxed,
+                    core::sync::atomic::Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(actual) => previous = actual,
+                }
+            }
             diagnostics::GET_OBJECT_USB_POLL_LATENCY.fetch_add(
                 self.get_object_poll_count.wrapping_sub(self.get_object_submit_poll),
                 core::sync::atomic::Ordering::Relaxed,
