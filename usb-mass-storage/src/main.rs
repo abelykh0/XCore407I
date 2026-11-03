@@ -8,6 +8,8 @@ use cortex_m::peripheral::NVIC;
 use cortex_m_rt::entry;
 use panic_halt as _;
 use littlefs2::path;
+use littlefs2::path::PathBuf;
+use littlefs2::io::Read as LittleFsRead;
 use stm32f4::stm32f407::{interrupt, Interrupt};
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
@@ -131,11 +133,134 @@ fn main() -> ! {
         }
 
         loop {
-            core::hint::spin_loop();
+            // Pull commands out of the USB ISR and perform all LittleFS work
+            // here, with TIM2 free to keep servicing USB HS.
+            NVIC::mask(Interrupt::TIM2);
+            let request = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) }
+                .take_get_object_request();
+            peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
+            unsafe {
+                NVIC::unpend(Interrupt::TIM2);
+                NVIC::unmask(Interrupt::TIM2);
+            }
+
+            if let Some((handle, transaction_id)) = request {
+                service_get_object(fs, &objects, object_count, handle, transaction_id);
+            } else {
+                core::hint::spin_loop();
+            }
         }
     });
     let _ = mounted;
     loop {
+        core::hint::spin_loop();
+    }
+}
+
+
+/// Stream one root-level LittleFS file to the host. Each MTP data container is
+/// emitted in bounded 244-byte payload chunks; no whole-file buffer is used.
+fn service_get_object(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    objects: &[MtpObject; 16],
+    object_count: usize,
+    handle: u32,
+    transaction_id: u32,
+) {
+    let Some(object) = objects[..object_count].iter().find(|item| item.handle == handle).copied() else {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::INVALID_OBJECT_HANDLE, transaction_id);
+        return;
+    };
+    if object.is_dir {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::OPERATION_NOT_SUPPORTED, transaction_id);
+        return;
+    }
+
+    let name = core::str::from_utf8(&object.name[..object.name_len as usize]).unwrap_or("");
+    let Ok(relative_path) = PathBuf::try_from(name) else {
+        queue_main_mtp_response(xcore407i_usb_mtp::mtp::response::GENERAL_ERROR, transaction_id);
+        return;
+    };
+    let full_path = path!("/").join(relative_path.as_path());
+    let mut first = true;
+    let mut remaining = object.size as usize;
+    let result = fs.open_file_and_then(&full_path, |file| {
+        let mut buffer = [0u8; 244];
+        loop {
+            let count = if remaining == 0 {
+                0
+            } else {
+                file.read(&mut buffer[..remaining.min(buffer.len())])?
+            };
+            if remaining != 0 && count == 0 {
+                return Err(littlefs2::io::Error::IO);
+            }
+            remaining = remaining.saturating_sub(count);
+            let last = remaining == 0;
+            wait_and_queue_object_chunk(
+                transaction_id,
+                object.size,
+                &buffer[..count],
+                first,
+                last,
+            );
+            first = false;
+            if last {
+                break;
+            }
+        }
+        Ok(())
+    });
+
+    if result.is_err() {
+        // If a NAND read fails after a partial data container, terminate the
+        // transfer with an explicit incomplete-transfer response.
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INCOMPLETE_TRANSFER,
+            transaction_id,
+        );
+    }
+}
+
+fn wait_and_queue_object_chunk(
+    transaction_id: u32,
+    total_size: u32,
+    bytes: &[u8],
+    first: bool,
+    last: bool,
+) {
+    loop {
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        if mtp.object_tx_ready() {
+            let queued = mtp.queue_object_data_chunk(
+                transaction_id,
+                total_size,
+                bytes,
+                first,
+                last,
+            );
+            unsafe { NVIC::unmask(Interrupt::TIM2); }
+            if queued {
+                break;
+            }
+        } else {
+            unsafe { NVIC::unmask(Interrupt::TIM2); }
+        }
+        core::hint::spin_loop();
+    }
+}
+
+fn queue_main_mtp_response(code: u16, transaction_id: u32) {
+    loop {
+        NVIC::mask(Interrupt::TIM2);
+        let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+        if mtp.object_tx_ready() {
+            let _ = mtp.queue_main_response(code, transaction_id);
+            unsafe { NVIC::unmask(Interrupt::TIM2); }
+            break;
+        }
+        unsafe { NVIC::unmask(Interrupt::TIM2); }
         core::hint::spin_loop();
     }
 }
