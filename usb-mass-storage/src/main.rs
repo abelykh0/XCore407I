@@ -222,7 +222,7 @@ fn main() -> ! {
             if let Some((transaction_id, info)) = info_request {
                 service_send_object_info(
                     fs,
-                    &objects,
+                    objects,
                     object_count,
                     info,
                     transaction_id,
@@ -245,13 +245,13 @@ fn main() -> ! {
             } else if let Some((handle, transaction_id)) = delete_request {
                 service_delete_object(
                     fs,
-                    &mut objects,
+                    objects,
                     &mut object_count,
                     handle,
                     transaction_id,
                 );
             } else if let Some((handle, transaction_id)) = get_request {
-                service_get_object(fs, &objects, object_count, handle, transaction_id);
+                service_get_object(fs, objects, object_count, handle, transaction_id);
             } else {
                 core::hint::spin_loop();
             }
