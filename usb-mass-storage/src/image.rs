@@ -11,6 +11,18 @@ pub trait ImageFile {
     fn read_at(&mut self, offset: u64, data: &mut [u8]) -> Result<(), BlockError>;
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<(), BlockError>;
     fn sync(&mut self) -> Result<(), BlockError>;
+
+    /// Clear the complete image while preserving its logical size.
+    fn reset(&mut self) -> Result<(), BlockError> {
+        let zeros = [0u8; 4096];
+        let mut offset = 0u64;
+        while offset < self.len() {
+            let n = (self.len() - offset).min(zeros.len() as u64) as usize;
+            self.write_at(offset, &zeros[..n])?;
+            offset += n as u64;
+        }
+        self.sync()
+    }
 }
 
 pub struct ImageBlockDevice<F: ImageFile> {
