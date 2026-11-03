@@ -822,7 +822,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u32(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
-        Self::append_u32(&mut data, &mut pos, 0xffff_ffff);
+        Self::append_u32(&mut data, &mut pos, 0); // ParentObject: root-level object
         Self::append_u16(&mut data, &mut pos, if object.is_dir { 1 } else { 0 });
         Self::append_u32(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
@@ -990,7 +990,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
         }
         if include_parent {
-            Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0xffff_ffff);
+            Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0); // Root-level object
         }
         self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &data[..pos], response::OK);
     }
