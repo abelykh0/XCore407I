@@ -208,7 +208,7 @@ fn main() -> ! {
             status.name[..14].copy_from_slice(b"MTP-STATUS.txt");
             status.name_len = 14;
             status.handle = object_count as u32 + 1;
-            status.size = 768;
+            status.size = 1536;
             status.is_dir = false;
             status.puid = make_puid(&device_uid, MTP_STATUS_PUID_COUNTER);
             object_count += 1;
