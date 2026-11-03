@@ -417,32 +417,6 @@ fn persist_get_object_trace(
     let status_len = diagnostics::write_trace_status(&mut buffer[pos..]);
     pos += status_len;
 
-    // Capture the live packet state at each trace event. Mask TIM2 so this
-    // snapshot cannot observe a half-updated endpoint completion transition.
-    NVIC::mask(Interrupt::TIM2);
-    let tx_state = unsafe {
-        (&*MTP_PTR.load(Ordering::Acquire)).transport_trace_state()
-    };
-    unsafe {
-        NVIC::unpend(Interrupt::TIM2);
-        NVIC::unmask(Interrupt::TIM2);
-    }
-    for (label, value) in [
-        (b"GTX_LEN=" as &[u8], tx_state[0]),
-        (b"GTX_OFF=", tx_state[1]),
-        (b"GTX_PKT=", tx_state[2]),
-        (b"GTX_PEND=", tx_state[3]),
-        (b"GTX_FLIGHT=", tx_state[4]),
-        (b"GTX_RESP=", tx_state[5]),
-        (b"GDATA_ACTIVE=", tx_state[6]),
-        (b"GPENDING_RSP=", tx_state[7]),
-    ] {
-        buffer[pos..pos + label.len()].copy_from_slice(label);
-        pos += label.len();
-        pos += append_trace_decimal(&mut buffer[pos..], value);
-        buffer[pos..pos + 2].copy_from_slice(b"\\r\\n");
-        pos += 2;
-    }
     let end = b"=== END TRACE ===\r\n";
     if pos + end.len() <= buffer.len() {
         buffer[pos..pos + end.len()].copy_from_slice(end);
