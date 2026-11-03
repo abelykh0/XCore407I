@@ -175,6 +175,8 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     event_in: EndpointIn<'a, B>,
     tx: [u8; 256],
     tx_len: usize,
+    tx_pending: bool,
+    tx_in_flight: bool,
     readme: [u8; 192],
     readme_len: usize,
     pending_response: Option<(u16, u32)>,
@@ -203,6 +205,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             event_in,
             tx: [0; 256],
             tx_len: 0,
+            tx_pending: false,
+            tx_in_flight: false,
             readme: { let mut bytes = [0u8; 192]; bytes[..DEFAULT_README.len()].copy_from_slice(DEFAULT_README); bytes },
             readme_len: DEFAULT_README.len(),
             pending_response: None,
@@ -262,8 +266,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx[8..12].copy_from_slice(&transaction_id.to_le_bytes());
         self.tx[12..length].copy_from_slice(payload);
         self.tx_len = length;
+        self.tx_pending = true;
+        self.tx_in_flight = false;
         self.pending_response = Some((response_code, transaction_id));
-        let _ = self.bulk_in.write(&self.tx[..self.tx_len]);
     }
 
     fn queue_response(&mut self, code: u16, transaction_id: u32) {
@@ -271,12 +276,34 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn queue_response_with_params(&mut self, code: u16, transaction_id: u32, params: &[u32]) {
-        let mut response_bytes = [0u8; 32];
-        if let Ok(length) = encode_response(transaction_id, code, params, &mut response_bytes) {
-            let _ = self.bulk_in.write(&response_bytes[..length]);
-        }
         self.pending_response = None;
-        self.tx_len = 0;
+        self.tx_pending = false;
+        self.tx_in_flight = false;
+        if let Ok(length) = encode_response(transaction_id, code, params, &mut self.tx) {
+            self.tx_len = length;
+            self.tx_pending = true;
+        } else {
+            self.tx_len = 0;
+        }
+    }
+
+    /// Submit queued MTP data only when the USB IN endpoint accepts it.
+    /// A WouldBlock is normal while the previous packet is still in flight;
+    /// keep the packet queued and retry on the next USB poll.
+    fn transmit_pending(&mut self) {
+        if !self.tx_pending || self.tx_in_flight || self.tx_len == 0 {
+            return;
+        }
+        match self.bulk_in.write(&self.tx[..self.tx_len]) {
+            Ok(length) if length == self.tx_len => {
+                self.tx_pending = false;
+                self.tx_in_flight = true;
+            }
+            Ok(_) | Err(usb_device::UsbError::WouldBlock) => {}
+            Err(_) => {
+                // Keep the packet queued. A later poll retries transient bus errors.
+            }
+        }
     }
 
     fn device_info(&mut self, transaction_id: u32) {
@@ -585,9 +612,14 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
 
     fn endpoint_in_complete(&mut self, address: usb_device::endpoint::EndpointAddress) {
         if address != self.bulk_in.address() { return; }
-        if let Some((code, transaction_id)) = self.pending_response {
+        self.tx_in_flight = false;
+        if let Some((code, transaction_id)) = self.pending_response.take() {
             self.queue_response(code, transaction_id);
         }
+    }
+
+    fn poll(&mut self) {
+        self.transmit_pending();
     }
 
     fn reset(&mut self) {
@@ -595,6 +627,8 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         self.session_open = false;
         self.pending_response = None;
         self.tx_len = 0;
+        self.tx_pending = false;
+        self.tx_in_flight = false;
     }
 }
 
