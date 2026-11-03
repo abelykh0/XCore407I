@@ -946,13 +946,15 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 
     fn object_prop_list(&mut self, transaction_id: u32, handle: u32, format_code: u32, property_code: u32) {
-        let selected = if handle == 0 || handle == 0xffff_ffff {
-            self.objects[..self.object_count].first().copied()
-        } else {
-            self.object(handle).copied()
-        };
-        let Some(object) = selected else {
-            self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &[0, 0, 0, 0], response::OK);
+        // ObjectHandle 0xffffffff requests every object. The current response
+        // builder is bounded to one 4096-byte transaction buffer, so do not
+        // misrepresent that request by returning only the first object's data.
+        if handle == 0xffff_ffff {
+            self.queue_response(response::OPERATION_NOT_SUPPORTED, transaction_id);
+            return;
+        }
+        let Some(object) = self.object(handle).copied() else {
+            self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
             return;
         };
 
