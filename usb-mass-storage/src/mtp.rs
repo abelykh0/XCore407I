@@ -746,6 +746,15 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
             if length < CONTAINER_HEADER_LEN {
                 return;
             }
+            let Ok(header) = ContainerHeader::decode(&packet[..length]) else {
+                return;
+            };
+            if header.kind != ContainerType::Command
+                || header.length < CONTAINER_HEADER_LEN as u32
+                || header.length as usize > length
+            {
+                return;
+            }
             if self.transaction_active {
                 // Do not let a new command overwrite a data packet or response
                 // that is still owned by the bulk-IN endpoint.
