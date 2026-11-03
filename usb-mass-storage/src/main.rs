@@ -185,7 +185,7 @@ fn service_get_object(
     let mut first = true;
     let mut remaining = object.size as usize;
     let result = fs.open_file_and_then(&full_path, |file| {
-        let mut buffer = [0u8; 244];
+        let mut buffer = [0u8; 500];
         loop {
             let count = if remaining == 0 {
                 0
