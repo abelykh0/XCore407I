@@ -30,7 +30,7 @@ pub const PAGE_SIZE: usize = 2048;
 pub const SPARE_SIZE: usize = 64;
 pub const PAGES_PER_BLOCK: u32 = 64;
 pub const PHYSICAL_BLOCKS: u32 = 1024;
-pub const BLOCK_SIZE: usize = PAGE_SIZE * PAGES_PER_BLOCK as usize;
+pub const ERASE_BLOCK_SIZE: usize = PAGE_SIZE * PAGES_PER_BLOCK as usize;
 pub const RESERVED_BLOCKS: usize = 16;
 pub const LOGICAL_BLOCKS: usize = PHYSICAL_BLOCKS as usize - RESERVED_BLOCKS;
 
@@ -183,7 +183,7 @@ impl NandStorage {
     }
 
     pub fn factory_bad_blocks(&self) -> u16 { self.factory_bad_blocks }
-    pub fn logical_capacity(&self) -> usize { LOGICAL_BLOCKS * BLOCK_SIZE }
+    pub fn logical_capacity(&self) -> usize { LOGICAL_BLOCKS * ERASE_BLOCK_SIZE }
 
     fn physical_block(&self, logical: usize) -> Option<u16> {
         self.physical_blocks.get(logical).copied()
@@ -196,7 +196,7 @@ impl Storage for NandStorage {
 
     const READ_SIZE: usize = PAGE_SIZE;
     const WRITE_SIZE: usize = PAGE_SIZE;
-    const BLOCK_SIZE: usize = BLOCK_SIZE;
+    const BLOCK_SIZE: usize = ERASE_BLOCK_SIZE;
     const BLOCK_COUNT: usize = LOGICAL_BLOCKS;
     const BLOCK_CYCLES: isize = 100;
 
@@ -204,15 +204,15 @@ impl Storage for NandStorage {
         if off % PAGE_SIZE != 0 || buf.len() % PAGE_SIZE != 0 {
             return Err(LfsError::IO);
         }
-        let capacity = Self::BLOCK_COUNT * Self::BLOCK_SIZE;
+        let capacity = Self::BLOCK_COUNT * ERASE_BLOCK_SIZE;
         if off.checked_add(buf.len()).filter(|&end| end <= capacity).is_none() {
             return Err(LfsError::IO);
         }
 
         for (index, page_buf) in buf.chunks_exact_mut(PAGE_SIZE).enumerate() {
             let absolute = off + index * PAGE_SIZE;
-            let logical_block = absolute / BLOCK_SIZE;
-            let page_in_block = (absolute % BLOCK_SIZE) / PAGE_SIZE;
+            let logical_block = absolute / ERASE_BLOCK_SIZE;
+            let page_in_block = (absolute % ERASE_BLOCK_SIZE) / PAGE_SIZE;
             let physical = self.physical_block(logical_block).ok_or(LfsError::IO)?;
             let page = physical as u32 * PAGES_PER_BLOCK + page_in_block as u32;
             if !read_page(page, 0, page_buf) { return Err(LfsError::IO); }
@@ -241,7 +241,7 @@ impl Storage for NandStorage {
     }
 
     fn erase(&mut self, off: usize, len: usize) -> LfsResult<usize> {
-        if off % BLOCK_SIZE != 0 || len == 0 || len % BLOCK_SIZE != 0 {
+        if off % ERASE_BLOCK_SIZE != 0 || len == 0 || len % ERASE_BLOCK_SIZE != 0 {
             return Err(LfsError::IO);
         }
         let capacity = Self::BLOCK_COUNT * Self::BLOCK_SIZE;
@@ -249,7 +249,7 @@ impl Storage for NandStorage {
             return Err(LfsError::IO);
         }
 
-        for logical in (off / BLOCK_SIZE)..((off + len) / BLOCK_SIZE) {
+        for logical in (off / ERASE_BLOCK_SIZE)..((off + len) / ERASE_BLOCK_SIZE) {
             let physical = self.physical_block(logical).ok_or(LfsError::IO)?;
             if !erase_physical_block(physical) { return Err(LfsError::IO); }
         }
