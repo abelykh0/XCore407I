@@ -185,15 +185,25 @@ fn main() -> ! {
             // Pull commands out of the USB ISR and perform all LittleFS work
             // here, with TIM2 free to keep servicing USB HS.
             NVIC::mask(Interrupt::TIM2);
-            let request = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) }
-                .take_get_object_request();
+            let (get_request, delete_request) = {
+                let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+                (mtp.take_get_object_request(), mtp.take_delete_object_request())
+            };
             peripherals.TIM2.sr().write(|w| w.uif().clear_bit());
             unsafe {
                 NVIC::unpend(Interrupt::TIM2);
                 NVIC::unmask(Interrupt::TIM2);
             }
 
-            if let Some((handle, transaction_id)) = request {
+            if let Some((handle, transaction_id)) = delete_request {
+                service_delete_object(
+                    fs,
+                    &mut objects,
+                    &mut object_count,
+                    handle,
+                    transaction_id,
+                );
+            } else if let Some((handle, transaction_id)) = get_request {
                 service_get_object(fs, &objects, object_count, handle, transaction_id);
             } else {
                 core::hint::spin_loop();
@@ -268,6 +278,73 @@ fn test_hello_readback(
         return b"LittleFS readback: DATA MISMATCH in HELLO.txt\r\n";
     }
     b"LittleFS readback: PASS (HELLO.txt, 90 bytes)\r\n"
+}
+
+/// Delete a host-selected regular file in main context, then publish the
+/// compacted directory snapshot before acknowledging the MTP transaction.
+fn service_delete_object(
+    fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
+    objects: &mut [MtpObject; 17],
+    object_count: &mut usize,
+    handle: u32,
+    transaction_id: u32,
+) {
+    let Some(index) = objects[..*object_count]
+        .iter()
+        .position(|object| object.handle == handle)
+    else {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::INVALID_OBJECT_HANDLE,
+            transaction_id,
+        );
+        return;
+    };
+
+    let object = objects[index];
+    if object.is_dir {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::OPERATION_NOT_SUPPORTED,
+            transaction_id,
+        );
+        return;
+    }
+    let name = core::str::from_utf8(&object.name[..object.name_len as usize]).unwrap_or("");
+    let Ok(relative_path) = PathBuf::try_from(name) else {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::GENERAL_ERROR,
+            transaction_id,
+        );
+        return;
+    };
+    let full_path = path!("/").join(relative_path.as_path());
+    if fs.remove(&full_path).is_err() {
+        queue_main_mtp_response(
+            xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
+            transaction_id,
+        );
+        return;
+    }
+
+    // Preserve the handles of remaining entries; only the removed slot is
+    // compacted away. Handles are not reassigned during a live session.
+    for slot in index..(*object_count - 1) {
+        objects[slot] = objects[slot + 1];
+    }
+    *object_count -= 1;
+    objects[*object_count] = MtpObject::EMPTY;
+
+    NVIC::mask(Interrupt::TIM2);
+    let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
+    mtp.set_objects(&objects[..*object_count]);
+    mtp.set_storage_stats(
+        fs.total_space() as u64,
+        fs.available_space().unwrap_or(0) as u64,
+    );
+    let _ = mtp.queue_main_response(
+        xcore407i_usb_mtp::mtp::response::OK,
+        transaction_id,
+    );
+    unsafe { NVIC::unmask(Interrupt::TIM2); }
 }
 
 /// Stream one root-level LittleFS file to the host. Each MTP data container is
