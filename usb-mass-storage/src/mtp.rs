@@ -472,7 +472,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         index: StringIndex,
         _lang_id: usb_device::descriptor::lang_id::LangID,
     ) -> Option<&str> {
-        if index == self.interface_string { Some("LittleFS file transfer (MTP)") } else { None }
+        if index == self.interface_string { Some("XCore407I MTP data") } else { None }
     }
 
     fn endpoint_out(&mut self, address: usb_device::endpoint::EndpointAddress) {
