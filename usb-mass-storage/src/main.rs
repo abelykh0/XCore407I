@@ -4,7 +4,8 @@
 use cortex_m_rt::entry;
 use panic_halt as _;
 use stm32f4xx_hal::pac;
-use usb_device::device::{UsbDeviceBuilder, UsbVidPid};
+use usb_device::descriptor::lang_id::LangID;
+use usb_device::device::{StringDescriptors, UsbDeviceBuilder, UsbVidPid};
 
 use xcore407i_usb_mtp::{
     board,
@@ -36,10 +37,15 @@ fn main() -> ! {
     let bus = usb_bus().expect("USB HS bus already initialized");
     let mut mtp = MtpUsbClass::new(bus);
 
+    let strings = [
+        StringDescriptors::new(LangID::EN_US)
+            .manufacturer("XCore407I")
+            .product("MTP bring-up")
+            .serial_number("XCORE407I-001"),
+    ];
     let mut usb_dev = UsbDeviceBuilder::new(bus, UsbVidPid(0x1209, 0x4071))
-        .manufacturer("XCore407I")
-        .product("MTP bring-up")
-        .serial_number("XCORE407I-001")
+        .strings(&strings)
+        .unwrap()
         .max_packet_size_0(64)
         .unwrap()
         .build();
