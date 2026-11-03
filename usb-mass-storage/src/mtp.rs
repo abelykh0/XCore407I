@@ -70,6 +70,14 @@ pub mod diagnostics {
     pub static GET_OBJECT_PROP_DESC_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_PROP_VALUE_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_PROP_LIST_COMMANDS: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_INFO_COMMANDS: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_PROP_LIST_HANDLE: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_PROP_LIST_FORMAT: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_PROP_LIST_PROPERTY: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_PROP_LIST_GROUP: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_PROP_LIST_DEPTH: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_PROP_VALUE_HANDLE: AtomicU32 = AtomicU32::new(0);
+    pub static LAST_PROP_VALUE_PROPERTY: AtomicU32 = AtomicU32::new(0);
     pub static SET_OBJECT_PROP_VALUE_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static SET_OBJECT_PROP_VALUE_DATA: AtomicU32 = AtomicU32::new(0);
     pub static RENAME_FS_OK: AtomicU32 = AtomicU32::new(0);
@@ -154,6 +162,14 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"SOPD=", SET_OBJECT_PROP_VALUE_DATA.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"RNOK=", RENAME_FS_OK.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"RNFL=", RENAME_FS_FAIL.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOI=", GET_OBJECT_INFO_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPLH=", LAST_PROP_LIST_HANDLE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPLF=", LAST_PROP_LIST_FORMAT.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPLP=", LAST_PROP_LIST_PROPERTY.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPLG=", LAST_PROP_LIST_GROUP.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPLD=", LAST_PROP_LIST_DEPTH.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPVH=", LAST_PROP_VALUE_HANDLE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GOPVP=", LAST_PROP_VALUE_PROPERTY.load(Ordering::Relaxed));
         pos
     }
 }
@@ -1112,6 +1128,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 }
             }
             operation::GET_OBJECT_INFO => {
+                diagnostics::GET_OBJECT_INFO_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let Some(handle) = parameter(0) {
@@ -1149,6 +1166,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let (Some(handle), Some(property)) = (parameter(0), parameter(1)) {
+                    diagnostics::LAST_PROP_VALUE_HANDLE.store(handle, core::sync::atomic::Ordering::Relaxed);
+                    diagnostics::LAST_PROP_VALUE_PROPERTY.store(property, core::sync::atomic::Ordering::Relaxed);
                     if params.len() != 8 {
                         self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                     } else {
@@ -1163,9 +1182,15 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if params.len() == 20 {
-                    if let (Some(handle), Some(format), Some(property), Some(group), Some(_depth)) =
+                    if let (Some(handle), Some(format), Some(property), Some(group), Some(depth)) =
                         (parameter(0), parameter(1), parameter(2), parameter(3), parameter(4))
                     {
+                        use core::sync::atomic::Ordering;
+                        diagnostics::LAST_PROP_LIST_HANDLE.store(handle, Ordering::Relaxed);
+                        diagnostics::LAST_PROP_LIST_FORMAT.store(format, Ordering::Relaxed);
+                        diagnostics::LAST_PROP_LIST_PROPERTY.store(property, Ordering::Relaxed);
+                        diagnostics::LAST_PROP_LIST_GROUP.store(group, Ordering::Relaxed);
+                        diagnostics::LAST_PROP_LIST_DEPTH.store(depth, Ordering::Relaxed);
                         self.object_prop_list(header.transaction_id, handle, format, property, group);
                     } else {
                         self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
