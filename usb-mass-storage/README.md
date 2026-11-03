@@ -33,13 +33,14 @@ Implemented:
 - STM32F407 OTG_HS / external ULPI controller declaration and board ULPI pin mux.
 - High-Speed PTP/MTP interface descriptor with bulk IN/OUT and interrupt IN endpoints.
 - PTP/MTP container header codec and response-container encoder.
-- Initial operation/response code definitions and a storage abstraction for
-  bounded file streaming.
+- Initial MTP command handling for `GetDeviceInfo`, `OpenSession`,
+  `CloseSession`, and `GetStorageIDs` (currently reports zero mounted stores).
+- A storage abstraction for bounded file streaming.
 
-Bring-up firmware now exists (`src/main.rs`). It initializes the 168 MHz clock, configures the USB3300 ULPI pins, constructs the OTG_HS bus and MTP interface, and polls `usb-device`. It does not mount storage or implement MTP operations; its purpose is limited to USB enumeration testing.
+Bring-up firmware now exists (`src/main.rs`). It initializes the 168 MHz clock, configures the USB3300 ULPI pins, constructs the OTG_HS bus and MTP interface, and polls `usb-device`. It now handles the initial MTP identity/session exchange, but does not mount storage or expose files yet.
 
 Not yet implemented:
-- MTP transaction state machine and Windows interoperability.
+- Complete MTP transaction state machine, data-phase recovery, and Windows interoperability.
 - Device/storage/object-info datasets and object-handle/path database.
 - LittleFS-backed implementation of `MtpStorage`.
 - NAND ECC, bad-block management, and power-fail-safe LittleFS block device.
