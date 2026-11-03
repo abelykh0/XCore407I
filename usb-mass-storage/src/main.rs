@@ -333,13 +333,12 @@ fn service_delete_object(
     *object_count -= 1;
     objects[*object_count] = MtpObject::EMPTY;
 
+    let capacity_bytes = fs.total_space() as u64;
+    let free_bytes = fs.available_space().unwrap_or(0) as u64;
     NVIC::mask(Interrupt::TIM2);
     let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
     mtp.set_objects(&objects[..*object_count]);
-    mtp.set_storage_stats(
-        fs.total_space() as u64,
-        fs.available_space().unwrap_or(0) as u64,
-    );
+    mtp.set_storage_stats(capacity_bytes, free_bytes);
     let _ = mtp.queue_main_response(
         xcore407i_usb_mtp::mtp::response::OK,
         transaction_id,
