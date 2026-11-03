@@ -600,7 +600,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
         Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
 
-        let operations: [u16; 12] = [
+        let operations: [u16; 14] = [
             operation::GET_DEVICE_INFO,
             operation::OPEN_SESSION,
             operation::CLOSE_SESSION,
@@ -639,12 +639,12 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             self.queue_response(response::INVALID_STORAGE_ID, transaction_id);
             return;
         }
-        // Read-only embedded demo store; NAND/LittleFS is not mounted.
+        // Fixed RAM-backed hierarchical filesystem with read/write access.
         let mut data = [0u8; 96];
         let mut pos = 0;
-        Self::append_u16(&mut data, &mut pos, 0x0001); // Fixed ROM
-        Self::append_u16(&mut data, &mut pos, 0x0002); // Hierarchical filesystem
         Self::append_u16(&mut data, &mut pos, 0x0003); // Fixed RAM
+        Self::append_u16(&mut data, &mut pos, 0x0002); // Hierarchical filesystem
+        Self::append_u16(&mut data, &mut pos, 0x0000); // Read/write
         Self::append_u64(&mut data, &mut pos, self.capacity_bytes);
         Self::append_u64(&mut data, &mut pos, self.free_bytes);
         Self::append_u32(&mut data, &mut pos, 0);
@@ -999,6 +999,11 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 || self.tx_in_flight
                 || self.pending_get_object.is_some()
                 || self.pending_delete_object.is_some()
+                || self.pending_send_object_info.is_some()
+                || self.awaiting_send_object_info.is_some()
+                || self.upload_info_accepted
+                || self.awaiting_send_object.is_some()
+                || self.pending_upload_data
             {
                 0x2019u16 // Device Busy
             } else {
