@@ -82,6 +82,9 @@ pub mod diagnostics {
     pub static GET_OBJECT_USB_COMPLETED: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_USB_BYTES: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_RESPONSE_COMPLETED: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_READ_US: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_WAIT_US: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_TOTAL_US: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -121,6 +124,9 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"GUSB_CPL=", GET_OBJECT_USB_COMPLETED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_B=", GET_OBJECT_USB_BYTES.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_RSP=", GET_OBJECT_RESPONSE_COMPLETED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GREAD_US=", GET_OBJECT_READ_US.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GWAIT_US=", GET_OBJECT_WAIT_US.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GTOTAL_US=", GET_OBJECT_TOTAL_US.load(Ordering::Relaxed));
         append(out, &mut pos, b"----\r\n");
         append_counter(out, &mut pos, b"OUT=", OUT_PACKETS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"BAD=", OUT_INVALID.load(Ordering::Relaxed));
