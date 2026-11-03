@@ -33,6 +33,47 @@ pub mod diagnostics {
     pub static IN_COMPLETE: AtomicU32 = AtomicU32::new(0);
     pub static USB_RESETS: AtomicU32 = AtomicU32::new(0);
     pub static PENDING_COMMAND_OVERFLOW: AtomicU32 = AtomicU32::new(0);
+
+    fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
+        let count = bytes.len().min(out.len().saturating_sub(*pos));
+        out[*pos..*pos + count].copy_from_slice(&bytes[..count]);
+        *pos += count;
+    }
+
+    fn append_counter(out: &mut [u8], pos: &mut usize, label: &[u8], value: u32) {
+        append(out, pos, label);
+        let mut digits = [0u8; 10];
+        let mut n = value;
+        let mut count = 0;
+        loop {
+            digits[count] = b'0' + (n % 10) as u8;
+            count += 1;
+            n /= 10;
+            if n == 0 { break; }
+        }
+        while count != 0 {
+            count -= 1;
+            append(out, pos, &digits[count..count + 1]);
+        }
+        append(out, pos, b"\\r\\n");
+    }
+
+    /// Create a fixed-size text snapshot suitable for a virtual MTP object.
+    pub fn write_status(out: &mut [u8]) -> usize {
+        use core::sync::atomic::Ordering;
+        let mut pos = 0;
+        append(out, &mut pos, b"XCore407I MTP transport diagnostics\\r\\n");
+        append_counter(out, &mut pos, b"OUT_PACKETS: ", OUT_PACKETS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OUT_INVALID: ", OUT_INVALID.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"COMMANDS_ACCEPTED: ", COMMANDS_ACCEPTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"COMMANDS_DEFERRED: ", COMMANDS_DEFERRED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"IN_SUBMIT_OK: ", IN_SUBMIT_OK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"IN_SUBMIT_WOULDBLOCK: ", IN_SUBMIT_WOULDBLOCK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"IN_COMPLETE: ", IN_COMPLETE.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"USB_RESETS: ", USB_RESETS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"PENDING_COMMAND_OVERFLOW: ", PENDING_COMMAND_OVERFLOW.load(Ordering::Relaxed));
+        pos
+    }
 }
 
 pub const CONTAINER_HEADER_LEN: usize = 12;
@@ -715,6 +756,17 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                         self.queue_response(response::INVALID_OBJECT_HANDLE, header.transaction_id);
                     } else if self.pending_get_object.is_some() {
                         self.queue_response(response::GENERAL_ERROR, header.transaction_id);
+                    } else if self.object(handle).map(|object| object.name()) == Some("MTP-STATUS.txt") {
+                        // Snapshot counters directly into the transfer buffer;
+                        // this is read-only and does not touch LittleFS.
+                        let mut payload = [0u8; 384];
+                        let payload_len = diagnostics::write_status(&mut payload);
+                        self.queue_data(
+                            operation::GET_OBJECT,
+                            header.transaction_id,
+                            &payload[..payload_len],
+                            response::OK,
+                        );
                     } else if self.object(handle).map(|object| object.name()) == Some("MTP-README.txt") {
                         // Keep one known-good, in-memory object on the original
                         // command/response path. This isolates USB MTP transport
