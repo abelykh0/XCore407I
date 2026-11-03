@@ -788,6 +788,15 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else {
+                    if self.upload_info_accepted || self.pending_send_object_info.is_some()
+                        || self.awaiting_send_object_info.is_some() || self.awaiting_send_object.is_some()
+                        || self.pending_upload_data
+                    {
+                        self.pending_upload_abort = true;
+                        self.finish_upload();
+                        self.pending_send_object_info = None;
+                        self.awaiting_send_object_info = None;
+                    }
                     self.session_open = false;
                     self.queue_response(response::OK, header.transaction_id);
                 }
