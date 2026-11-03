@@ -97,6 +97,10 @@ pub mod diagnostics {
     pub static GET_OBJECT_USB_POLL_LATENCY: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_USB_LATENCY_US: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_USB_LATENCY_MAX_US: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_FINAL_CHUNK_LEN: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_FINAL_CHUNK_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_FINAL_CHUNK_SUBMITTED: AtomicU32 = AtomicU32::new(0);
+    pub static GET_OBJECT_FINAL_CHUNK_COMPLETED: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_FINAL_DATA_COMPLETED: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_RESPONSE_QUEUED: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_NEXT_COMMAND_DEFERRED: AtomicU32 = AtomicU32::new(0);
@@ -184,6 +188,10 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"GUSB_POLL=", GET_OBJECT_USB_POLL_LATENCY.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_LAT_US=", GET_OBJECT_USB_LATENCY_US.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GUSB_LAT_MAX_US=", GET_OBJECT_USB_LATENCY_MAX_US.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL_LEN=", GET_OBJECT_FINAL_CHUNK_LEN.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL_ATT=", GET_OBJECT_FINAL_CHUNK_ATTEMPTS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL_TX=", GET_OBJECT_FINAL_CHUNK_SUBMITTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"GFINAL_CPL=", GET_OBJECT_FINAL_CHUNK_COMPLETED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GFINAL=", GET_OBJECT_FINAL_DATA_COMPLETED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GRSPQ=", GET_OBJECT_RESPONSE_QUEUED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GDEF=", GET_OBJECT_NEXT_COMMAND_DEFERRED.load(Ordering::Relaxed));
@@ -448,6 +456,7 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     tx_pending: bool,
     tx_in_flight: bool,
     tx_is_response: bool,
+    tx_is_final_chunk: bool,
     get_object_tx_active: bool,
     get_object_poll_count: u32,
     get_object_submit_poll: u32,
@@ -512,6 +521,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             tx_pending: false,
             tx_in_flight: false,
             tx_is_response: false,
+            tx_is_final_chunk: false,
             get_object_tx_active: false,
             get_object_poll_count: 0,
             get_object_submit_poll: 0,
@@ -680,6 +690,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             diagnostics::GET_OBJECT_USB_POLL_LATENCY.store(0, Ordering::Relaxed);
             diagnostics::GET_OBJECT_USB_LATENCY_US.store(0, Ordering::Relaxed);
             diagnostics::GET_OBJECT_USB_LATENCY_MAX_US.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_FINAL_CHUNK_LEN.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_FINAL_CHUNK_ATTEMPTS.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_FINAL_CHUNK_SUBMITTED.store(0, Ordering::Relaxed);
+            diagnostics::GET_OBJECT_FINAL_CHUNK_COMPLETED.store(0, Ordering::Relaxed);
             self.get_object_tx_active = true;
             let length = CONTAINER_HEADER_LEN as u32 + total_size;
             self.tx[..4].copy_from_slice(&length.to_le_bytes());
@@ -691,6 +705,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx_len = header_len + bytes.len();
         self.tx_pending = true;
         self.tx_is_response = false;
+        self.tx_is_final_chunk = last;
+        if last {
+            diagnostics::GET_OBJECT_FINAL_CHUNK_LEN.store(bytes.len() as u32, core::sync::atomic::Ordering::Relaxed);
+        }
         if first {
             self.data_transfer_active = true;
         }
@@ -764,6 +782,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx_pending = false;
         self.tx_in_flight = false;
         self.tx_is_response = false;
+        self.tx_is_final_chunk = false;
     }
 
     /// Clear endpoint stalls after a PTP Cancel/Reset recovery sequence.
@@ -844,6 +863,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         }
         let remaining = self.tx_len.saturating_sub(self.tx_offset);
         let chunk_len = remaining.min(BULK_MAX_PACKET_SIZE as usize);
+        if self.tx_is_final_chunk {
+            diagnostics::GET_OBJECT_FINAL_CHUNK_ATTEMPTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
         match self.bulk_in.write(&self.tx[self.tx_offset..self.tx_offset + chunk_len]) {
             Ok(length) if length == chunk_len => {
                 diagnostics::IN_SUBMIT_OK.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -852,6 +874,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     diagnostics::GET_OBJECT_USB_BYTES.fetch_add(chunk_len as u32, core::sync::atomic::Ordering::Relaxed);
                     self.get_object_submit_poll = self.get_object_poll_count;
                     self.get_object_submit_us = read_tim5_us();
+                }
+                if self.tx_is_final_chunk {
+                    diagnostics::GET_OBJECT_FINAL_CHUNK_SUBMITTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 }
                 self.tx_pending = false;
                 self.tx_in_flight = true;
@@ -1758,6 +1783,9 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         if !self.tx_is_response && self.pending_response.is_some() {
             diagnostics::DATA_IN_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
+        if self.tx_is_final_chunk {
+            diagnostics::GET_OBJECT_FINAL_CHUNK_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
         self.tx_in_flight = false;
         self.tx_offset += self.tx_chunk_len;
         self.tx_chunk_len = 0;
@@ -1771,6 +1799,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         // A data container is followed by its MTP response. The transaction
         // remains active until that response has itself completed.
         if let Some((code, transaction_id)) = self.pending_response.take() {
+            self.tx_is_final_chunk = false;
             if self.get_object_tx_active {
                 diagnostics::GET_OBJECT_FINAL_DATA_COMPLETED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 diagnostics::GET_OBJECT_RESPONSE_QUEUED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
