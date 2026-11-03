@@ -7,6 +7,7 @@
 
 use crate::block::BlockError;
 use crate::image::ImageFile;
+use crate::fat16::{self, Fat16Geometry};
 use littlefs2::driver::Storage;
 use littlefs2::fs::Filesystem;
 use littlefs2::io::prelude::{Read, Seek, Write};
@@ -45,6 +46,24 @@ impl<'fs, 'storage, S: Storage> LittleFsImage<'fs, 'storage, S> {
             file.set_len(image_bytes as usize)?;
             file.sync()
         }).map_err(|_| BlockError::Io)
+    }
+
+    /// Ensure the FAT16 image exists. A newly created image is formatted;
+    /// an existing image is preserved so Windows can retain its files.
+    pub fn ensure_volume(
+        fs: &Filesystem<'storage, S>,
+        total_sectors: u32,
+    ) -> Result<(bool, Fat16Geometry), BlockError> {
+        let bytes = total_sectors as u64 * 512;
+        let created = !fs.exists(IMAGE_PATH);
+        if created {
+            Self::create_image_file(fs, bytes)?;
+            let mut image = Self::new(fs, bytes);
+            let geometry = fat16::format(&mut image, total_sectors)?;
+            Ok((true, geometry))
+        } else {
+            Ok((false, fat16::geometry(total_sectors)?))
+        }
     }
 
     fn check_range(&self, offset: u64, len: usize) -> Result<(), BlockError> {
