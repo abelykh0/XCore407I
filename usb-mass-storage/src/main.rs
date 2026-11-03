@@ -263,7 +263,7 @@ fn test_hello_readback(
 /// emitted in USB HS-sized chunks; no whole-file buffer is used.
 fn service_get_object(
     fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
-    objects: &[MtpObject; 16],
+    objects: &[MtpObject],
     object_count: usize,
     handle: u32,
     transaction_id: u32,
