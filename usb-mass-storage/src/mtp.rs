@@ -999,3 +999,117 @@ pub enum MtpStorageError {
     NoSpace,
     Io,
 }
+
+
+/// Validated root-level file metadata received in an MTP SendObjectInfo data
+/// container. Names are restricted to printable ASCII for now; this avoids
+/// lossy conversion and path traversal on the embedded filesystem.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UploadObjectInfo {
+    pub storage_id: u32,
+    pub parent: u32,
+    pub size: u32,
+    pub name: [u8; 64],
+    pub name_len: u8,
+}
+
+impl UploadObjectInfo {
+    /// Parse the fixed fields and PTP UTF-16 string in an ObjectInfo dataset.
+    /// This parser intentionally accepts only root-level regular files.
+    pub fn decode(dataset: &[u8]) -> core::result::Result<Self, MtpError> {
+        const FIXED_LEN: usize = 52;
+        if dataset.len() < FIXED_LEN + 1 {
+            return Err(MtpError::InvalidContainerLength);
+        }
+        let u16_at = |at: usize| u16::from_le_bytes([dataset[at], dataset[at + 1]]);
+        let u32_at = |at: usize| u32::from_le_bytes([
+            dataset[at], dataset[at + 1], dataset[at + 2], dataset[at + 3],
+        ]);
+
+        let storage_id = u32_at(0);
+        let format = u16_at(4);
+        let protection = u16_at(6);
+        let size = u32_at(8);
+        let parent = u32_at(38);
+        let association_type = u16_at(42);
+        let count = dataset[FIXED_LEN] as usize;
+        if storage_id != PLACEHOLDER_STORAGE_ID
+            || format == 0x3001
+            || protection != 0
+            || association_type != 0
+            || (parent != 0 && parent != 0xffff_ffff)
+            || count < 2
+        {
+            return Err(MtpError::InvalidContainerLength);
+        }
+
+        let string_bytes = count.checked_mul(2).ok_or(MtpError::InvalidContainerLength)?;
+        let end = FIXED_LEN + 1 + string_bytes;
+        if end > dataset.len() {
+            return Err(MtpError::InvalidContainerLength);
+        }
+        let mut name = [0u8; 64];
+        let mut name_len = 0usize;
+        for index in 0..count - 1 {
+            let at = FIXED_LEN + 1 + index * 2;
+            let unit = u16::from_le_bytes([dataset[at], dataset[at + 1]]);
+            if !(0x20..=0x7e).contains(&unit) {
+                return Err(MtpError::InvalidContainerLength);
+            }
+            let byte = unit as u8;
+            if matches!(byte, b'/' | b'\\' | b':' | b'*' | b'?' | b'"' | b'<' | b'>' | b'|') {
+                return Err(MtpError::InvalidContainerLength);
+            }
+            if name_len == name.len() {
+                return Err(MtpError::InvalidContainerLength);
+            }
+            name[name_len] = byte;
+            name_len += 1;
+        }
+        let terminator_at = FIXED_LEN + 1 + (count - 1) * 2;
+        if u16::from_le_bytes([dataset[terminator_at], dataset[terminator_at + 1]]) != 0
+            || name_len == 0
+            || &name[..name_len] == b"."
+            || &name[..name_len] == b".."
+        {
+            return Err(MtpError::InvalidContainerLength);
+        }
+
+        Ok(Self { storage_id, parent, size, name, name_len: name_len as u8 })
+    }
+}
+
+#[cfg(test)]
+mod upload_info_tests {
+    use super::*;
+
+    #[test]
+    fn decodes_root_file_object_info() {
+        let mut data = [0u8; 52 + 1 + 12];
+        data[0..4].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
+        data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
+        data[8..12].copy_from_slice(&1234u32.to_le_bytes());
+        data[38..42].copy_from_slice(&0u32.to_le_bytes());
+        data[52] = 6;
+        for (index, unit) in [b't' as u16, b'e' as u16, b's' as u16, b't' as u16, b'.' as u16].iter().enumerate() {
+            let at = 53 + index * 2;
+            data[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        let parsed = UploadObjectInfo::decode(&data).unwrap();
+        assert_eq!(parsed.size, 1234);
+        assert_eq!(&parsed.name[..parsed.name_len as usize], b"test.");
+    }
+
+    #[test]
+    fn rejects_path_separators() {
+        let mut data = [0u8; 52 + 1 + 8];
+        data[0..4].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
+        data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
+        data[52] = 4;
+        for (index, unit) in [b'a' as u16, b'/' as u16, b'b' as u16].iter().enumerate() {
+            let at = 53 + index * 2;
+            data[at..at + 2].copy_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(UploadObjectInfo::decode(&data), Err(MtpError::InvalidContainerLength));
+    }
+}
