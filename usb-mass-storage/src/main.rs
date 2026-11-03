@@ -17,7 +17,7 @@ use xcore407i_usb_mtp::{
     board,
     bus::usb_bus,
     mtp::MtpUsbClass,
-    nand_diag,
+    nand_fs,
     usb_hs::F407UsbHs,
 };
 
@@ -55,8 +55,8 @@ fn main() -> ! {
     );
     board::configure_nand(&mut rcc, peripherals.GPIOD, peripherals.GPIOE);
 
-    // Initialize USB before the destructive NAND test. TIM2 will continue
-    // servicing USB while the main thread performs the full-chip test.
+    // Start USB polling before NAND initialization/formatting. TIM2 continues
+    // servicing USB while the main thread accesses NAND.
     let bus = usb_bus().expect("USB HS bus already initialized");
     let mtp_ptr = unsafe { (*ptr::addr_of_mut!(MTP)).as_mut_ptr() };
     unsafe {
@@ -67,7 +67,7 @@ fn main() -> ! {
     let strings = [
         StringDescriptors::new(LangID::EN_US)
             .manufacturer("XCore407I")
-            .product("MTP NAND diagnostic")
+            .product("XCore407I NAND")
             .serial_number("XCORE407I-001"),
     ];
     let usb_ptr = unsafe { (*ptr::addr_of_mut!(USB_DEVICE)).as_mut_ptr() };
@@ -86,9 +86,9 @@ fn main() -> ! {
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
     configure_usb_poll_timer(&rcc, &peripherals.TIM2, &mut core.NVIC);
 
-    // The USB controller is now being polled from TIM2, so enumeration can
-    // happen while this destructive test erases/programs/verifies NAND.
-    let (report, report_len) = nand_diag::create_report();
+    // TIM2 owns all USB polling; NAND initialization and LittleFS formatting
+    // run in the main thread without stopping USB enumeration.
+    let (report, report_len) = nand_fs::initialize_and_mount_report();
 
     // Update the MTP object between polling interrupts. Mask TIM2 to ensure
     // the ISR cannot access MTP while set_readme() changes its contents.
