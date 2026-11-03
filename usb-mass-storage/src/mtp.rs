@@ -862,8 +862,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u32(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
-        // Root-level objects have ParentObject = 0 (not the wildcard handle).
-        Self::append_u32(&mut data, &mut pos, 0);
+        // Preserve the ParentObject value from the last known-good MTP metadata.
+        Self::append_u32(&mut data, &mut pos, 0xffff_ffff);
         Self::append_u16(&mut data, &mut pos, if object.is_dir { 1 } else { 0 });
         Self::append_u32(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
@@ -1010,8 +1010,8 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_prop_u16(&mut data, &mut pos, h, 0xdc03, 0);
         Self::append_prop_u64(&mut data, &mut pos, h, 0xdc04, object.size as u64);
         Self::append_prop_string(&mut data, &mut pos, h, 0xdc07, object.name());
-        Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "");
-        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0);
+        Self::append_prop_string(&mut data, &mut pos, h, 0xdc09, "20261102T000000");
+        Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0xffff_ffff);
         self.queue_data(operation::GET_OBJECT_PROP_LIST, transaction_id, &data[..pos], response::OK);
     }
 
