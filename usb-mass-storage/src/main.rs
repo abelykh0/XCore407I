@@ -138,8 +138,16 @@ fn main() -> ! {
                     break;
                 }
                 let name = entry.file_name().as_ref().as_bytes();
-                let name_len = name.len().min(objects[object_count].name.len());
-                objects[object_count].name[..name_len].copy_from_slice(&name[..name_len]);
+                // The MTP snapshot stores UTF-8 names in a fixed 64-byte
+                // field. Never truncate a multibyte character or publish an
+                // invalid UTF-8 filename to the PTP string encoder.
+                if name.is_empty() || name.len() > objects[object_count].name.len()
+                    || core::str::from_utf8(name).is_err()
+                {
+                    continue;
+                }
+                let name_len = name.len();
+                objects[object_count].name[..name_len].copy_from_slice(name);
                 objects[object_count].name_len = name_len as u8;
                 objects[object_count].handle = object_count as u32 + 1;
                 let metadata = entry.metadata();
