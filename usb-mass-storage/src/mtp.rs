@@ -1374,8 +1374,8 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                 match header.code {
                     operation::SET_OBJECT_PROP_VALUE
                         if self.awaiting_set_object_prop_value.map(|(_, tx)| tx) == Some(header.transaction_id) =>
-                        diagnostics::SET_OBJECT_PROP_VALUE_DATA.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     {
+                        diagnostics::SET_OBJECT_PROP_VALUE_DATA.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                         if header.length as usize != length || length < CONTAINER_HEADER_LEN + 3 {
                             self.awaiting_set_object_prop_value = None;
                             self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
