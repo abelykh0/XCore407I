@@ -806,6 +806,11 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         *pos += 8;
     }
 
+    fn append_u128(out: &mut [u8], pos: &mut usize, value: &[u8; 16]) {
+        out[*pos..*pos + 16].copy_from_slice(value);
+        *pos += 16;
+    }
+
     fn object_info(&mut self, transaction_id: u32, handle: u32) {
         let Some(object) = self.object(handle).copied() else {
             self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
@@ -851,7 +856,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         // (DC44) is distinct from ObjectFileName (DC07), but both map to the
         // same root-level LittleFS filename for these generic objects.
         // DateModified is omitted because no timestamp is available.
-        let props: [u16; 7] = [0xdc01, 0xdc02, 0xdc03, 0xdc04, 0xdc07, 0xdc0b, 0xdc44];
+        let props: [u16; 8] = [0xdc01, 0xdc02, 0xdc03, 0xdc04, 0xdc07, 0xdc0b, 0xdc41, 0xdc44];
         let mut data = [0u8; 32];
         data[..4].copy_from_slice(&(props.len() as u32).to_le_bytes());
         for (i, prop) in props.iter().enumerate() {
@@ -873,6 +878,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             0xdc01 | 0xdc0b => (0x0006, false), // StorageID, ParentObject: UINT32
             0xdc02 | 0xdc03 => (0x0004, false), // ObjectFormat, ProtectionStatus: UINT16
             0xdc04 => (0x0008, false),          // ObjectSize: UINT64
+            0xdc41 => (0x000a, false),          // PersistentUniqueObjectIdentifier: UINT128
             0xdc07 | 0xdc44 => (0xffff, true),   // ObjectFileName / Name: STRING
             _ => {
                 self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
@@ -890,6 +896,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             0x0004 => Self::append_u16(&mut data, &mut pos, 0),
             0x0006 => Self::append_u32(&mut data, &mut pos, 0),
             0x0008 => Self::append_u64(&mut data, &mut pos, 0),
+            0x000a => { data[pos..pos + 16].fill(0); pos += 16; }
             0xffff => {
                 // Empty PTP STRING: zero UTF-16 code units.
                 data[pos] = 0;
@@ -922,6 +929,13 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u16(out, pos, code);
         Self::append_u16(out, pos, 0x0008); // UINT64
         Self::append_u64(out, pos, value);
+    }
+
+    fn append_prop_u128(out: &mut [u8], pos: &mut usize, handle: u32, code: u16, value: &[u8; 16]) {
+        Self::append_u32(out, pos, handle);
+        Self::append_u16(out, pos, code);
+        Self::append_u16(out, pos, 0x000a); // UINT128
+        Self::append_u128(out, pos, value);
     }
 
     fn append_prop_string(out: &mut [u8], pos: &mut usize, handle: u32, code: u16, value: &str) {
@@ -958,10 +972,11 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         let include_size = property_code == 0 || property_code == 0xdc04;
         let include_filename = property_code == 0 || property_code == 0xdc07;
         let include_parent = property_code == 0 || property_code == 0xdc0b;
+        let include_puid = property_code == 0 || property_code == 0xdc41;
         let include_name = property_code == 0 || property_code == 0xdc44;
 
         if !(include_storage_id || include_format || include_protection || include_size
-            || include_filename || include_parent || include_name)
+            || include_filename || include_parent || include_puid || include_name)
         {
             self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
             return;
@@ -973,9 +988,10 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             + include_size as u32
             + include_filename as u32
             + include_parent as u32
+            + include_puid as u32
             + include_name as u32;
 
-        let mut data = [0u8; 256];
+        let mut data = [0u8; 512];
         let mut pos = 0;
         Self::append_u32(&mut data, &mut pos, count);
         let h = object.handle;
@@ -996,6 +1012,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         }
         if include_parent {
             Self::append_prop_u32(&mut data, &mut pos, h, 0xdc0b, 0); // Root-level object
+        }
+        if include_puid {
+            Self::append_prop_u128(&mut data, &mut pos, h, 0xdc41, &object.puid);
         }
         if include_name {
             Self::append_prop_string(&mut data, &mut pos, h, 0xdc44, object.name());
