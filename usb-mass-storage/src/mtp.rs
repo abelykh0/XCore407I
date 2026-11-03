@@ -37,6 +37,18 @@ pub mod diagnostics {
     pub static RESPONSE_IN_COMPLETED: AtomicU32 = AtomicU32::new(0);
     pub static CONTROL_GET_STATUS: AtomicU32 = AtomicU32::new(0);
     pub static CONTROL_DEVICE_RESET: AtomicU32 = AtomicU32::new(0);
+    pub static SEND_OBJECT_INFO_COMMANDS: AtomicU32 = AtomicU32::new(0);
+    pub static SEND_OBJECT_INFO_DATA: AtomicU32 = AtomicU32::new(0);
+    pub static SEND_OBJECT_COMMANDS: AtomicU32 = AtomicU32::new(0);
+    pub static SEND_OBJECT_DATA: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_DATA_REJECTED: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_INFO_ACCEPTED: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_FS_CREATE_OK: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_FS_CREATE_FAIL: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_FS_WRITE_OK: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_FS_WRITE_FAIL: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_FS_RENAME_OK: AtomicU32 = AtomicU32::new(0);
+    pub static UPLOAD_FS_RENAME_FAIL: AtomicU32 = AtomicU32::new(0);
 
     fn append(out: &mut [u8], pos: &mut usize, bytes: &[u8]) {
         let count = bytes.len().min(out.len().saturating_sub(*pos));
@@ -80,6 +92,18 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"RESPONSE_IN_COMPLETED: ", RESPONSE_IN_COMPLETED.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"CONTROL_GET_STATUS: ", CONTROL_GET_STATUS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"CONTROL_DEVICE_RESET: ", CONTROL_DEVICE_RESET.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SEND_OBJECT_INFO_COMMANDS: ", SEND_OBJECT_INFO_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SEND_OBJECT_INFO_DATA: ", SEND_OBJECT_INFO_DATA.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SEND_OBJECT_COMMANDS: ", SEND_OBJECT_COMMANDS.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"SEND_OBJECT_DATA: ", SEND_OBJECT_DATA.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"UPLOAD_DATA_REJECTED: ", UPLOAD_DATA_REJECTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"UPLOAD_INFO_ACCEPTED: ", UPLOAD_INFO_ACCEPTED.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"UPLOAD_FS_CREATE_OK: ", UPLOAD_FS_CREATE_OK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"UPLOAD_FS_CREATE_FAIL: ", UPLOAD_FS_CREATE_FAIL.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"UPLOAD_FS_WRITE_OK: ", UPLOAD_FS_WRITE_OK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"UPLOAD_FS_WRITE_FAIL: ", UPLOAD_FS_WRITE_FAIL.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"UPLOAD_FS_RENAME_OK: ", UPLOAD_FS_RENAME_OK.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"UPLOAD_FS_RENAME_FAIL: ", UPLOAD_FS_RENAME_FAIL.load(Ordering::Relaxed));
         pos
     }
 }
@@ -873,6 +897,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 }
             }
             operation::SEND_OBJECT_INFO => {
+                diagnostics::SEND_OBJECT_INFO_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if params.len() != 8 {
@@ -889,6 +914,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                 }
             }
             operation::SEND_OBJECT => {
+                diagnostics::SEND_OBJECT_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 if !self.session_open {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if !params.is_empty() {
@@ -1068,6 +1094,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                     operation::SEND_OBJECT_INFO
                         if self.awaiting_send_object_info == Some(header.transaction_id) =>
                     {
+                        diagnostics::SEND_OBJECT_INFO_DATA.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                         match UploadObjectInfo::decode(&packet[CONTAINER_HEADER_LEN..length]) {
                             Ok(info) => {
                                 self.pending_send_object_info = Some((header.transaction_id, info));
@@ -1082,6 +1109,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                     operation::SEND_OBJECT
                         if self.awaiting_send_object == Some(header.transaction_id) =>
                     {
+                        diagnostics::SEND_OBJECT_DATA.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                         let payload_len = length - CONTAINER_HEADER_LEN;
                         if payload_len <= self.upload_data.len()
                             && payload_len == self.upload_expected_size
@@ -1094,6 +1122,7 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
                             self.pending_upload_data = true;
                             self.awaiting_send_object = None;
                         } else {
+                            diagnostics::UPLOAD_DATA_REJECTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                             self.pending_upload_abort = true;
                             self.finish_upload();
                             self.queue_response(response::INCOMPLETE_TRANSFER, header.transaction_id);
