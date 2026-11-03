@@ -742,7 +742,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
         Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
 
-        let operations: [u16; 17] = [
+        let operations: [u16; 16] = [
             operation::GET_DEVICE_INFO,
             operation::OPEN_SESSION,
             operation::CLOSE_SESSION,
@@ -757,7 +757,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::SEND_OBJECT,
             operation::GET_OBJECT_PROPS_SUPPORTED,
             operation::GET_OBJECT_PROP_DESC,
-            operation::GET_OBJECT_PROP_VALUE,
             operation::GET_OBJECT_PROP_LIST,
             operation::SET_OBJECT_PROP_VALUE,
         ];
@@ -909,33 +908,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         data[pos] = 0; // FormFlag: none
         pos += 1;
         self.queue_data(operation::GET_OBJECT_PROP_DESC, transaction_id, &data[..pos], response::OK);
-    }
-
-    /// Return a property's native value (without the ObjectPropList tuple header).
-    fn object_prop_value(&mut self, transaction_id: u32, handle: u32, property: u32) {
-        let Some(object) = self.object(handle).copied() else {
-            self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
-            return;
-        };
-
-        // Object names are limited to 64 UTF-16 code units by the upload and
-        // rename paths. 132 bytes accommodates the PTP string prefix/terminator.
-        let mut data = [0u8; 132];
-        let mut pos = 0;
-        match property {
-            0xdc01 => Self::append_u32(&mut data, &mut pos, PLACEHOLDER_STORAGE_ID),
-            0xdc02 => Self::append_u16(&mut data, &mut pos, if object.is_dir { 0x3001 } else { 0x3000 }),
-            0xdc03 => Self::append_u16(&mut data, &mut pos, 0),
-            0xdc04 => Self::append_u64(&mut data, &mut pos, object.size as u64),
-            0xdc07 | 0xdc44 => Self::append_ptp_string(&mut data, &mut pos, object.name()),
-            0xdc0b => Self::append_u32(&mut data, &mut pos, 0), // Root-level object
-            0xdc41 => Self::append_u128(&mut data, &mut pos, &object.puid),
-            _ => {
-                self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
-                return;
-            }
-        }
-        self.queue_data(operation::GET_OBJECT_PROP_VALUE, transaction_id, &data[..pos], response::OK);
     }
 
     fn append_prop_u16(out: &mut [u8], pos: &mut usize, handle: u32, code: u16, value: u16) {
@@ -1181,19 +1153,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let Some(format) = parameter(0) {
                     self.object_props_supported(header.transaction_id, format);
-                } else {
-                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
-                }
-            }
-            operation::GET_OBJECT_PROP_VALUE => {
-                if !self.session_open {
-                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                } else if params.len() == 8 {
-                    if let (Some(handle), Some(property)) = (parameter(0), parameter(1)) {
-                        self.object_prop_value(header.transaction_id, handle, property);
-                    } else {
-                        self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
-                    }
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
