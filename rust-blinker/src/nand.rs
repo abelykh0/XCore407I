@@ -341,6 +341,104 @@ fn show_bus_configuration() {
     show_register(b"GPIOD IDR:", 0x4002_0C10);
 }
 
+// Exercise the FSMC control-pin pads as GPIO while keeping NAND CE inactive
+// during CLE/ALE/WE/RE transitions. This checks MCU-side pin mapping/readback.
+fn gpio_control_bus_test() {
+    const GPIOD: usize = 0x4002_0C00;
+    const CLE: u32 = 1 << 12;
+    const ALE: u32 = 1 << 11;
+    const WE: u32 = 1 << 5;
+    const RE: u32 = 1 << 4;
+    const CE: u32 = 1 << 7;
+    const MASK: u32 = CLE | ALE | WE | RE | CE;
+
+    unsafe {
+        let bsrr = (GPIOD + 0x18) as *mut u32;
+        let moder = (GPIOD + 0x00) as *mut u32;
+        let otyper = (GPIOD + 0x04) as *mut u32;
+        let pupdr = (GPIOD + 0x0C) as *mut u32;
+
+        // Preload all control outputs high before switching the pads to GPIO.
+        write_volatile(bsrr, MASK);
+        let mut mode = read_volatile(moder);
+        let mut pins = MASK;
+        while pins != 0 {
+            let bit = pins.trailing_zeros();
+            mode = (mode & !(0b11 << (bit * 2))) | (0b01 << (bit * 2));
+            pins &= pins - 1;
+        }
+        write_volatile(moder, mode);
+        write_volatile(otyper, read_volatile(otyper) & !MASK);
+        let mut pulls = read_volatile(pupdr);
+        let mut pins = MASK;
+        while pins != 0 {
+            let bit = pins.trailing_zeros();
+            pulls &= !(0b11 << (bit * 2));
+            pins &= pins - 1;
+        }
+        write_volatile(pupdr, pulls);
+    }
+
+    // First exercise CLE/ALE with CE, WE and RE held inactive/high.
+    let pattern_a = CLE | RE | WE | CE;
+    let pattern_b = ALE | RE | WE | CE;
+    unsafe {
+        let bsrr = (GPIOD + 0x18) as *mut u32;
+        write_volatile(bsrr, pattern_a | ((MASK & !pattern_a) << 16));
+        cortex_m::asm::delay(100);
+        let read_a = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
+        write_volatile(bsrr, pattern_b | ((MASK & !pattern_b) << 16));
+        cortex_m::asm::delay(100);
+        let read_b = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
+
+        // Exercise CE separately; all NAND strobes remain inactive/high.
+        write_volatile(bsrr, MASK);
+        cortex_m::asm::delay(100);
+        let read_ce_high = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
+        write_volatile(bsrr, MASK & !CE);
+        cortex_m::asm::delay(100);
+        let read_ce_low = read_volatile((GPIOD + 0x10) as *const u32) & MASK;
+
+        // Restore AF12. The AF selection was configured by configure_board_pins().
+        let moder = (GPIOD + 0x00) as *mut u32;
+        let mut mode = read_volatile(moder);
+        let mut pins = MASK;
+        while pins != 0 {
+            let bit = pins.trailing_zeros();
+            mode = (mode & !(0b11 << (bit * 2))) | (0b10 << (bit * 2));
+            pins &= pins - 1;
+        }
+        write_volatile(moder, mode);
+
+        let mut line = *b"CTRL A:0000 B:0000";
+        line[7..11].copy_from_slice(&[
+            hex_digit((read_a >> 12) as u8),
+            hex_digit((read_a >> 11) as u8),
+            hex_digit((read_a >> 5) as u8),
+            hex_digit((read_a >> 4) as u8),
+        ]);
+        line[14..18].copy_from_slice(&[
+            hex_digit((read_b >> 12) as u8),
+            hex_digit((read_b >> 11) as u8),
+            hex_digit((read_b >> 5) as u8),
+            hex_digit((read_b >> 4) as u8),
+        ]);
+        show_usb_status(&line);
+        let ce_ok = (read_ce_high & CE != 0) && (read_ce_low & CE == 0);
+        let a_ok = read_a == pattern_a;
+        let b_ok = read_b == pattern_b;
+        let mut ce_line = *b"CTRL CE HI:0 LO:0";
+        ce_line[12] = if read_ce_high & CE != 0 { b'1' } else { b'0' };
+        ce_line[17] = if read_ce_low & CE == 0 { b'1' } else { b'0' };
+        show_usb_status(&ce_line);
+        if a_ok && b_ok && ce_ok {
+            show_usb_status(b"GPIO CTRL BUS: OK");
+        } else {
+            show_usb_status(b"GPIO CTRL BUS: FAIL");
+        }
+    }
+}
+
 // Temporarily take the eight NAND data pins out of FSMC AF12 and exercise
 // them as GPIO outputs. This verifies the MCU-side data pin mapping and
 // electrical readback without issuing NAND commands or relying on FSMC.
@@ -480,6 +578,7 @@ pub fn run_test() {
     show_usb_status(b"NAND: FSMC INIT");
     configure_fsmc();
     gpio_data_bus_test();
+    gpio_control_bus_test();
     show_bus_configuration();
 
     write_cmd(CMD_RESET);
