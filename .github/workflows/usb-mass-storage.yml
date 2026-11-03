@@ -3,6 +3,7 @@ name: USB mass storage firmware checks
 on:
   push:
     paths:
+      - ".github/workflows/usb-mass-storage.yml"
       - "usb-mass-storage/**"
       - "rust-blinker/vendor/usb-device/**"
       - "rust-blinker/vendor/synopsys-usb-otg/**"
