@@ -379,6 +379,7 @@ fn service_send_object_info(
         |file| file.sync(),
     );
     if create_result.is_err() {
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_CREATE_FAIL.fetch_add(1, Ordering::Relaxed);
         queue_main_mtp_response(
             xcore407i_usb_mtp::mtp::response::ACCESS_DENIED,
             transaction_id,
@@ -386,6 +387,7 @@ fn service_send_object_info(
         return;
     }
 
+    xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_CREATE_OK.fetch_add(1, Ordering::Relaxed);
     let handle = *next_object_handle;
     let Some(next) = handle.checked_add(1) else {
         let _ = fs.remove(&temp_path);
@@ -465,7 +467,20 @@ fn service_upload_data(
         Err(littlefs2::io::Error::IO)
     };
 
-    if write_result.is_err() || fs.exists(&final_path) || fs.rename(&temp_path, &final_path).is_err() {
+    if write_result.is_err() {
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_WRITE_FAIL.fetch_add(1, Ordering::Relaxed);
+    } else {
+        xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_WRITE_OK.fetch_add(1, Ordering::Relaxed);
+    }
+    let rename_result = if write_result.is_ok() && !fs.exists(&final_path) {
+        fs.rename(&temp_path, &final_path)
+    } else {
+        Err(littlefs2::io::Error::IO)
+    };
+    if write_result.is_err() || rename_result.is_err() {
+        if write_result.is_ok() {
+            xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_RENAME_FAIL.fetch_add(1, Ordering::Relaxed);
+        }
         let _ = fs.remove(&temp_path);
         NVIC::mask(Interrupt::TIM2);
         let mtp = unsafe { &mut *MTP_PTR.load(Ordering::Acquire) };
@@ -478,6 +493,7 @@ fn service_upload_data(
         return;
     }
 
+    xcore407i_usb_mtp::mtp::diagnostics::UPLOAD_FS_RENAME_OK.fetch_add(1, Ordering::Relaxed);
     let object = &mut objects[*object_count];
     object.handle = handle;
     object.name[..info.name_len as usize].copy_from_slice(&info.name[..info.name_len as usize]);
