@@ -199,9 +199,135 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
     }
 }
 
+
+impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
+    fn append_u16(out: &mut [u8], pos: &mut usize, value: u16) {
+        out[*pos..*pos + 2].copy_from_slice(&value.to_le_bytes());
+        *pos += 2;
+    }
+
+    fn append_u32(out: &mut [u8], pos: &mut usize, value: u32) {
+        out[*pos..*pos + 4].copy_from_slice(&value.to_le_bytes());
+        *pos += 4;
+    }
+
+    fn append_ptp_string(out: &mut [u8], pos: &mut usize, value: &str) {
+        let units = value.encode_utf16().count();
+        out[*pos] = (units + 1) as u8;
+        *pos += 1;
+        for unit in value.encode_utf16() {
+            out[*pos..*pos + 2].copy_from_slice(&unit.to_le_bytes());
+            *pos += 2;
+        }
+        out[*pos..*pos + 2].copy_from_slice(&0u16.to_le_bytes());
+        *pos += 2;
+    }
+
+    fn queue_data(&mut self, code: u16, transaction_id: u32, payload: &[u8], response_code: u16) {
+        let length = CONTAINER_HEADER_LEN + payload.len();
+        self.tx[..4].copy_from_slice(&(length as u32).to_le_bytes());
+        self.tx[4..6].copy_from_slice(&(ContainerType::Data as u16).to_le_bytes());
+        self.tx[6..8].copy_from_slice(&code.to_le_bytes());
+        self.tx[8..12].copy_from_slice(&transaction_id.to_le_bytes());
+        self.tx[12..length].copy_from_slice(payload);
+        self.tx_len = length;
+        self.pending_response = Some((response_code, transaction_id));
+        let _ = self.bulk_in.write(&self.tx[..self.tx_len]);
+    }
+
+    fn queue_response(&mut self, code: u16, transaction_id: u32) {
+        let mut response_bytes = [0u8; 32];
+        if let Ok(length) = encode_response(transaction_id, code, &[], &mut response_bytes) {
+            let _ = self.bulk_in.write(&response_bytes[..length]);
+        }
+        self.pending_response = None;
+        self.tx_len = 0;
+    }
+
+    fn device_info(&mut self, transaction_id: u32) {
+        let mut data = [0u8; 240];
+        let mut pos = 0;
+        Self::append_u16(&mut data, &mut pos, 100); // StandardVersion
+        Self::append_u32(&mut data, &mut pos, 6); // Microsoft MTP vendor extension
+        Self::append_u16(&mut data, &mut pos, 100);
+        Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
+        Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
+
+        let operations: [u16; 5] = [
+            operation::GET_DEVICE_INFO,
+            operation::OPEN_SESSION,
+            operation::CLOSE_SESSION,
+            operation::GET_STORAGE_IDS,
+            operation::GET_STORAGE_INFO,
+        ];
+        Self::append_u32(&mut data, &mut pos, operations.len() as u32);
+        for value in operations { Self::append_u16(&mut data, &mut pos, value); }
+
+        Self::append_u32(&mut data, &mut pos, 0); // EventsSupported
+        Self::append_u32(&mut data, &mut pos, 0); // DevicePropertiesSupported
+        Self::append_u32(&mut data, &mut pos, 0); // CaptureFormats
+        Self::append_u32(&mut data, &mut pos, 0); // PlaybackFormats
+
+        Self::append_ptp_string(&mut data, &mut pos, "OpenAI XCore407I");
+        Self::append_ptp_string(&mut data, &mut pos, "XCore407I");
+        Self::append_ptp_string(&mut data, &mut pos, "0.1");
+        Self::append_ptp_string(&mut data, &mut pos, "XCORE407I-001");
+
+        self.queue_data(operation::GET_DEVICE_INFO, transaction_id, &data[..pos], response::OK);
+    }
+
+    fn handle_command(&mut self, packet: &[u8]) {
+        let Ok(header) = ContainerHeader::decode(packet) else { return; };
+        if header.kind != ContainerType::Command
+            || header.length as usize > packet.len()
+            || header.length < CONTAINER_HEADER_LEN as u32
+        {
+            return;
+        }
+        let params = &packet[CONTAINER_HEADER_LEN..header.length as usize];
+        let parameter = |index: usize| -> Option<u32> {
+            let start = index * 4;
+            if params.len() < start + 4 { None } else {
+                Some(u32::from_le_bytes(params[start..start + 4].try_into().unwrap()))
+            }
+        };
+
+        match header.code {
+            operation::GET_DEVICE_INFO => self.device_info(header.transaction_id),
+            operation::OPEN_SESSION => {
+                if self.session_open {
+                    self.queue_response(response::SESSION_ALREADY_OPEN, header.transaction_id);
+                } else if parameter(0).unwrap_or(0) == 0 || params.len() != 4 {
+                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
+                } else {
+                    self.session_open = true;
+                    self.queue_response(response::OK, header.transaction_id);
+                }
+            }
+            operation::CLOSE_SESSION => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else {
+                    self.session_open = false;
+                    self.queue_response(response::OK, header.transaction_id);
+                }
+            }
+            operation::GET_STORAGE_IDS => {
+                if !self.session_open {
+                    self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
+                } else {
+                    // No storage is advertised until a real LittleFS backend is mounted.
+                    let empty_ids = [0u8; 4];
+                    self.queue_data(operation::GET_STORAGE_IDS, header.transaction_id, &empty_ids, response::OK);
+                }
+            }
+            _ => self.queue_response(response::OPERATION_NOT_SUPPORTED, header.transaction_id),
+        }
+    }
+}
+
 impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
     fn get_configuration_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
-        // PTP class descriptors are recognized by Windows' inbox WPD/MTP driver.
         writer.interface(self.interface, STILL_IMAGE_CLASS, PTP_SUBCLASS, PTP_PROTOCOL)?;
         writer.endpoint(&self.bulk_out)?;
         writer.endpoint(&self.bulk_in)?;
@@ -217,8 +343,26 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         if index == self.interface_string { Some("LittleFS file transfer (MTP)") } else { None }
     }
 
+    fn endpoint_out(&mut self, address: usb_device::endpoint::EndpointAddress) {
+        if address != self.bulk_out.address() { return; }
+        let mut packet = [0u8; BULK_MAX_PACKET_SIZE as usize];
+        if let Ok(length) = self.bulk_out.read(&mut packet) {
+            self.handle_command(&packet[..length]);
+        }
+    }
+
+    fn endpoint_in_complete(&mut self, address: usb_device::endpoint::EndpointAddress) {
+        if address != self.bulk_in.address() { return; }
+        if let Some((code, transaction_id)) = self.pending_response {
+            self.queue_response(code, transaction_id);
+        }
+    }
+
     fn reset(&mut self) {
         self.clear_transport_stalls();
+        self.session_open = false;
+        self.pending_response = None;
+        self.tx_len = 0;
     }
 }
 
