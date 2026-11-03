@@ -313,7 +313,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_u64(&mut data, &mut pos, 0);
         Self::append_u64(&mut data, &mut pos, 0);
         Self::append_u32(&mut data, &mut pos, 0);
-        Self::append_ptp_string(&mut data, &mut pos, "XCore407I (not mounted)");
+        Self::append_ptp_string(&mut data, &mut pos, "Data");
         Self::append_ptp_string(&mut data, &mut pos, "XCORE407I");
         self.queue_data(operation::GET_STORAGE_INFO, transaction_id, &data[..pos], response::OK);
     }
