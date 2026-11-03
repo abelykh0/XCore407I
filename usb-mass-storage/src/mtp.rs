@@ -191,6 +191,11 @@ pub struct MtpUsbClass<'a, B: usb_device::bus::UsbBus> {
     tx_len: usize,
     tx_pending: bool,
     tx_in_flight: bool,
+    // MTP commands are serialized: retain one OUT command that arrives while
+    // the current transaction's data/response is still being transmitted.
+    transaction_active: bool,
+    pending_command: [u8; BULK_MAX_PACKET_SIZE as usize],
+    pending_command_len: usize,
     readme: [u8; 192],
     readme_len: usize,
     pending_response: Option<(u16, u32)>,
@@ -226,6 +231,9 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             tx_len: 0,
             tx_pending: false,
             tx_in_flight: false,
+            transaction_active: false,
+            pending_command: [0; BULK_MAX_PACKET_SIZE as usize],
+            pending_command_len: 0,
             readme: { let mut bytes = [0u8; 192]; bytes[..DEFAULT_README.len()].copy_from_slice(DEFAULT_README); bytes },
             readme_len: DEFAULT_README.len(),
             pending_response: None,
@@ -293,7 +301,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx[header_len..header_len + bytes.len()].copy_from_slice(bytes);
         self.tx_len = header_len + bytes.len();
         self.tx_pending = true;
-        self.tx_in_flight = false;
         if last {
             self.pending_response = Some((response::OK, transaction_id));
         }
@@ -368,7 +375,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         self.tx[12..length].copy_from_slice(payload);
         self.tx_len = length;
         self.tx_pending = true;
-        self.tx_in_flight = false;
         self.pending_response = Some((response_code, transaction_id));
     }
 
@@ -378,8 +384,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
 
     fn queue_response_with_params(&mut self, code: u16, transaction_id: u32, params: &[u32]) {
         self.pending_response = None;
-        self.tx_pending = false;
-        self.tx_in_flight = false;
         if let Ok(length) = encode_response(transaction_id, code, params, &mut self.tx) {
             self.tx_len = length;
             self.tx_pending = true;
@@ -732,15 +736,45 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         if address != self.bulk_out.address() { return; }
         let mut packet = [0u8; BULK_MAX_PACKET_SIZE as usize];
         if let Ok(length) = self.bulk_out.read(&mut packet) {
-            self.handle_command(&packet[..length]);
+            if length < CONTAINER_HEADER_LEN {
+                return;
+            }
+            if self.transaction_active {
+                // Do not let a new command overwrite a data packet or response
+                // that is still owned by the bulk-IN endpoint.
+                if self.pending_command_len == 0 && length <= self.pending_command.len() {
+                    self.pending_command[..length].copy_from_slice(&packet[..length]);
+                    self.pending_command_len = length;
+                }
+            } else {
+                self.transaction_active = true;
+                self.handle_command(&packet[..length]);
+            }
         }
     }
 
     fn endpoint_in_complete(&mut self, address: usb_device::endpoint::EndpointAddress) {
         if address != self.bulk_in.address() { return; }
         self.tx_in_flight = false;
+
+        // A data container is followed by its MTP response. The transaction
+        // remains active until that response has itself completed.
         if let Some((code, transaction_id)) = self.pending_response.take() {
             self.queue_response(code, transaction_id);
+            return;
+        }
+
+        self.transaction_active = false;
+
+        // Process at most one deferred command, and only after the preceding
+        // transaction is completely off the wire.
+        if self.pending_command_len != 0 {
+            let length = self.pending_command_len;
+            let mut packet = [0u8; BULK_MAX_PACKET_SIZE as usize];
+            packet[..length].copy_from_slice(&self.pending_command[..length]);
+            self.pending_command_len = 0;
+            self.transaction_active = true;
+            self.handle_command(&packet[..length]);
         }
     }
 
@@ -753,6 +787,8 @@ impl<B: usb_device::bus::UsbBus> UsbClass<B> for MtpUsbClass<'_, B> {
         self.session_open = false;
         self.pending_get_object = None;
         self.pending_response = None;
+        self.pending_command_len = 0;
+        self.transaction_active = false;
         self.tx_len = 0;
         self.tx_pending = false;
         self.tx_in_flight = false;
