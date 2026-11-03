@@ -217,8 +217,7 @@ This file is stored in NAND using LittleFS and read over USB MTP.\r\n",
 fn test_hello_readback(
     fs: &littlefs2::fs::Filesystem<'_, nand_fs::NandStorage>,
 ) -> &'static [u8] {
-    const EXPECTED: &[u8] = b"Hello from XCore407I!\r\n\\
-This file is stored in NAND using LittleFS and read over USB MTP.\r\n";
+    const EXPECTED: &[u8] = b"Hello from XCore407I!\r\nThis file is stored in NAND using LittleFS and read over USB MTP.\r\n";
     let mut actual = [0u8; 128];
     let mut total = 0usize;
     let result = fs.open_file_and_then(path!("/HELLO.txt"), |file| {
