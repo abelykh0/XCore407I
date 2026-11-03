@@ -825,6 +825,7 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 name = "xcore407i_blinker"
 version = "0.1.0"
 dependencies = [
+ "littlefs2",
  "cc",
  "cortex-m",
  "cortex-m-rt",
@@ -836,3 +837,27 @@ dependencies = [
  "tinyusb-sys",
  "usb-device",
 ]
+
+[[package]]
+name = "delog"
+
+[[package]]
+name = "generic-array"
+
+[[package]]
+name = "itertools"
+
+[[package]]
+name = "littlefs2"
+
+[[package]]
+name = "littlefs2-core"
+
+[[package]]
+name = "littlefs2-sys"
+
+[[package]]
+name = "typenum"
+
+[[package]]
+name = "version_check"
