@@ -187,3 +187,52 @@ fn configure_fsmc() {
         let _ = read_volatile(pcr2);
     }
 }
+
+/// Non-destructive startup diagnostic. Checks the device ID and scans factory
+/// bad-block markers; it never issues program or erase commands.
+pub fn run_read_only_diagnostic() {
+    use crate::camera::show_usb_status;
+
+    show_usb_status(b"NAND: READ-ONLY INIT");
+    let mut nand = match Nand::initialize() {
+        Ok(device) => device,
+        Err(NandError::Timeout) => {
+            show_usb_status(b"NAND: INIT TIMEOUT");
+            return;
+        }
+        Err(NandError::WrongDevice { .. }) => {
+            show_usb_status(b"NAND: WRONG DEVICE");
+            return;
+        }
+        Err(_) => {
+            show_usb_status(b"NAND: INIT ERROR");
+            return;
+        }
+    };
+
+    let mut good = 0u16;
+    let mut bad = 0u16;
+    for block in 0..BLOCK_COUNT {
+        match nand.is_factory_good_block(block) {
+            Ok(true) => good += 1,
+            Ok(false) => bad += 1,
+            Err(_) => {
+                show_usb_status(b"NAND: MARKER READ FAIL");
+                return;
+            }
+        }
+    }
+
+    // Display hexadecimal counts without allocating or formatting strings.
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut line = *b"NAND G:0000 B:0000";
+    line[7] = HEX[((good >> 12) & 0xF) as usize];
+    line[8] = HEX[((good >> 8) & 0xF) as usize];
+    line[9] = HEX[((good >> 4) & 0xF) as usize];
+    line[10] = HEX[(good & 0xF) as usize];
+    line[14] = HEX[((bad >> 12) & 0xF) as usize];
+    line[15] = HEX[((bad >> 8) & 0xF) as usize];
+    line[16] = HEX[((bad >> 4) & 0xF) as usize];
+    line[17] = HEX[(bad & 0xF) as usize];
+    show_usb_status(&line);
+}
