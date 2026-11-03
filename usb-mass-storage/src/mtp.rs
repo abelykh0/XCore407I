@@ -268,6 +268,7 @@ pub mod response {
     pub const ACCESS_DENIED: u16 = 0x200f;
     pub const SESSION_ALREADY_OPEN: u16 = 0x201e;
     pub const INVALID_PARAMETER: u16 = 0x201d;
+    pub const OBJECT_PROP_NOT_SUPPORTED: u16 = 0xa801;
 }
 
 /// Encode a response container, including up to five 32-bit response parameters.
