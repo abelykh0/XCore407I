@@ -67,8 +67,6 @@ pub mod diagnostics {
     pub static UPLOAD_TEMP_EXISTS: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_PROPS_SUPPORTED_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static GET_OBJECT_PROP_DESC_COMMANDS: AtomicU32 = AtomicU32::new(0);
-    pub static GET_OBJECT_PROP_VALUE_COMMANDS: AtomicU32 = AtomicU32::new(0);
-    pub static GET_OBJECT_PROP_VALUE_LAST_PROPERTY: AtomicU32 = AtomicU32::new(0);
     pub static SET_OBJECT_PROP_VALUE_COMMANDS: AtomicU32 = AtomicU32::new(0);
     pub static SET_OBJECT_PROP_VALUE_DATA: AtomicU32 = AtomicU32::new(0);
 
@@ -144,8 +142,6 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"TMP=", UPLOAD_TEMP_EXISTS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GOPS=", GET_OBJECT_PROPS_SUPPORTED_COMMANDS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"GOPD=", GET_OBJECT_PROP_DESC_COMMANDS.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"GOPV=", GET_OBJECT_PROP_VALUE_COMMANDS.load(Ordering::Relaxed));
-        append_counter(out, &mut pos, b"GOPP=", GET_OBJECT_PROP_VALUE_LAST_PROPERTY.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOPC=", SET_OBJECT_PROP_VALUE_COMMANDS.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"SOPD=", SET_OBJECT_PROP_VALUE_DATA.load(Ordering::Relaxed));
         pos
@@ -738,7 +734,7 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         Self::append_ptp_string(&mut data, &mut pos, "microsoft.com: 1.0;");
         Self::append_u16(&mut data, &mut pos, 0); // FunctionalMode
 
-        let operations: [u16; 17] = [
+        let operations: [u16; 16] = [
             operation::GET_DEVICE_INFO,
             operation::OPEN_SESSION,
             operation::CLOSE_SESSION,
@@ -753,7 +749,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
             operation::SEND_OBJECT,
             operation::GET_OBJECT_PROPS_SUPPORTED,
             operation::GET_OBJECT_PROP_DESC,
-            operation::GET_OBJECT_PROP_VALUE,
             operation::GET_OBJECT_PROP_LIST,
             operation::SET_OBJECT_PROP_VALUE,
         ];
@@ -870,23 +865,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
         data[pos] = 0; // FormFlag: none
         pos += 1;
         self.queue_data(operation::GET_OBJECT_PROP_DESC, transaction_id, &data[..pos], response::OK);
-    }
-
-    fn object_prop_value(&mut self, transaction_id: u32, handle: u32, property: u32) {
-        // This implementation deliberately supports only ObjectFileName.
-        // Return the property's PTP STRING value as the complete data payload.
-        if property != 0xdc07 {
-            self.queue_response(response::OBJECT_PROP_NOT_SUPPORTED, transaction_id);
-            return;
-        }
-        let Some(object) = self.object(handle).copied() else {
-            self.queue_response(response::INVALID_OBJECT_HANDLE, transaction_id);
-            return;
-        };
-        let mut data = [0u8; 130];
-        let mut pos = 0;
-        Self::append_ptp_string(&mut data, &mut pos, object.name());
-        self.queue_data(operation::GET_OBJECT_PROP_VALUE, transaction_id, &data[..pos], response::OK);
     }
 
     fn append_prop_u16(out: &mut [u8], pos: &mut usize, handle: u32, code: u16, value: u16) {
@@ -1120,21 +1098,6 @@ impl<'a, B: usb_device::bus::UsbBus> MtpUsbClass<'a, B> {
                     self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
                 } else if let Some(format) = parameter(0) {
                     self.object_props_supported(header.transaction_id, format);
-                } else {
-                    self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
-                }
-            }
-            operation::GET_OBJECT_PROP_VALUE => {
-                diagnostics::GET_OBJECT_PROP_VALUE_COMMANDS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                if let (Some(handle), Some(property)) = (parameter(0), parameter(1)) {
-                    diagnostics::GET_OBJECT_PROP_VALUE_LAST_PROPERTY.store(property, core::sync::atomic::Ordering::Relaxed);
-                    if !self.session_open {
-                        self.queue_response(response::SESSION_NOT_OPEN, header.transaction_id);
-                    } else if params.len() == 8 {
-                        self.object_prop_value(header.transaction_id, handle, property);
-                    } else {
-                        self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
-                    }
                 } else {
                     self.queue_response(response::INVALID_PARAMETER, header.transaction_id);
                 }
