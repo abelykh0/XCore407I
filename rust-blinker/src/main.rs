@@ -202,8 +202,6 @@ fn main() -> ! {
         &mut core.NVIC,
     );
 
-    // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
-
     loop {
         service_camera_mode_change();
 
