@@ -48,6 +48,7 @@ pub mod diagnostics {
     pub static OBJ_EXPECTED_DATASET_LEN: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_FORMAT: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_PROTECTION: AtomicU32 = AtomicU32::new(0);
+    pub static OBJ_LAST_PROTECTION: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_ASSOC: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_PARENT: AtomicU32 = AtomicU32::new(0);
     pub static OBJ_BAD_NAME: AtomicU32 = AtomicU32::new(0);
@@ -119,6 +120,7 @@ pub mod diagnostics {
         append_counter(out, &mut pos, b"OEX=", OBJ_EXPECTED_DATASET_LEN.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OFMT=", OBJ_BAD_FORMAT.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OPRT=", OBJ_BAD_PROTECTION.load(Ordering::Relaxed));
+        append_counter(out, &mut pos, b"OPRV=", OBJ_LAST_PROTECTION.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OASC=", OBJ_BAD_ASSOC.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"OPAR=", OBJ_BAD_PARENT.load(Ordering::Relaxed));
         append_counter(out, &mut pos, b"ONAM=", OBJ_BAD_NAME.load(Ordering::Relaxed));
@@ -1507,6 +1509,7 @@ impl UploadObjectInfo {
         diagnostics::OBJ_LAST_STORAGE_ID.store(storage_id, core::sync::atomic::Ordering::Relaxed);
         let format = u16_at(4);
         let protection = u16_at(6);
+        diagnostics::OBJ_LAST_PROTECTION.store(protection as u32, core::sync::atomic::Ordering::Relaxed);
         let size = u32_at(8);
         let parent = u32_at(38);
         let association_type = u16_at(42);
@@ -1523,7 +1526,10 @@ impl UploadObjectInfo {
             diagnostics::OBJ_BAD_FORMAT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
-        if protection != 0 {
+        // Windows may mark a newly uploaded object read-only in ObjectInfo.
+        // Treat the standard 0/1 protection values as advisory and create the
+        // destination as a normal writable LittleFS file. Reject reserved values.
+        if protection > 1 {
             diagnostics::OBJ_BAD_PROTECTION.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             return Err(MtpError::InvalidContainerLength);
         }
@@ -1654,6 +1660,7 @@ mod upload_info_tests {
         let mut data = [0u8; 52 + 1 + 12 + 3];
         data[0..4].copy_from_slice(&PLACEHOLDER_STORAGE_ID.to_le_bytes());
         data[4..6].copy_from_slice(&0x3000u16.to_le_bytes());
+        data[6..8].copy_from_slice(&1u16.to_le_bytes()); // Windows read-only hint is ignored for a new upload.
         data[8..12].copy_from_slice(&1234u32.to_le_bytes());
         data[38..42].copy_from_slice(&0u32.to_le_bytes());
         data[52] = 6;
