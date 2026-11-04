@@ -329,6 +329,8 @@ fn main() -> ! {
         // Pause emulator execution while the file browser owns the canvas.
         if !browser_open {
             unsafe { bk_loop(); }
+            const DIAG_LABEL: &[u8] = b"DIAG BELOW:";
+            show_file_browser_line(20, DIAG_LABEL, false);
             let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
             if input_len > 0 {
                 let mut buffer = [0u8; 32];
