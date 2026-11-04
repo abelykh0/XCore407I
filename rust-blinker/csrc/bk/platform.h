@@ -20,6 +20,11 @@ extern uint8_t port0177660;
 extern uint8_t port0177662;
 extern uint16_t port0177716;
 extern uint16_t port0177664;
+extern uint16_t port0177714;
+
+uint8_t bk_audio_start(void);
+void bk_audio_stop(void);
+uint8_t bk_audio_pop_edge(uint32_t *cycles, uint8_t *level);
 
 void bk_platform_init(const uint8_t *monitor_rom,
                       const uint8_t *basic_rom,
