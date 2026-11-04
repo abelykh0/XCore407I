@@ -389,6 +389,15 @@ fn list_root_files(
                     continue;
                 }
 
+                // Only expose .bin files in the browser (case-insensitive).
+                // The stored path is NUL-terminated and begins with '/'.
+                let filename = &path_bytes[1..path_bytes.len() - 1];
+                if !filename.len().ge(&4)
+                    || !filename[filename.len() - 4..].eq_ignore_ascii_case(b".bin")
+                {
+                    continue;
+                }
+
                 paths[count][..path_bytes.len()].copy_from_slice(path_bytes);
                 path_lengths[count] = path_bytes.len() as u16;
                 count += 1;
