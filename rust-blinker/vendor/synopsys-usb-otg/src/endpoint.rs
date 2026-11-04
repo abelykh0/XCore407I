@@ -303,7 +303,33 @@ impl EndpointIn {
     }
 
     fn write_transfer(&self, buf: &[u8], packet_count: u8, multi_count: u8) -> Result<()> {
-        self.write_transfer_inner(buf, packet_count, multi_count, None)
+        self.write_transfer_inner(buf, packet_count, multi_count, None, false)
+    }
+
+    /// Queue an isochronous IN transfer using the endpoint TX FIFO, even when
+    /// the USB peripheral is otherwise configured for internal DMA.
+    pub fn write_iso_batch_fifo(
+        &self,
+        buf: &[u8],
+        packet_count: u8,
+        transactions_per_microframe: u8,
+    ) -> Result<()> {
+        #[cfg(feature = "hs")]
+        {
+            if !matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. })
+                || !(1..=2).contains(&packet_count)
+                || !(1..=2).contains(&transactions_per_microframe)
+                || packet_count > transactions_per_microframe
+            {
+                return Err(UsbError::Unsupported);
+            }
+            self.write_transfer_inner(buf, packet_count, transactions_per_microframe, None, true)
+        }
+        #[cfg(not(feature = "hs"))]
+        {
+            let _ = (buf, packet_count, transactions_per_microframe);
+            Err(UsbError::Unsupported)
+        }
     }
 
     fn write_transfer_inner(
@@ -312,6 +338,7 @@ impl EndpointIn {
         packet_count: u8,
         multi_count: u8,
         direct_dma_address: Option<*const u32>,
+        fifo_only: bool,
     ) -> Result<()> {
         let ep = self.usb.endpoint_in(self.index() as usize);
         if self.index() != 0 && read_reg!(endpoint_in, ep, DIEPCTL, EPENA) != 0 {
@@ -333,7 +360,7 @@ impl EndpointIn {
         }
 
         #[cfg(feature = "internal-dma")]
-        {
+        if !fifo_only {
             critical_section::with(|cs| -> Result<()> {
                 let mut dma = self.dma_buffer.borrow_ref_mut(cs);
                 let dma_address = if let Some(address) = direct_dma_address {
@@ -371,7 +398,6 @@ impl EndpointIn {
             return Ok(());
         }
 
-        #[cfg(not(feature = "internal-dma"))]
         if !buf.is_empty() {
             // Check for FIFO free space
             let size_words = (buf.len() + 3) / 4;
@@ -380,16 +406,14 @@ impl EndpointIn {
             }
         }
 
-        #[cfg(all(not(feature = "internal-dma"), feature = "fs"))]
+        #[cfg(feature = "fs")]
         write_reg!(endpoint_in, ep, DIEPTSIZ, PKTCNT: 1, XFRSIZ: buf.len() as u32);
-        #[cfg(all(not(feature = "internal-dma"), feature = "hs"))]
+        #[cfg(feature = "hs")]
         write_reg!(endpoint_in, ep, DIEPTSIZ, MCNT: multi_count as u32, PKTCNT: packet_count as u32, XFRSIZ: buf.len() as u32);
 
         self.set_iso_frame(ep);
-        #[cfg(not(feature = "internal-dma"))]
         modify_reg!(endpoint_in, ep, DIEPCTL, CNAK: 1, EPENA: 1);
 
-        #[cfg(not(feature = "internal-dma"))]
         fifo_write(self.usb, self.index(), buf);
 
         Ok(())
