@@ -97,8 +97,6 @@ pub struct AudioUsbClass<'a, B: UsbBus> {
     pending_edge: Option<(u32, bool)>,
     packet_queued: bool,
     packet_buffer: [u8; AUDIO_PACKET_BYTES as usize],
-    incomplete_count: u8,
-    halted_after_incomplete: bool,
 }
 
 impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
@@ -129,8 +127,6 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             pending_edge: None,
             packet_queued: false,
             packet_buffer: [0; AUDIO_PACKET_BYTES as usize],
-            incomplete_count: 0,
-            halted_after_incomplete: false,
         }
     }
 
@@ -164,20 +160,16 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
     }
 
     fn make_packet(&mut self) {
-        for sample_index in 0..AUDIO_SAMPLES_PER_PACKET {
-            let sample_cycle = self.next_sample_cycle;
-            self.apply_edges_through(sample_cycle);
-
-            // A simple square wave from the BK speaker output. Amplitude is
-            // deliberately conservative; later we can tune level/filtering.
-            let sample: i16 = if self.sample_level { 12_000 } else { -12_000 };
-            let offset = sample_index * 2;
-            self.packet_buffer[offset..offset + 2].copy_from_slice(&sample.to_le_bytes());
-
-            self.next_sample_cycle =
-                self.next_sample_cycle.wrapping_add(AUDIO_SAMPLE_PERIOD_CYCLES);
+        // Fixed nonzero PCM pattern for isolating USB transport from the BK
+        // emulator audio source. The same six samples are sent every microframe.
+        const TEST_SAMPLES: [i16; AUDIO_SAMPLES_PER_PACKET] = [
+            12_000, -12_000, 24_000, -24_000, 6_000, -6_000,
+        ];
+        for (index, sample) in TEST_SAMPLES.iter().enumerate() {
+            let offset = index * 2;
+            self.packet_buffer[offset..offset + 2]
+                .copy_from_slice(&sample.to_le_bytes());
         }
-
     }
 
     fn queue_current_packet(&mut self) {
@@ -201,7 +193,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
     }
 
     fn submit_packet(&mut self) {
-        if self.streaming_alt != 1 || self.packet_queued || self.halted_after_incomplete {
+        if self.streaming_alt != 1 || self.packet_queued {
             return;
         }
         self.make_packet();
@@ -343,13 +335,8 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         }
         self.pending_edge = None;
         self.packet_queued = false;
-        self.incomplete_count = 0;
-        self.halted_after_incomplete = false;
 
         if alternative == 1 {
-            self.sample_level = unsafe { bk_audio_start() != 0 };
-            self.next_sample_cycle = Self::cycle_counter()
-                .wrapping_sub(AUDIO_STARTUP_LATENCY_CYCLES);
             // Prime the endpoint immediately; subsequent packets are queued
             // from endpoint_in_complete once per HS microframe.
             self.submit_packet();
@@ -369,7 +356,6 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     fn endpoint_in_complete(&mut self, address: EndpointAddress) {
         if address == self.endpoint.address() {
             AUDIO_COMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
-            self.incomplete_count = 0;
             self.packet_queued = false;
             self.submit_packet();
         }
@@ -389,11 +375,5 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
 
         AUDIO_INCOMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
         self.packet_queued = false;
-        self.incomplete_count = self.incomplete_count.saturating_add(1);
-
-        // Diagnostic isolation: stop the audio retry/recovery loop after the
-        // first missed isochronous frame. A successful completion can still
-        // keep the stream running; an incomplete callback halts submissions.
-        self.halted_after_incomplete = true;
     }
 }
