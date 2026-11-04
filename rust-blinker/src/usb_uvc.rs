@@ -437,10 +437,10 @@ pub fn usb_bus() -> core::result::Result<&'static BoardUsbAllocator, UsbBusAlrea
         .map_err(|_| UsbBusAlreadyInitialized)?;
 
     // DMA-visible endpoint staging/receive memory. With UVC removed, the
-    // active endpoints need: EP0 OUT 256 B, EP0 IN 64 B, CDC notification IN
-    // 8 B, CDC bulk IN 64 B, and CDC bulk OUT 64 B = 456 B (114 words).
-    // Round to 128 words (512 B), with a hard ceiling of 1,024 words (4 KiB).
-    const EP_MEMORY_WORDS: usize = 128;
+    // active endpoints need: EP0 OUT 512 B, EP0 IN 128 B, CDC notification IN
+    // 8 B, CDC bulk IN 64 B, and CDC bulk OUT 64 B = 776 B (194 words).
+    // Round to 256 words (1 KiB), with a hard ceiling of 1,024 words (4 KiB).
+    const EP_MEMORY_WORDS: usize = 256;
     const MAX_EP_MEMORY_WORDS: usize = 1_024;
     const _: () = assert!(EP_MEMORY_WORDS <= MAX_EP_MEMORY_WORDS);
     static mut EP_MEMORY: [u32; EP_MEMORY_WORDS] = [0; EP_MEMORY_WORDS];
