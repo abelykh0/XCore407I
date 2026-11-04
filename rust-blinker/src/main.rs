@@ -392,7 +392,7 @@ fn list_root_files(
                 // Only expose .bin files in the browser (case-insensitive).
                 // The stored path is NUL-terminated and begins with '/'.
                 let filename = &path_bytes[1..path_bytes.len() - 1];
-                if !filename.len().ge(&4)
+                if filename.len() < 4
                     || !filename[filename.len() - 4..].eq_ignore_ascii_case(b".bin")
                 {
                     continue;
