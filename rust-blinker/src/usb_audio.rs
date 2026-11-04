@@ -2,8 +2,8 @@
 //!
 //! The BK emulator writes a one-bit speaker level to port 0177714 bit 6.
 //! Transitions are timestamped with DWT CYCCNT and converted to mono,
-//! signed 16-bit PCM at 48 kHz. The UAC2 descriptors expose this source as
-//! an external Line Connector feeding a USB Streaming output terminal.
+//! signed 16-bit PCM at a nominal 48 kHz. The UAC2 descriptors expose this
+//! source as an external Line Connector feeding a USB Streaming output terminal.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use usb_device::bus::UsbBus;
@@ -15,8 +15,9 @@ use usbd_uac2::{
 };
 
 const AUDIO_SAMPLE_RATE: u32 = 48_000;
-const AUDIO_SAMPLES_PER_MICROFRAME: usize = 6;
-const AUDIO_PACKET_BYTES: usize = AUDIO_SAMPLES_PER_MICROFRAME * 2;
+const AUDIO_NOMINAL_SAMPLES_PER_MICROFRAME: usize = 6;
+const AUDIO_MAX_SAMPLES_PER_MICROFRAME: usize = 7;
+const AUDIO_MAX_PACKET_BYTES: usize = AUDIO_MAX_SAMPLES_PER_MICROFRAME * 2;
 const AUDIO_SAMPLE_PERIOD_CYCLES: u32 = 3_500; // 168 MHz / 48 kHz
 const AUDIO_STARTUP_LATENCY_CYCLES: u32 = 168_000; // 1 ms edge-queue lead
 const AUDIO_AMPLITUDE: i16 = 12_000;
@@ -50,22 +51,30 @@ unsafe extern "C" {
 
 /// Audio source used by ktims/usbd-uac2.
 ///
-/// It is a fixed 48 kHz clock. The class allocates a High-Speed isochronous IN
-/// endpoint with one extra sample of packet-size headroom; this handler emits
-/// six mono 16-bit samples (12 bytes) per 125-us microframe.
+/// The UAC2 endpoint is asynchronous. Packet lengths therefore follow the
+/// measured DWT time between USB microframe callbacks: normally six samples,
+/// with occasional five- or seven-sample packets to track oscillator drift.
 pub struct BkAudio {
     next_sample_cycle: u32,
+    last_packet_cycle: u32,
+    sample_phase_cycles: u32,
     sample_level: bool,
     pending_edge: Option<(u32, bool)>,
+    first_packet: bool,
     active: bool,
 }
 
 impl BkAudio {
+    const RATES: [RangeEntry<u32>; 1] = [RangeEntry::new_fixed(AUDIO_SAMPLE_RATE)];
+
     pub const fn new() -> Self {
         Self {
             next_sample_cycle: 0,
+            last_packet_cycle: 0,
+            sample_phase_cycles: 0,
             sample_level: false,
             pending_edge: None,
+            first_packet: true,
             active: false,
         }
     }
@@ -108,14 +117,45 @@ impl BkAudio {
         }
     }
 
-    fn fill_packet(&mut self, packet: &mut [u8; AUDIO_PACKET_BYTES]) {
-        for sample_index in 0..AUDIO_SAMPLES_PER_MICROFRAME {
+    fn samples_for_next_microframe(&mut self) -> usize {
+        let now = Self::cycle_counter();
+        if self.first_packet {
+            self.first_packet = false;
+            self.last_packet_cycle = now;
+            return AUDIO_NOMINAL_SAMPLES_PER_MICROFRAME;
+        }
+
+        let elapsed = now.wrapping_sub(self.last_packet_cycle);
+        self.last_packet_cycle = now;
+
+        let accumulated = self.sample_phase_cycles.saturating_add(elapsed);
+        let due = accumulated / AUDIO_SAMPLE_PERIOD_CYCLES;
+        self.sample_phase_cycles = accumulated % AUDIO_SAMPLE_PERIOD_CYCLES;
+
+        // The endpoint's advertised maximum is seven mono 16-bit samples.
+        // If an unusually late callback accumulated more, skip the oldest
+        // excess samples rather than exceeding wMaxPacketSize.
+        let sample_count = due
+            .max(1)
+            .min(AUDIO_MAX_SAMPLES_PER_MICROFRAME as u32) as usize;
+        let skipped = due.saturating_sub(sample_count as u32);
+        self.next_sample_cycle = self.next_sample_cycle.wrapping_add(
+            skipped.wrapping_mul(AUDIO_SAMPLE_PERIOD_CYCLES),
+        );
+        sample_count
+    }
+
+    fn fill_packet(
+        &mut self,
+        packet: &mut [u8; AUDIO_MAX_PACKET_BYTES],
+        sample_count: usize,
+    ) {
+        for sample_index in 0..sample_count {
             let sample_cycle = self.next_sample_cycle;
             self.apply_edges_through(sample_cycle);
 
             // Convert the BK's one-bit speaker signal to a centered PCM square
-            // wave. This preserves transitions and avoids a DC-only 0/32767
-            // representation at the USB capture interface.
+            // wave rather than emitting a DC-only 0/32767 representation.
             let sample = if self.sample_level {
                 AUDIO_AMPLITUDE
             } else {
@@ -130,10 +170,13 @@ impl BkAudio {
     }
 
     fn start(&mut self) {
+        let now = Self::cycle_counter();
         self.sample_level = unsafe { bk_audio_start() != 0 };
         self.pending_edge = None;
-        self.next_sample_cycle =
-            Self::cycle_counter().wrapping_sub(AUDIO_STARTUP_LATENCY_CYCLES);
+        self.next_sample_cycle = now.wrapping_sub(AUDIO_STARTUP_LATENCY_CYCLES);
+        self.last_packet_cycle = now;
+        self.sample_phase_cycles = 0;
+        self.first_packet = true;
         self.active = true;
         AUDIO_ALT1_ACTIVE.store(true, Ordering::Release);
         Self::reset_diagnostics();
@@ -143,6 +186,7 @@ impl BkAudio {
         self.active = false;
         AUDIO_ALT1_ACTIVE.store(false, Ordering::Release);
         self.pending_edge = None;
+        self.first_packet = true;
         unsafe { bk_audio_stop() };
     }
 }
@@ -164,8 +208,7 @@ impl ClockSource for BkAudio {
     fn sample_rates(
         &self,
     ) -> core::result::Result<&[RangeEntry<u32>], UsbAudioClassError> {
-        const RATES: [RangeEntry<u32>; 1] = [RangeEntry::new_fixed(AUDIO_SAMPLE_RATE)];
-        Ok(&RATES)
+        Ok(&Self::RATES)
     }
 
     fn clock_validity(
@@ -187,12 +230,14 @@ impl<'a, B: UsbBus> AudioHandler<'a, B> for BkAudio {
 
         AUDIO_ATTEMPT_COUNT.fetch_add(1, Ordering::Relaxed);
 
-        let mut packet = [0u8; AUDIO_PACKET_BYTES];
-        self.fill_packet(&mut packet);
+        let sample_count = self.samples_for_next_microframe();
+        let mut packet = [0u8; AUDIO_MAX_PACKET_BYTES];
+        self.fill_packet(&mut packet, sample_count);
+        let packet_bytes = sample_count * 2;
 
         // Use the project's FIFO-backed isochronous path. This avoids making
         // the UAC2 class depend on the DWC2 internal-DMA staging buffer.
-        match ep.write_iso_batch_fifo(&packet, 1, 1) {
+        match ep.write_iso_batch_fifo(&packet[..packet_bytes], 1, 1) {
             Ok(_) => {
                 AUDIO_SUBMIT_COUNT.fetch_add(1, Ordering::Relaxed);
             }
