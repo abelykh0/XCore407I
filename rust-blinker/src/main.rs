@@ -20,10 +20,7 @@ use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
-use xcore407i_blinker::usb_audio::{
-    diagnostics as audio_diagnostics,
-    BkAudio,
-};
+use xcore407i_blinker::usb_audio::TestToneAudio;
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
@@ -88,7 +85,7 @@ unsafe extern "C" {
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
 type BoardUvcClass = UvcUsbClass<'static, BoardUsbBus>;
-type BoardAudioHandler = BkAudio;
+type BoardAudioHandler = TestToneAudio;
 type BoardAudioClass = usbd_uac2::UsbAudioClass<'static, BoardUsbBus, BoardAudioHandler>;
 
 // These pointers are published once, before TIM2 is enabled. After that,
@@ -208,6 +205,9 @@ fn main() -> ! {
         camera_ptr.write(
             UvcUsbClass::new(bus).expect("UVC USB class initialization failed")
         );
+        // Keep UVC descriptors and class handling in the composite device,
+        // but suppress every EP1 camera data submission for this audio-only test.
+        (*camera_ptr).disable_streaming_for_test();
     }
 
     // The UAC2 class borrows its application audio handler for the class
@@ -216,7 +216,7 @@ fn main() -> ! {
         (*ptr::addr_of_mut!(AUDIO_IMPL)).as_mut_ptr()
     };
     unsafe {
-        audio_impl_ptr.write(BkAudio::new());
+        audio_impl_ptr.write(TestToneAudio::new());
     }
     let audio_impl: &'static mut BoardAudioHandler = unsafe { &mut *audio_impl_ptr };
 
@@ -288,7 +288,6 @@ fn main() -> ! {
     let mut browser_count = 0usize;
     let mut browser_selected = 0usize;
     let mut browser_open = false;
-    let mut last_audio_diagnostic = 0u32;
 
     loop {
         let browser_action = FILE_BROWSER_ACTION.swap(0, Ordering::AcqRel);
@@ -379,54 +378,7 @@ fn main() -> ! {
         // USB polling and camera-class access now belong exclusively to TIM2.
         let now = TICKS.load(Ordering::Relaxed);
 
-        // Keep only the audio stream state and transfer counters needed to
-        // determine whether Windows activates the stream and EP2 transfers run.
-        if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
-            last_audio_diagnostic = now;
-
-            let (active, attempts, submits, write_fails, completes, incompletes, retry_streak) =
-                audio_diagnostics();
-
-            let mut line = [b' '; 32];
-            line[0..4].copy_from_slice(b"ALT:");
-            line[4] = if active { b'1' } else { b'0' };
-            line[6] = b'A';
-            write_hex32(&mut line[7..11], attempts & 0xFFFF);
-            line[12] = b'S';
-            write_hex32(&mut line[13..17], submits & 0xFFFF);
-            show_file_browser_line(22, &line, false);
-
-            let mut line = [b' '; 32];
-            line[0] = b'W';
-            write_hex32(&mut line[1..5], write_fails & 0xFFFF);
-            line[6] = b'C';
-            write_hex32(&mut line[7..11], completes & 0xFFFF);
-            line[12] = b'I';
-            write_hex32(&mut line[13..17], incompletes & 0xFFFF);
-            line[18] = b'R';
-            write_hex32(&mut line[19..23], retry_streak as u32);
-            line[24] = b'E';
-            // Only EP2 (0x82, audio IN); ignore the camera's EP1 incomplete events.
-            write_hex32(&mut line[25..29], iso_incomplete_event_snapshot() & (1 << 2));
-            show_file_browser_line(23, &line, false);
-
-            // Minimal DWC2 snapshot from the most recent isochronous-IN
-            // incomplete event, for EP2 (audio).
-            let (diepctl, dieptsiz, diepint, fnsof) = iso_incomplete_snapshot(2);
-            let mut line = [b' '; 32];
-            line[0..4].copy_from_slice(b"CTL:");
-            write_hex32(&mut line[4..12], diepctl);
-            line[13..18].copy_from_slice(b"SIZE:");
-            write_hex32(&mut line[18..26], dieptsiz);
-            show_file_browser_line(24, &line, false);
-
-            let mut line = [b' '; 32];
-            line[0..4].copy_from_slice(b"INT:");
-            write_hex32(&mut line[4..12], diepint);
-            line[13..16].copy_from_slice(b"FN:");
-            write_hex32(&mut line[16..24], fnsof);
-            show_file_browser_line(25, &line, false);
-        }
+        // No on-screen audio diagnostics: the camera canvas is not used by this test.
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
         //     last_rtc_sample = now;
@@ -978,7 +930,8 @@ fn TIM2() {
     }
 
     // SAFETY: pointers are initialized before TIM2 is enabled; this ISR is the
-    // exclusive owner. main() never dereferences either pointer after publish.
+    // exclusive owner. The camera class remains registered for descriptors and
+    // control handling, but its test gate suppresses EP1 data submissions.
     let usb = unsafe { &mut *usb_ptr };
     let camera = unsafe { &mut *camera_ptr };
     let audio = unsafe { &mut *audio_ptr };
