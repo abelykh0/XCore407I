@@ -98,6 +98,21 @@ pub trait UsbBus: Sync + Sized {
         }
     }
 
+    /// Writes an isochronous IN transfer using the endpoint TX FIFO.
+    ///
+    /// The default implementation falls back to the normal isochronous path.
+    /// Bus implementations configured for DMA may override this to force FIFO
+    /// transfers for small or otherwise unsuitable buffers.
+    fn write_iso_batch_fifo(
+        &self,
+        ep_addr: EndpointAddress,
+        buf: &[u8],
+        packet_count: u8,
+        transactions_per_microframe: u8,
+    ) -> Result<usize> {
+        self.write_iso_batch(ep_addr, buf, packet_count, transactions_per_microframe)
+    }
+
     /// Queue an isochronous IN transfer directly from a DMA-accessible buffer.
     ///
     /// # Safety
