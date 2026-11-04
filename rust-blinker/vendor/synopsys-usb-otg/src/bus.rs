@@ -58,7 +58,7 @@ impl<USB: UsbPeripheral> UsbBus<USB> {
         // The following numbers are pessimistic and were figured out empirically.
         let rx_fifo_size = if USB::HIGH_SPEED {
             // UVC has no non-control OUT endpoints, so reserve 256 words for
-            // EP0 setup/control traffic and leave room for the larger video IN FIFO.
+            // EP0 setup/control traffic and the active audio/CDC IN FIFOs.
             core::cmp::max(
                 self.allocator.memory_allocator.total_rx_buffer_size_words() + 30,
                 256,
@@ -328,10 +328,9 @@ impl<USB: UsbPeripheral> EndpointAllocator<USB> {
             // Match the original C configuration's 32-word EP0 TX FIFO.
             core::cmp::max(descr.max_packet_size as usize, 128)
         } else if matches!(descr.ep_type, EndpointType::Isochronous { .. }) {
-            // The HS UVC endpoint carries three 768-byte transactions per
-            // microframe. Keep 48 words of refill margin beyond that payload.
-            // Small isochronous endpoints (the 12-byte FIFO-backed audio
-            // endpoint) need only the allocator's 16-word minimum.
+            // Small HS isochronous endpoints (the 12-byte FIFO-backed audio
+            // endpoint) use the allocator's 16-word minimum. Larger isochronous
+            // endpoints receive their payload budget plus refill margin.
             descr.max_packet_size as usize * 3
                 + if descr.max_packet_size > 64 { 48 * 4 } else { 0 }
         } else {
