@@ -162,7 +162,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
         // No DMA buffer or DMA lifetime constraint is involved.
         let result = self.endpoint.write_iso_batch_fifo(&self.packet_buffer, 1, 1);
         match result {
-            Ok(()) => {
+            Ok(_) => {
                 self.packet_queued = true;
                 AUDIO_SUBMIT_COUNT.fetch_add(1, Ordering::Relaxed);
             }
