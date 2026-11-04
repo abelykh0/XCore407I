@@ -120,14 +120,12 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
         // not the generic 7-byte USB endpoint descriptor. The final two fields
         // are bRefresh and bSynchAddress; both are zero for this capture stream.
         writer.endpoint_ex(&self.endpoint, |buf| {
-            if buf.len() < 4 {
+            if buf.len() < 2 {
                 return Err(usb_device::UsbError::BufferOverflow);
             }
             buf[0] = 0; // bRefresh: no synchronization endpoint
             buf[1] = 0; // bSynchAddress: no synchronization endpoint
-            buf[2] = 0;
-            buf[3] = 0;
-            Ok(4)
+            Ok(2)
         })?;
 
         // Class-specific endpoint descriptor; no endpoint controls advertised.
