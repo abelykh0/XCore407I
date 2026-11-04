@@ -29,8 +29,10 @@ static AUDIO_SUBMIT_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_WRITE_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_COMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_INCOMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
+static AUDIO_RETRY_STREAK: AtomicU32 = AtomicU32::new(0);
+const MAX_INCOMPLETE_RETRIES: u8 = 5;
 /// Snapshot of the USB Audio stream state and transfer counters.
-pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32) {
+pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u8) {
     (
         AUDIO_ALT1_ACTIVE.load(Ordering::Acquire),
         AUDIO_ATTEMPT_COUNT.load(Ordering::Relaxed),
@@ -38,6 +40,8 @@ pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32) {
         AUDIO_WRITE_FAIL_COUNT.load(Ordering::Relaxed),
         AUDIO_COMPLETE_COUNT.load(Ordering::Relaxed),
         AUDIO_INCOMPLETE_COUNT.load(Ordering::Relaxed),
+        // Consecutive incomplete transfers; reset by a successful completion.
+        AUDIO_RETRY_STREAK.load(Ordering::Relaxed),
     )
 }
 
@@ -297,6 +301,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
             AUDIO_WRITE_FAIL_COUNT.store(0, Ordering::Relaxed);
             AUDIO_COMPLETE_COUNT.store(0, Ordering::Relaxed);
             AUDIO_INCOMPLETE_COUNT.store(0, Ordering::Relaxed);
+            AUDIO_RETRY_STREAK.store(0, Ordering::Relaxed);
         }
         self.pending_edge = None;
         self.packet_queued = false;
@@ -327,6 +332,8 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         if address == self.endpoint.address() {
             AUDIO_COMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
             self.incomplete_count = 0;
+            AUDIO_RETRY_STREAK.store(0, Ordering::Relaxed);
+            self.halted_after_incomplete = false;
             self.packet_queued = false;
             self.submit_packet();
         }
@@ -340,10 +347,11 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         AUDIO_INCOMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
         self.packet_queued = false;
         self.incomplete_count = self.incomplete_count.saturating_add(1);
+        AUDIO_RETRY_STREAK.store(self.incomplete_count as u32, Ordering::Relaxed);
 
-        // Diagnostic isolation: stop the audio retry/recovery loop after the
-        // first missed isochronous frame. A successful completion can still
-        // keep the stream running; an incomplete callback halts submissions.
-        self.halted_after_incomplete = true;
+        // Allow five retries after the first incomplete transfer. The poll
+        // callback will submit the next packet; stop only after six consecutive
+        // incomplete transfers (initial failure plus five retries).
+        self.halted_after_incomplete = self.incomplete_count > MAX_INCOMPLETE_RETRIES;
     }
 }
