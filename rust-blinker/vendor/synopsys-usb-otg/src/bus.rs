@@ -350,7 +350,12 @@ impl<USB: UsbPeripheral> EndpointAllocator<USB> {
             {
                 None
             } else {
-                let staging_bytes = descr.max_packet_size as usize;
+                let staging_bytes = if descr.address.index() == 0 {
+                    // Give EP0 IN control responses extra DMA staging room.
+                    128
+                } else {
+                    descr.max_packet_size as usize
+                };
                 Some(
                     self.memory_allocator
                         .allocate_dma_tx_buffer(staging_bytes)?,
@@ -369,7 +374,8 @@ impl<USB: UsbPeripheral> EndpointAllocator<USB> {
 
         // DMA EP0 stages multi-packet control OUT transfers in software.
         let buffer_size = if cfg!(feature = "internal-dma") && descr.address.index() == 0 {
-            256
+            // EP0 OUT receives control/discovery data; reserve 512 bytes.
+            512
         } else {
             descr.max_packet_size as usize
         };
