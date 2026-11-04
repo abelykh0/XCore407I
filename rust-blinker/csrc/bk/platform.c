@@ -27,6 +27,9 @@ uint8_t port0177662 = 0;
 uint16_t port0177716 = 0x0040;
 uint16_t port0177664 = 01330;
 
+// STOP key requests the independent hardware IRQ1 (priority 5, vector 000004).
+static volatile uint8_t stop_irq_pending = 0;
+
 static const uint8_t *monitor_rom;
 static const uint8_t *basic_rom;
 static uint32_t basic_rom_size;
@@ -75,6 +78,7 @@ void bk_reset(void)
     port0177660 = 0x40;
     port0177662 = 0;
     port0177716 = 0x0040;
+    stop_irq_pending = 0;
     io_stop_happened = 0;
     last_branch = 0;
     ev_init();
@@ -242,6 +246,14 @@ void q_reset(void)
 {
 }
 
+// Called by the host-keyboard adapter for PC Pause/F12. This is not a
+// character input: set the BK STOP status bit and latch the independent IRQ1.
+void bk_request_stop_irq(void)
+{
+    port0177716 |= 0x0004u;
+    stop_irq_pending = 1;
+}
+
 /* Original BK keyboard input path: wait for the previous character's
  * interrupt to be acknowledged, then schedule the next TTY interrupt. */
 static int bk_tty_finish(d_word info)
@@ -274,6 +286,15 @@ int32_t bk_loop(void)
     pdp_regs *p = &pdp;
     int result, result2 = OK, rtt = 0;
     int32_t return_value = 0;
+
+    // STOP is hardware IRQ1 at priority 5 (vector 000004), independent
+    // of the normal keyboard TTY interrupt enable/mask (priority 4).
+    if (stop_irq_pending && ((p->psw >> 5) & 7) < 5) {
+        stop_irq_pending = 0;
+        (void)service(004);
+        p->total++;
+        return return_value;
+    }
 
     result = ll_word(p, p->regs[PC], &p->ir);
     p->regs[PC] += 2;
