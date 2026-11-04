@@ -436,14 +436,14 @@ pub fn usb_bus() -> core::result::Result<&'static BoardUsbAllocator, UsbBusAlrea
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
         .map_err(|_| UsbBusAlreadyInitialized)?;
 
-    // DMA buffers for EP0 OUT (256 bytes) and EP0 IN (64 bytes). The UVC
-    // isochronous endpoint submits directly from the camera buffer.
-    const EP0_OUT_WORDS: usize = 256 / 4;
-    const EP0_IN_WORDS: usize = 64 / 4;
-    // CDC-ACM EP5 OUT needs one 64-byte receive buffer (16 words).
-    const CDC_OUT_WORDS: usize = 64 / 4;
-    static mut EP_MEMORY: [u32; EP0_OUT_WORDS + EP0_IN_WORDS + CDC_OUT_WORDS] =
-        [0; EP0_OUT_WORDS + EP0_IN_WORDS + CDC_OUT_WORDS];
+    // DMA-visible endpoint staging/receive memory. With UVC removed, the
+    // active endpoints need: EP0 OUT 256 B, EP0 IN 64 B, CDC notification IN
+    // 8 B, CDC bulk IN 64 B, and CDC bulk OUT 64 B = 456 B (114 words).
+    // Round to 128 words (512 B), with a hard ceiling of 1,024 words (4 KiB).
+    const EP_MEMORY_WORDS: usize = 128;
+    const MAX_EP_MEMORY_WORDS: usize = 1_024;
+    const _: () = assert!(EP_MEMORY_WORDS <= MAX_EP_MEMORY_WORDS);
+    static mut EP_MEMORY: [u32; EP_MEMORY_WORDS] = [0; EP_MEMORY_WORDS];
     static mut BUS: MaybeUninit<BoardUsbAllocator> = MaybeUninit::uninit();
     let memory = unsafe { &mut *core::ptr::addr_of_mut!(EP_MEMORY) };
     let bus = synopsys_usb_otg::UsbBus::new(F407UsbHs, memory);
