@@ -732,20 +732,13 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
             let mut ep_in_incomplete = 0u16;
 
             if incomplete_iso_in != 0 {
-                // DSTS.FNSOF must be sampled before servicing the global
-                // incomplete-ISO interrupt. Compare its parity with each
-                // isochronous IN endpoint's programmed DIEPCTL.EONUM.
+                write_reg!(otg_global, regs.global(), GINTSTS, IISOIXFR: 1);
                 #[cfg(feature = "internal-dma")]
-                {
-                    let current_frame =
-                        read_reg!(otg_device, regs.device(), DSTS, FNSOF);
-                    for ep in self.allocator.endpoints_in.iter().flatten() {
-                        if ep.abort_iso_incomplete(current_frame) {
-                            ep_in_incomplete |= 1 << ep.address().index();
-                        }
+                for ep in self.allocator.endpoints_in.iter().flatten() {
+                    if ep.abort_iso_incomplete() {
+                        ep_in_incomplete |= 1 << ep.address().index();
                     }
                 }
-                write_reg!(otg_global, regs.global(), GINTSTS, IISOIXFR: 1);
             }
 
             if reset != 0 {
