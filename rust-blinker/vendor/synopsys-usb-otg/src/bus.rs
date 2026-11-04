@@ -747,12 +747,12 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                 write_reg!(otg_global, regs.global(), GINTSTS, IISOIXFR: 1);
                 #[cfg(feature = "internal-dma")]
                 {
-                    // Sample the controller frame parity once, then
-                    // apply the original endpoint-selected-frame recovery test.
-                    let current_frame_parity =
-                        read_reg!(otg_device, regs.device(), DSTS, FNSOF) & 1;
+                    // Sample FNSOF once for diagnostics and use its parity
+                    // for the original endpoint-selected-frame recovery test.
+                    let current_frame =
+                        read_reg!(otg_device, regs.device(), DSTS, FNSOF);
                     for ep in self.allocator.endpoints_in.iter().flatten() {
-                        if ep.abort_iso_incomplete(current_frame_parity) {
+                        if ep.abort_iso_incomplete(current_frame) {
                             ep_in_incomplete |= 1 << ep.address().index();
                         }
                     }
