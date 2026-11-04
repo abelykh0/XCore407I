@@ -29,17 +29,6 @@ pub enum CameraMode {
 
 static ACTIVE_CAMERA_MODE: AtomicU32 = AtomicU32::new(CameraMode::Color as u32);
 static PENDING_CAMERA_MODE: AtomicU32 = AtomicU32::new(u32::MAX);
-// Main context clears the 128 KiB canvas after the mode changes. UVC
-// transmission continues and may show a partially cleared transition frame.
-static MODE_CLEAR_PENDING: AtomicBool = AtomicBool::new(false);
-
-pub fn service_camera_mode_change() {
-    if MODE_CLEAR_PENDING.load(Ordering::Acquire) {
-        clear_demo_canvas(0);
-        MODE_CLEAR_PENDING.store(false, Ordering::Release);
-    }
-}
-
 #[inline]
 pub fn camera_mode() -> CameraMode {
     if ACTIVE_CAMERA_MODE.load(Ordering::Acquire) == CameraMode::Monochrome as u32 {
@@ -65,16 +54,11 @@ pub fn request_camera_mode_toggle() {
 }
 
 fn apply_pending_camera_mode() -> bool {
-    // Do not change the canvas interpretation while main context is clearing it.
-    if MODE_CLEAR_PENDING.load(Ordering::Acquire) {
-        return false;
-    }
     let requested = PENDING_CAMERA_MODE.swap(u32::MAX, Ordering::AcqRel);
     if requested == u32::MAX || requested == ACTIVE_CAMERA_MODE.load(Ordering::Acquire) {
         return false;
     }
     ACTIVE_CAMERA_MODE.store(requested, Ordering::Release);
-    MODE_CLEAR_PENDING.store(true, Ordering::Release);
     USB_STATUS_ROW.store(0, Ordering::Relaxed);
     KEYBOARD_TEXT_COLUMN.store(0, Ordering::Relaxed);
     CLOCK_VERSION.fetch_add(1, Ordering::Relaxed);
