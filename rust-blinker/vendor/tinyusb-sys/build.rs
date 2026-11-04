@@ -71,6 +71,7 @@ fn main() {
         .include("tinyusb/src")
         .include("tinyusb/hw/mcu/st/cmsis_device_f4/Include")
         .include("../../../Drivers/CMSIS/Include")
+        .include("../../../Drivers/CMSIS/Device/ST/STM32F4xx/Include")
         .define("STM32F407xx", None)
         .include(&out_dir)
         .compile("tinyusb");
