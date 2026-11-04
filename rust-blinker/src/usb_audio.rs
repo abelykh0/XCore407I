@@ -1,8 +1,8 @@
-//! Descriptor-only USB Audio Class 1.0 capture function.
+//! USB Audio Class 1.0 capture function for BK-0010 sound output.
 //!
-//! This exposes a mono, 48 kHz, 16-bit PCM microphone endpoint so the host can
-//! enumerate the audio function alongside UVC. Audio packet production is not
-//! implemented yet; the isochronous IN endpoint is intentionally left idle.
+//! The BK emulator writes the speaker level to bit 6 of port 0177714.
+//! Transitions are timestamped by the STM32 DWT counter and converted to
+//! 48 kHz mono, 16-bit PCM for the USB isochronous IN endpoint.
 
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus, UsbBusAllocator};
 use usb_device::class::UsbClass;
@@ -17,15 +17,27 @@ const AUDIO_CLASS: u8 = 0x01;
 const AUDIO_CONTROL_SUBCLASS: u8 = 0x01;
 const AUDIO_STREAMING_SUBCLASS: u8 = 0x02;
 const AUDIO_ENDPOINT_IN: u8 = 0x82;
-const AUDIO_PACKET_BYTES: u16 = 12; // 48 kHz * 2 bytes/sample / 8000 microframes/s
+const AUDIO_PACKET_BYTES: u16 = 12;
+const AUDIO_SAMPLES_PER_PACKET: usize = 6;
+const AUDIO_SAMPLE_PERIOD_CYCLES: u32 = 3_500; // 168 MHz / 48 kHz
+const AUDIO_STARTUP_LATENCY_CYCLES: u32 = 168_000; // 1 ms transition-queue lead
 
-/// USB Audio Class 1.0 capture function (device-to-host microphone).
+unsafe extern "C" {
+    fn bk_audio_start() -> u8;
+    fn bk_audio_stop();
+    fn bk_audio_pop_edge(cycles: *mut u32, level: *mut u8) -> u8;
+}
+
+/// USB Audio Class 1.0 capture function (device-to-host audio source).
 pub struct AudioUsbClass<'a, B: UsbBus> {
     control_interface: InterfaceNumber,
     streaming_interface: InterfaceNumber,
     function_string: StringIndex,
     endpoint: EndpointIn<'a, B>,
     streaming_alt: u8,
+    next_sample_cycle: u32,
+    sample_level: bool,
+    pending_edge: Option<(u32, bool)>,
 }
 
 impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
@@ -51,7 +63,67 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             function_string,
             endpoint,
             streaming_alt: 0,
+            next_sample_cycle: 0,
+            sample_level: false,
+            pending_edge: None,
         }
+    }
+
+    #[inline(always)]
+    fn cycle_counter() -> u32 {
+        cortex_m::peripheral::DWT::cycle_count()
+    }
+
+    fn apply_edges_through(&mut self, sample_cycle: u32) {
+        loop {
+            if self.pending_edge.is_none() {
+                let mut cycles = 0u32;
+                let mut level = 0u8;
+                let available = unsafe { bk_audio_pop_edge(&mut cycles, &mut level) };
+                if available == 0 {
+                    break;
+                }
+                self.pending_edge = Some((cycles, level != 0));
+            }
+
+            let (edge_cycle, edge_level) = self.pending_edge.unwrap();
+            // Signed wrapping subtraction is valid because the queue latency
+            // and maximum backlog are far below half the 32-bit DWT period.
+            if sample_cycle.wrapping_sub(edge_cycle) as i32 >= 0 {
+                self.sample_level = edge_level;
+                self.pending_edge = None;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn make_packet(&mut self) -> [u8; AUDIO_PACKET_BYTES as usize] {
+        let mut packet = [0u8; AUDIO_PACKET_BYTES as usize];
+
+        for sample_index in 0..AUDIO_SAMPLES_PER_PACKET {
+            let sample_cycle = self.next_sample_cycle;
+            self.apply_edges_through(sample_cycle);
+
+            // A simple square wave from the BK speaker output. Amplitude is
+            // deliberately conservative; later we can tune level/filtering.
+            let sample: i16 = if self.sample_level { 12_000 } else { -12_000 };
+            let offset = sample_index * 2;
+            packet[offset..offset + 2].copy_from_slice(&sample.to_le_bytes());
+
+            self.next_sample_cycle =
+                self.next_sample_cycle.wrapping_add(AUDIO_SAMPLE_PERIOD_CYCLES);
+        }
+
+        packet
+    }
+
+    fn submit_packet(&mut self) {
+        if self.streaming_alt != 1 {
+            return;
+        }
+        let packet = self.make_packet();
+        let _ = self.endpoint.write(&packet);
     }
 
     fn write_audio_control_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
@@ -63,26 +135,22 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
         )?;
 
         // UAC1 AudioControl header. The class-specific AC descriptor collection
-        // is 30 bytes: header (9), microphone input terminal (12), and
-        // USB-streaming output terminal (9).
+        // is 30 bytes: header (9), input terminal (12), and output terminal (9).
         writer.write(
             0x24,
             &[
-                1,       // HEADER
-                0x00, 0x01, // bcdADC = 1.00
-                0x1E, 0x00, // wTotalLength = 30
-                1,       // bInCollection
+                1, 0x00, 0x01, 0x1E, 0x00, 1,
                 u8::from(self.streaming_interface),
             ],
         )?;
 
-        // Input Terminal: physical microphone, mono.
+        // Input Terminal: host capture source, mono.
         writer.write(
             0x24,
             &[2, 1, 0x01, 0x02, 0, 1, 0x01, 0x00, 0, 0],
         )?;
 
-        // Output Terminal: USB Streaming, fed directly by the microphone.
+        // Output Terminal: USB Streaming, fed by the BK audio source.
         writer.write(0x24, &[3, 3, 0x01, 0x01, 0, 1, 0])?;
         Ok(())
     }
@@ -106,25 +174,19 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             Some(self.function_string),
         )?;
 
-        // AS_GENERAL: USB-streaming output terminal (ID 3), PCM format.
         // AS_GENERAL: terminal link 3, no delay, PCM format tag 0x0001.
-        // The descriptor is 7 bytes total: 2-byte header + 5-byte payload.
         writer.write(0x24, &[1, 3, 0, 1, 0])?;
 
         // FORMAT_TYPE_I: mono, 16-bit samples, one discrete rate (48 kHz).
         writer.write(0x24, &[2, 1, 1, 2, 16, 1, 0x80, 0xBB, 0x00])?;
 
-        // HS isochronous asynchronous data IN endpoint: 12 bytes per
-        // 125-us microframe, corresponding to six mono 16-bit samples.
-        // UAC1 requires the standard audio endpoint descriptor to be 9 bytes,
-        // not the generic 7-byte USB endpoint descriptor. The final two fields
-        // are bRefresh and bSynchAddress; both are zero for this capture stream.
+        // HS isochronous IN: six mono 16-bit samples per 125-us microframe.
         writer.endpoint_ex(&self.endpoint, |buf| {
             if buf.len() < 2 {
                 return Err(usb_device::UsbError::BufferOverflow);
             }
-            buf[0] = 0; // bRefresh: no synchronization endpoint
-            buf[1] = 0; // bSynchAddress: no synchronization endpoint
+            buf[0] = 0; // bRefresh
+            buf[1] = 0; // bSynchAddress
             Ok(2)
         })?;
 
@@ -136,8 +198,8 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
 
 impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     fn get_configuration_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
-        // Associate both AudioControl and AudioStreaming interfaces as one
-        // function for Windows composite-device driver binding.
+        // Keep the existing composite allocation: UVC interfaces 0-1 / EP 0x81,
+        // Audio interfaces 2-3 / EP 0x82.
         writer.iad(
             self.control_interface,
             2,
@@ -163,7 +225,9 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     }
 
     fn reset(&mut self) {
+        unsafe { bk_audio_stop(); }
         self.streaming_alt = 0;
+        self.pending_edge = None;
     }
 
     fn get_alt_setting(&mut self, interface: InterfaceNumber) -> Option<u8> {
@@ -183,7 +247,34 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         if interface != self.streaming_interface || alternative > 1 {
             return false;
         }
+
         self.streaming_alt = alternative;
+        self.pending_edge = None;
+
+        if alternative == 1 {
+            self.sample_level = unsafe { bk_audio_start() != 0 };
+            self.next_sample_cycle = Self::cycle_counter()
+                .wrapping_sub(AUDIO_STARTUP_LATENCY_CYCLES);
+            // Prime the endpoint immediately; subsequent packets are queued
+            // from endpoint_in_complete once per HS microframe.
+            self.submit_packet();
+        } else {
+            unsafe { bk_audio_stop(); }
+        }
+
         true
+    }
+
+    fn endpoint_in_complete(&mut self, address: EndpointAddress) {
+        if address == self.endpoint.address() {
+            self.submit_packet();
+        }
+    }
+
+    fn endpoint_in_incomplete(&mut self, address: EndpointAddress) {
+        if address == self.endpoint.address() {
+            // Keep the stream moving after a missed isochronous service slot.
+            self.submit_packet();
+        }
     }
 }
