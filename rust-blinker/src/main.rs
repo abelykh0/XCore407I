@@ -356,7 +356,7 @@ fn main() -> ! {
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
 
-            let (active, attempts, submits, write_fails, completes, incompletes) =
+            let (active, attempts, submits, write_fails, completes, incompletes, retry_streak) =
                 audio_diagnostics();
 
             let mut line = [b' '; 32];
@@ -375,6 +375,8 @@ fn main() -> ! {
             write_hex32(&mut line[7..11], completes & 0xFFFF);
             line[12] = b'I';
             write_hex32(&mut line[13..17], incompletes & 0xFFFF);
+            line[18] = b'R';
+            write_hex32(&mut line[19..23], retry_streak as u32);
             show_file_browser_line(23, &line, false);
         }
 
