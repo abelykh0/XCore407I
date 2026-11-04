@@ -919,6 +919,23 @@ fn special_key_label(key: u8, num: bool) -> Option<&'static [u8]> {
     }
 }
 
+fn append_diag_text(buffer: &mut [u8], mut offset: usize, text: &[u8]) -> usize {
+    let count = text.len().min(buffer.len().saturating_sub(offset));
+    buffer[offset..offset + count].copy_from_slice(&text[..count]);
+    offset += count;
+    offset
+}
+
+fn append_diag_hex(buffer: &mut [u8], mut offset: usize, value: u32) -> usize {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for shift in (0..8).rev() {
+        if offset >= buffer.len() { break; }
+        buffer[offset] = HEX[((value >> (shift * 4)) & 0x0f) as usize];
+        offset += 1;
+    }
+    offset
+}
+
 /// TIM2 fires at 8 kHz. This is the only place that calls UsbDevice::poll().
 #[interrupt]
 fn TIM2() {
