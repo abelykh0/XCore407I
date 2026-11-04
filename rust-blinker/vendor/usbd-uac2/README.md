@@ -1,3 +1,22 @@
+# usbd-uac2 (vendored)
+
+This is a vendored copy of [ktims/usbd-uac2](https://github.com/ktims/usbd-uac2),
+version 0.1.2, used by the XCore407I composite UVC/UAC2 device.
+
+Local integration changes are intentionally limited to the composite device's
+needs:
+
+- Notify the audio handler when an IN packet completes or misses its service
+  interval; resubmit capture data after an incomplete High-Speed microframe.
+- Reset AudioStreaming alternate-setting state on USB bus reset.
+- Accept idempotent `SET_INTERFACE(0)` requests and report alternate setting
+  zero for the AudioControl interface.
+
+The BK audio backend uses the project's FIFO-backed isochronous IN extension
+from the vendored `usb-device` driver. The upstream license is in `LICENSE`.
+
+---
+
 ![Crates.io Version](https://img.shields.io/crates/v/usbd-uac2) ![docs.rs](https://img.shields.io/docsrs/usbd-uac2)
 
 # usbd-uac2
