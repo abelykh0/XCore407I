@@ -352,7 +352,8 @@ fn main() -> ! {
         // Keep audio diagnostics on two fixed rows; no USB traffic capture needed.
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
-            // Draw the first diagnostic row where the visible label was.
+            // Restore the visible section label above the diagnostic rows.
+            show_file_browser_line(19, b"DIAG BELOW:", false);
             let (_, _, submits, _, completes, incompletes, _, _, _, _, _, _) = audio_diagnostics();
             let (_, (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
                 endpoint_incomplete_snapshots();
@@ -386,9 +387,9 @@ fn main() -> ! {
             line4[13..15].copy_from_slice(b"CA:");
             write_hex32(&mut line4[15..21], callback_address);
 
-            // Put the first diagnostic row on the known-visible label row.
-            show_file_browser_line(19, &line1, false);
-            show_file_browser_line(20, &line2, false);
+            // Restore all four diagnostic rows below the section label.
+            show_file_browser_line(20, &line1, false);
+            show_file_browser_line(21, &line2, false);
             show_file_browser_line(22, &line3, false);
             show_file_browser_line(23, &line4, false);
         }
