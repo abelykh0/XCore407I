@@ -149,7 +149,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
         // Input Terminal: host capture source, mono.
         writer.write(
             0x24,
-            &[2, 1, 0x01, 0x02, 0, 1, 0x01, 0x00, 0, 0],
+            &[2, 1, 0x03, 0x06, 0, 1, 0x01, 0x00, 0, 0],
         )?;
 
         // Output Terminal: USB Streaming, fed by the BK audio source.
