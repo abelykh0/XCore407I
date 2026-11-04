@@ -387,11 +387,11 @@ fn main() -> ! {
             line4[13..15].copy_from_slice(b"CA:");
             write_hex32(&mut line4[15..21], callback_address);
 
-            // Restore all four diagnostic rows below the section label.
-            show_file_browser_line(20, &line1, false);
-            show_file_browser_line(21, &line2, false);
-            show_file_browser_line(22, &line3, false);
-            show_file_browser_line(23, &line4, false);
+            // Temporary fixed-text test: isolate drawing from diagnostic formatting.
+            show_file_browser_line(20, b"TEST LINE 1", false);
+            show_file_browser_line(21, b"TEST LINE 2", false);
+            show_file_browser_line(22, b"TEST LINE 3", false);
+            show_file_browser_line(23, b"TEST LINE 4", false);
         }
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
