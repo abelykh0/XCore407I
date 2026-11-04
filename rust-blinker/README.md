@@ -14,3 +14,11 @@ cargo build --release --target thumbv7em-none-eabihf
 probe-rs download --chip STM32F407IGTx target/thumbv7em-none-eabihf/release/xcore407i_blinker
 //probe-rs reset --chip STM32F407IGTx --connect-under-reset
 ```
+
+## Not implemented / TODO
+
+- Incorrect timing (approximately 1.8× faster than intended)
+- Sound
+- Full keyboard support (СУ, АР2)
+- БК-0011 support
+- Ability to save and delete files
