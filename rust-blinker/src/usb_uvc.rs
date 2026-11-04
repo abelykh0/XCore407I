@@ -257,14 +257,7 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
         _lang_id: usb_device::descriptor::lang_id::LangID,
     ) -> Option<&str> {
         if index == self.interface_string {
-            #[cfg(feature = "camera-bw")]
-            {
-                Some("Monochrome 512x512 NV12 camera")
-            }
-            #[cfg(not(feature = "camera-bw"))]
-            {
-                Some("512x512 NV12 camera")
-            }
+            Some("XCore407I NV12 camera")
         } else {
             None
         }
