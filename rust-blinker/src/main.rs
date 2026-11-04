@@ -122,6 +122,10 @@ fn main() -> ! {
 
     // initialize_demo_canvas();
     clear_demo_canvas(0x10);
+    // Pre-fill the lower text area with the same blue used by diagnostic rows.
+    for row in 6..32 {
+        show_file_browser_line(row, b"", false);
+    }
     show_usb_status(b"USB FS: INIT");
 
     configure_board_pins(
