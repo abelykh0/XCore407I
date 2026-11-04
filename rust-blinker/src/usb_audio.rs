@@ -110,7 +110,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             .alloc(
                 Some(EndpointAddress::from(AUDIO_ENDPOINT_IN)),
                 EndpointType::Isochronous {
-                    synchronization: IsochronousSynchronizationType::Asynchronous,
+                    synchronization: IsochronousSynchronizationType::Synchronous,
                     usage: IsochronousUsageType::Data,
                 },
                 AUDIO_PACKET_BYTES,
