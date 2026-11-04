@@ -19,12 +19,6 @@ use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
-use xcore407i_blinker::usb_audio::{
-    diagnostics as audio_diagnostics,
-    endpoint_incomplete_snapshots,
-    incomplete_callback_address,
-    AudioUsbClass,
-};
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
@@ -89,13 +83,11 @@ unsafe extern "C" {
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
 type BoardUvcClass = UvcUsbClass<'static, BoardUsbBus>;
-type BoardAudioClass = AudioUsbClass<'static, BoardUsbBus>;
 
 // These pointers are published once, before TIM2 is enabled. After that,
 // TIM2 is the sole owner of both mutable objects. main() must not access them.
 static USB_DEVICE_PTR: AtomicPtr<BoardUsbDevice> = AtomicPtr::new(ptr::null_mut());
 static CAMERA_PTR: AtomicPtr<BoardUvcClass> = AtomicPtr::new(ptr::null_mut());
-static AUDIO_PTR: AtomicPtr<BoardAudioClass> = AtomicPtr::new(ptr::null_mut());
 
 #[entry]
 fn main() -> ! {
@@ -188,7 +180,6 @@ fn main() -> ! {
     // The large endpoint buffers remain in their existing DMA-visible SRAM
     // allocation. The UsbDevice itself remains in CCM as in the original code.
     static mut CAMERA: MaybeUninit<BoardUvcClass> = MaybeUninit::uninit();
-    static mut AUDIO: MaybeUninit<BoardAudioClass> = MaybeUninit::uninit();
 
     #[unsafe(link_section = ".ccmram.usb_device")]
     static mut USB_DEVICE: MaybeUninit<BoardUsbDevice> = MaybeUninit::uninit();
@@ -203,14 +194,6 @@ fn main() -> ! {
         camera_ptr.write(
             UvcUsbClass::new(bus).expect("UVC USB class initialization failed")
         );
-    }
-
-    let audio_ptr = unsafe {
-        (*ptr::addr_of_mut!(AUDIO)).as_mut_ptr()
-    };
-
-    unsafe {
-        audio_ptr.write(AudioUsbClass::new(bus));
     }
 
     let usb_ptr = unsafe {
@@ -232,7 +215,6 @@ fn main() -> ! {
     }
 
     CAMERA_PTR.store(camera_ptr, Ordering::Release);
-    AUDIO_PTR.store(audio_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
     // Start the independent USB service timers only after all USB objects
@@ -258,7 +240,6 @@ fn main() -> ! {
     let mut browser_count = 0usize;
     let mut browser_selected = 0usize;
     let mut browser_open = false;
-    let mut last_audio_diagnostic = 0u32;
 
     loop {
         let browser_action = FILE_BROWSER_ACTION.swap(0, Ordering::AcqRel);
@@ -351,49 +332,6 @@ fn main() -> ! {
         // USB polling and camera-class access now belong exclusively to TIM2.
         let now = TICKS.load(Ordering::Relaxed);
 
-        // Keep audio diagnostics on two fixed rows; no USB traffic capture needed.
-        if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
-            last_audio_diagnostic = now;
-            let (_, _, submits, _, completes, incompletes, _, _, _, _, _, _) = audio_diagnostics();
-            let (_, (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
-                endpoint_incomplete_snapshots();
-            let incomplete_event = synopsys_usb_otg::bus::iso_incomplete_event_snapshot();
-            let callback_address = incomplete_callback_address();
-
-            // Keep only the values needed to diagnose the audio IN incomplete event.
-            let mut line1 = [b' '; 32];
-            line1[..2].copy_from_slice(b"S:");
-            write_hex32(&mut line1[2..8], submits);
-            line1[10..12].copy_from_slice(b"I:");
-            write_hex32(&mut line1[12..18], incompletes);
-            line1[20..22].copy_from_slice(b"D:");
-            write_hex32(&mut line1[22..28], completes);
-
-            let mut line2 = [b' '; 32];
-            line2[..3].copy_from_slice(b"2C:");
-            write_hex32(&mut line2[3..11], ep2_ctl);
-            line2[13..16].copy_from_slice(b"2Z:");
-            write_hex32(&mut line2[16..24], ep2_size);
-
-            let mut line3 = [b' '; 32];
-            line3[..3].copy_from_slice(b"2I:");
-            write_hex32(&mut line3[3..9], ep2_int);
-            line3[11..13].copy_from_slice(b"N:");
-            write_hex32(&mut line3[13..21], ep2_fnsof);
-
-            let mut line4 = [b' '; 32];
-            line4[..3].copy_from_slice(b"IM:");
-            write_hex32(&mut line4[3..11], incomplete_event);
-            line4[13..15].copy_from_slice(b"CA:");
-            write_hex32(&mut line4[15..21], callback_address);
-
-            // Rows 20-23 are within the 24-line display.
-            show_file_browser_line(20, &line1, false);
-            show_file_browser_line(21, &line2, false);
-            show_file_browser_line(22, &line3, false);
-            show_file_browser_line(23, &line4, false);
-        }
-
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
         //     last_rtc_sample = now;
         //     rtc::refresh_display_time();
@@ -423,15 +361,6 @@ fn main() -> ! {
     }
 }
 
-
-fn write_hex32(destination: &mut [u8], value: u32) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let digits = destination.len().min(8);
-    for (index, byte) in destination.iter_mut().take(digits).enumerate() {
-        let shift = (digits - 1 - index) * 4;
-        *byte = HEX[((value >> shift) & 0x0F) as usize];
-    }
-}
 
 /// Read up to 25 regular files from the LittleFS root directory.
 /// Paths are retained as NUL-terminated ASCII strings for the later load.
@@ -937,9 +866,7 @@ fn TIM2() {
 
     let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
     let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
-    let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
-
-    if usb_ptr.is_null() || camera_ptr.is_null() || audio_ptr.is_null() {
+    if usb_ptr.is_null() || camera_ptr.is_null() {
         return;
     }
 
@@ -947,9 +874,8 @@ fn TIM2() {
     // exclusive owner. main() never dereferences either pointer after publish.
     let usb = unsafe { &mut *usb_ptr };
     let camera = unsafe { &mut *camera_ptr };
-    let audio = unsafe { &mut *audio_ptr };
 
-    let _ = usb.poll(&mut [camera, audio]);
+    let _ = usb.poll(&mut [camera]);
 
     /*
     // CPU load reporting
