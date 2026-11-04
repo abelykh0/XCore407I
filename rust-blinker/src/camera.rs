@@ -415,7 +415,7 @@ pub fn show_file_browser_line(row: usize, message: &[u8], selected: bool) {
     let columns = canvas_width() / 8;
     // Use the same high-contrast palette for every file-browser row.
     let foreground = 63; // white
-    let background = 12; // blue
+    let background = 55; // blue
 
     for column in 0..columns {
         let raw = message.get(column).copied().unwrap_or(b' ');
