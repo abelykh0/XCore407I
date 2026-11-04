@@ -63,14 +63,14 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
         )?;
 
         // UAC1 AudioControl header. The class-specific AC descriptor collection
-        // is 39 bytes: header (9), microphone input terminal (12), feature
-        // unit (9), and USB-streaming output terminal (9).
+        // is 30 bytes: header (9), microphone input terminal (12), and
+        // USB-streaming output terminal (9).
         writer.write(
             0x24,
             &[
                 1,       // HEADER
                 0x00, 0x01, // bcdADC = 1.00
-                0x27, 0x00, // wTotalLength = 39
+                0x1E, 0x00, // wTotalLength = 30
                 1,       // bInCollection
                 u8::from(self.streaming_interface),
             ],
@@ -82,11 +82,8 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             &[2, 1, 0x01, 0x02, 0, 1, 0x01, 0x00, 0, 0],
         )?;
 
-        // Feature Unit: no mute/volume controls advertised.
-        writer.write(0x24, &[6, 2, 1, 0, 0, 0, 0])?;
-
-        // Output Terminal: USB Streaming, fed by the Feature Unit.
-        writer.write(0x24, &[3, 3, 0x01, 0x01, 0, 2, 0])?;
+        // Output Terminal: USB Streaming, fed directly by the microphone.
+        writer.write(0x24, &[3, 3, 0x01, 0x01, 0, 1, 0])?;
         Ok(())
     }
 
@@ -117,11 +114,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
 
         // HS isochronous asynchronous data IN endpoint: 12 bytes per
         // 125-us microframe, corresponding to six mono 16-bit samples.
-        let endpoint_address: u8 = self.endpoint.address().into();
-        writer.write(
-            5,
-            &[endpoint_address, 0x05, 12, 0, 1, 0, 0],
-        )?;
+        writer.endpoint(&self.endpoint)?;
 
         // Class-specific endpoint descriptor; no endpoint controls advertised.
         writer.write(0x25, &[1, 0, 0, 0, 0])?;
@@ -131,14 +124,10 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
 
 impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     fn get_configuration_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
-        writer.iad(
-            self.control_interface,
-            2,
-            AUDIO_CLASS,
-            0,
-            0,
-            Some(self.function_string),
-        )?;
+        // UAC1 groups its AudioControl and AudioStreaming interfaces using
+        // the AudioControl header's baInterfaceNr list. Avoid an additional
+        // IAD here so the complete configuration descriptor fits the
+        // usb-device 256-byte control-transfer buffer.
         self.write_audio_control_descriptors(writer)?;
         self.write_audio_streaming_descriptors(writer)
     }
