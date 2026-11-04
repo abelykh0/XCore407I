@@ -13,6 +13,7 @@ pub mod descriptor_type {
     pub const STRING: u8 = 3;
     pub const INTERFACE: u8 = 4;
     pub const ENDPOINT: u8 = 5;
+    pub const DEVICE_QUALIFIER: u8 = 6;
     pub const IAD: u8 = 11;
     pub const BOS: u8 = 15;
     pub const CAPABILITY: u8 = 16;
