@@ -330,7 +330,6 @@ fn main() -> ! {
         // frames until the new mode's canvas has been cleared.
 
         // USB polling and camera-class access now belong exclusively to TIM2.
-        let now = TICKS.load(Ordering::Relaxed);
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
         //     last_rtc_sample = now;
