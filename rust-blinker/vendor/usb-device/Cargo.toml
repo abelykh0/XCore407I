@@ -53,5 +53,6 @@ version = "0.9.1"
 
 [features]
 control-buffer-256 = []
+control-buffer-512 = []
 log = ["dep:log"]
 test-class-high-speed = []
