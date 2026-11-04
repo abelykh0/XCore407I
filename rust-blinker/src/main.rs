@@ -684,6 +684,8 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
                 dev_addr, instance, 0, 2, led_report.cast(), 1,
             );
         }
+
+        /*
         let event: &[u8] = match locks & 0x07 {
             0 => b"USB KEYBOARD: LOCKS OFF",
             1 => b"USB KEYBOARD: NUM LOCK",
@@ -695,6 +697,7 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
             _ => b"USB KEYBOARD: ALL LOCKS",
         };
         show_usb_status(event);
+        */
     }
 
     // if used != 0 {
