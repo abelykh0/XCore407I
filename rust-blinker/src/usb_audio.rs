@@ -70,6 +70,7 @@ pub struct AudioUsbClass<'a, B: UsbBus> {
     sample_level: bool,
     pending_edge: Option<(u32, bool)>,
     packet_queued: bool,
+    incomplete_count: u8,
     packet_buffer: AudioPacketBuffer,
 }
 
@@ -100,6 +101,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             sample_level: false,
             pending_edge: None,
             packet_queued: false,
+            incomplete_count: 0,
             packet_buffer: AudioPacketBuffer([0; AUDIO_PACKET_BYTES as usize]),
         }
     }
@@ -150,15 +152,14 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
 
     }
 
-    fn submit_packet(&mut self) {
+    fn queue_current_packet(&mut self) {
         if self.streaming_alt != 1 || self.packet_queued {
             return;
         }
         AUDIO_ATTEMPT_COUNT.fetch_add(1, Ordering::Relaxed);
-        self.make_packet();
-        // SAFETY: packet_buffer is 4-byte aligned, lives in the static Audio
-        // class instance in DMA-accessible SRAM, and is not modified again
-        // until endpoint_in_complete/incomplete clears packet_queued.
+        // SAFETY: packet_buffer is 4-byte aligned, lives in the Audio class
+        // instance in DMA-accessible SRAM, and is not modified until this
+        // transfer completes or is explicitly retried after an incomplete ISO.
         let result = unsafe {
             self.endpoint.write_iso_batch_dma(&self.packet_buffer.0, 1, 1)
         };
@@ -172,6 +173,14 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
                 AUDIO_WRITE_FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
             }
         }
+    }
+
+    fn submit_packet(&mut self) {
+        if self.streaming_alt != 1 || self.packet_queued {
+            return;
+        }
+        self.make_packet();
+        self.queue_current_packet();
     }
 
     fn write_audio_control_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
@@ -309,6 +318,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         }
         self.pending_edge = None;
         self.packet_queued = false;
+        self.incomplete_count = 0;
 
         if alternative == 1 {
             self.sample_level = unsafe { bk_audio_start() != 0 };
@@ -333,17 +343,31 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     fn endpoint_in_complete(&mut self, address: EndpointAddress) {
         if address == self.endpoint.address() {
             AUDIO_COMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
+            self.incomplete_count = 0;
             self.packet_queued = false;
             self.submit_packet();
         }
     }
 
     fn endpoint_in_incomplete(&mut self, address: EndpointAddress) {
-        if address == self.endpoint.address() {
-            AUDIO_INCOMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
-            self.packet_queued = false;
-            // Keep the stream moving after a missed isochronous service slot.
-            self.submit_packet();
+        if address != self.endpoint.address() {
+            return;
         }
+
+        AUDIO_INCOMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
+        self.packet_queued = false;
+        self.incomplete_count = self.incomplete_count.saturating_add(1);
+
+        if self.incomplete_count < 3 {
+            // Match the camera path: retry the exact same DMA packet. Do not
+            // regenerate it, because that would advance the audio sample clock.
+            self.queue_current_packet();
+            return;
+        }
+
+        // Match UVC recovery after three consecutive incomplete frames.
+        self.incomplete_count = 0;
+        self.endpoint.recover_iso_endpoint();
+        self.queue_current_packet();
     }
 }
