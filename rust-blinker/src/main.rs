@@ -25,7 +25,6 @@ const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
 // One timer interrupt per USB HS microframe (125 us, 8 kHz).
 const USB_POLL_TIMER_HZ: u32 = 8_000;
-const USB_HOST_TASK_HZ: u32 = 1_000;
 const TIM2_PRIORITY: u8 = 2;
 const TIM3_PRIORITY: u8 = 3;
 const SYSTICK_PRIORITY: u8 = 1;
@@ -44,9 +43,6 @@ pub extern "C" fn tusb_time_millis_api() -> u32 {
 pub static SystemCoreClock: u32 = 168_000_000;
 
 
-const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
-const CORE_CLOCK_HZ: u64 = 168_000_000;
-static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
 const FILE_BROWSER_OPEN: u8 = 1;
 const FILE_BROWSER_UP: u8 = 2;
 const FILE_BROWSER_DOWN: u8 = 3;
@@ -105,7 +101,7 @@ fn main() -> ! {
 
     let mut device = pac::Peripherals::take().unwrap();
 
-    let rtc_ready = rtc::initialize();
+    rtc::initialize();
     // update_clock_from_rtc(); // Temporarily disable the RTC clock overlay.
 
     enable_cycle_counter(&mut core);
@@ -654,7 +650,6 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
 
     let modifiers = report[0];
     let shift = modifiers & 0x22 != 0;
-    let alt = modifiers & 0x44 != 0;
     let control = modifiers & 0x11 != 0;
     let gui = modifiers & 0x88 != 0;
     let control_or_alt = modifiers & 0xdd != 0;
