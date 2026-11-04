@@ -18,9 +18,7 @@ use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, s
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
 //use xcore407i_blinker::nand_device;
-use xcore407i_blinker::usb_uvc::{
-    usb_bus, F407UsbHs, UvcUsbClass,
-};
+use xcore407i_blinker::usb_uvc::{usb_bus, F407UsbHs};
 use xcore407i_blinker::usb_audio::TestToneAudio;
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
@@ -85,7 +83,6 @@ unsafe extern "C" {
 
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
-type BoardUvcClass = UvcUsbClass<'static, BoardUsbBus>;
 type BoardAudioHandler = TestToneAudio;
 type BoardAudioClass = usbd_uac2::UsbAudioClass<'static, BoardUsbBus, BoardAudioHandler>;
 type BoardSerial = SerialPort<'static, BoardUsbBus>;
@@ -93,7 +90,6 @@ type BoardSerial = SerialPort<'static, BoardUsbBus>;
 // These pointers are published once, before TIM2 is enabled. After that,
 // TIM2 is the sole owner of both mutable objects. main() must not access them.
 static USB_DEVICE_PTR: AtomicPtr<BoardUsbDevice> = AtomicPtr::new(ptr::null_mut());
-static CAMERA_PTR: AtomicPtr<BoardUvcClass> = AtomicPtr::new(ptr::null_mut());
 static AUDIO_PTR: AtomicPtr<BoardAudioClass> = AtomicPtr::new(ptr::null_mut());
 static SERIAL_PTR: AtomicPtr<BoardSerial> = AtomicPtr::new(ptr::null_mut());
 static SERIAL_DIAG_DIVIDER: AtomicU32 = AtomicU32::new(0);
@@ -190,9 +186,7 @@ fn main() -> ! {
 
     let bus = usb_bus().expect("USB bus initialization failed");
 
-    // The large endpoint buffers remain in their existing DMA-visible SRAM
-    // allocation. The UsbDevice itself remains in CCM as in the original code.
-    static mut CAMERA: MaybeUninit<BoardUvcClass> = MaybeUninit::uninit();
+    // USB class objects remain in static storage; UsbDevice itself is in CCM.
     static mut AUDIO_IMPL: MaybeUninit<BoardAudioHandler> = MaybeUninit::uninit();
     static mut AUDIO: MaybeUninit<BoardAudioClass> = MaybeUninit::uninit();
     static mut SERIAL: MaybeUninit<BoardSerial> = MaybeUninit::uninit();
@@ -202,19 +196,6 @@ fn main() -> ! {
 
     // Construct in place and publish raw pointers. No long-lived &mut reference
     // is kept in main; the TIM2 ISR creates the only mutable references.
-    let camera_ptr = unsafe {
-        (*ptr::addr_of_mut!(CAMERA)).as_mut_ptr()
-    };
-
-    unsafe {
-        camera_ptr.write(
-            UvcUsbClass::new(bus).expect("UVC USB class initialization failed")
-        );
-        // Keep UVC descriptors and class handling in the composite device,
-        // but suppress every EP1 camera data submission for this audio-only test.
-        (*camera_ptr).disable_streaming_for_test();
-    }
-
     // The UAC2 class borrows its application audio handler for the class
     // lifetime. Keep that handler in static storage just like the class itself.
     let audio_impl_ptr = unsafe {
@@ -269,13 +250,12 @@ fn main() -> ! {
         );
     }
 
-    CAMERA_PTR.store(camera_ptr, Ordering::Release);
     AUDIO_PTR.store(audio_ptr, Ordering::Release);
     SERIAL_PTR.store(serial_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
     // Start the independent USB service timers only after all USB objects
-    // are initialized and published. TIM2 services the HS UVC device at 8 kHz.
+    // are initialized and published. TIM2 services the HS audio device at 8 kHz.
     configure_usb_poll_timer(
         &device.RCC,
         &device.TIM2,
@@ -946,23 +926,20 @@ fn TIM2() {
     tim2.sr().write(|w| w.uif().clear_bit());
 
     let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
-    let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
     let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
     let serial_ptr = SERIAL_PTR.load(Ordering::Acquire);
 
-    if usb_ptr.is_null() || camera_ptr.is_null() || audio_ptr.is_null() || serial_ptr.is_null() {
+    if usb_ptr.is_null() || audio_ptr.is_null() || serial_ptr.is_null() {
         return;
     }
 
     // SAFETY: pointers are initialized before TIM2 is enabled; this ISR is the
-    // exclusive owner. The camera class remains registered for descriptors and
-    // control handling, but its test gate suppresses EP1 data submissions.
+    // exclusive owner of the device, audio class and CDC serial class.
     let usb = unsafe { &mut *usb_ptr };
-    let camera = unsafe { &mut *camera_ptr };
     let audio = unsafe { &mut *audio_ptr };
     let serial = unsafe { &mut *serial_ptr };
 
-    let _ = usb.poll(&mut [camera, audio, serial]);
+    let _ = usb.poll(&mut [audio, serial]);
 
     // Emit diagnostics from the same ISR that owns UsbDevice and SerialPort.
     // 2,000 polls at 8 kHz = one report every 250 ms.
@@ -999,11 +976,6 @@ fn TIM2() {
         let generate_percent = (((generate as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
         let submit_percent = (((submit as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
 
-        camera.set_cpu_metrics(
-            100 - busy_percent,
-            generate_percent,
-            submit_percent,
-        );
     }
     */
 }
