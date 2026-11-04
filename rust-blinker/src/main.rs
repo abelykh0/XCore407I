@@ -248,15 +248,15 @@ fn main() -> ! {
 
         if browser_action == FILE_BROWSER_OPEN && !browser_open {
             KEYBOARD_INPUT_LEN.store(0, Ordering::Release);
-            match list_root_files(browser_paths, browser_path_lengths) {
+            match list_root_files(&mut *browser_paths, &mut *browser_path_lengths) {
                 Ok(count) => {
                     browser_count = count;
                     browser_selected = 0;
                     browser_open = true;
                     FILE_BROWSER_ACTIVE.store(true, Ordering::Release);
                     draw_file_browser(
-                        browser_paths,
-                        browser_path_lengths,
+                        &*browser_paths,
+                        &*browser_path_lengths,
                         browser_count,
                         browser_selected,
                     );
@@ -301,8 +301,8 @@ fn main() -> ! {
             }
             if redraw {
                 draw_file_browser(
-                    browser_paths,
-                    browser_path_lengths,
+                    &*browser_paths,
+                    &*browser_path_lengths,
                     browser_count,
                     browser_selected,
                 );
