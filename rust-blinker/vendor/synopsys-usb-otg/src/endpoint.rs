@@ -3,7 +3,6 @@ use crate::ral::{
     endpoint0_out, endpoint_in, endpoint_out, modify_reg, otg_device, otg_global, read_reg,
     write_reg,
 };
-#[cfg(not(feature = "internal-dma"))]
 use crate::target::fifo_write;
 use crate::target::UsbRegisters;
 use crate::transition::EndpointDescriptor;
