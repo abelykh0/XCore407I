@@ -601,6 +601,23 @@ impl<B: UsbBus> UsbDevice<'_, B> {
 
             descriptor_type::DEVICE => accept_writer(xfer, |w| w.device(config))?,
 
+            // A high-speed USB 2.0 device must answer GET_DESCRIPTOR(Device Qualifier).
+            // This describes the device-level fields it would use at the other speed.
+            descriptor_type::DEVICE_QUALIFIER => accept_writer(xfer, |w| {
+                w.write(
+                    descriptor_type::DEVICE_QUALIFIER,
+                    &[
+                        0x10, 0x02, // bcdUSB: 2.10
+                        config.device_class,
+                        config.device_sub_class,
+                        config.device_protocol,
+                        config.max_packet_size_0,
+                        0x01, // bNumConfigurations
+                        0x00, // bReserved
+                    ],
+                )
+            })?,
+
             descriptor_type::CONFIGURATION => accept_writer(xfer, |w| {
                 w.configuration(config)?;
 
