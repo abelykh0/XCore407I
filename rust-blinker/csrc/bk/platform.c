@@ -26,6 +26,74 @@ uint8_t port0177660 = 0x40;
 uint8_t port0177662 = 0;
 uint16_t port0177716 = 0x0040;
 uint16_t port0177664 = 01330;
+uint16_t port0177714 = 0;
+
+// Audio output transition queue. The emulator is the single producer
+// (thread context); USB Audio consumes transitions from the TIM2 ISR.
+#define BK_AUDIO_EDGE_CAPACITY 512u
+#define BK_AUDIO_EDGE_MASK (BK_AUDIO_EDGE_CAPACITY - 1u)
+static volatile uint16_t bk_audio_edge_head;
+static volatile uint16_t bk_audio_edge_tail;
+static volatile uint8_t bk_audio_enabled;
+static uint8_t bk_audio_level;
+static uint32_t bk_audio_edge_cycles[BK_AUDIO_EDGE_CAPACITY];
+static uint8_t bk_audio_edge_levels[BK_AUDIO_EDGE_CAPACITY];
+
+#define DWT_CYCCNT (*(volatile uint32_t *)0xE0001004u)
+
+static void bk_audio_record_level(uint8_t level)
+{
+    level = level ? 1u : 0u;
+    if (level == bk_audio_level) return;
+    bk_audio_level = level;
+
+    if (!bk_audio_enabled) return;
+
+    uint16_t head = bk_audio_edge_head;
+    uint16_t tail = bk_audio_edge_tail;
+    if ((uint16_t)(head - tail) >= BK_AUDIO_EDGE_CAPACITY) {
+        // Drop the newest edge rather than corrupting unread queue entries.
+        return;
+    }
+
+    uint16_t slot = head & BK_AUDIO_EDGE_MASK;
+    bk_audio_edge_cycles[slot] = DWT_CYCCNT;
+    bk_audio_edge_levels[slot] = level;
+    __asm volatile("dmb" ::: "memory");
+    bk_audio_edge_head = (uint16_t)(head + 1u);
+}
+
+uint8_t bk_audio_start(void)
+{
+    // Called from the USB ISR; the emulator producer is paused while this runs.
+    bk_audio_edge_tail = bk_audio_edge_head;
+    bk_audio_level = (port0177714 & 0x0040u) ? 1u : 0u;
+    __asm volatile("dmb" ::: "memory");
+    bk_audio_enabled = 1u;
+    return bk_audio_level;
+}
+
+void bk_audio_stop(void)
+{
+    bk_audio_enabled = 0u;
+    __asm volatile("dmb" ::: "memory");
+}
+
+uint8_t bk_audio_pop_edge(uint32_t *cycles, uint8_t *level)
+{
+    uint16_t tail = bk_audio_edge_tail;
+    if (tail == bk_audio_edge_head || cycles == NULL || level == NULL) {
+        return 0u;
+    }
+
+    __asm volatile("dmb" ::: "memory");
+    uint16_t slot = tail & BK_AUDIO_EDGE_MASK;
+    *cycles = bk_audio_edge_cycles[slot];
+    *level = bk_audio_edge_levels[slot];
+    __asm volatile("dmb" ::: "memory");
+    bk_audio_edge_tail = (uint16_t)(tail + 1u);
+    return 1u;
+}
 
 // STOP key requests the independent hardware IRQ1 (priority 5, vector 000004).
 static volatile uint8_t stop_irq_pending = 0;
@@ -78,6 +146,11 @@ void bk_reset(void)
     port0177660 = 0x40;
     port0177662 = 0;
     port0177716 = 0x0040;
+    port0177714 = 0;
+    bk_audio_enabled = 0;
+    bk_audio_level = 0;
+    bk_audio_edge_head = 0;
+    bk_audio_edge_tail = 0;
     stop_irq_pending = 0;
     io_stop_happened = 0;
     last_branch = 0;
@@ -100,6 +173,8 @@ int ll_byte(pdp_regs *p, c_addr addr, d_byte *byte)
             break;
         case 0177664: *byte = (uint8_t)port0177664; break;
         case 0177665: *byte = (uint8_t)(port0177664 >> 8); break;
+        case 0177714: *byte = (uint8_t)port0177714; break;
+        case 0177715: *byte = (uint8_t)(port0177714 >> 8); break;
         case 0177716: *byte = (uint8_t)port0177716; break;
         case 0177717: *byte = (uint8_t)(port0177716 >> 8); break;
         default: *byte = 0; break;
@@ -139,6 +214,7 @@ int ll_word(pdp_regs *p, c_addr addr, d_word *word)
             port0177660 &= (uint8_t)~0x80u;
             break;
         case 0177664: *word = port0177664; break;
+        case 0177714: *word = port0177714; break;
         case 0177716: *word = port0177716; break;
         default: *word = 0; break;
         }
@@ -194,6 +270,13 @@ int sl_byte(pdp_regs *p, c_addr addr, d_byte value)
             port0177664 = (uint16_t)((port0177664 & 0x00FFu) | ((uint16_t)value << 8));
             bk_video_shift_changed((uint8_t)port0177664);
             break;
+        case 0177714:
+            port0177714 = (uint16_t)((port0177714 & 0xFF00u) | value);
+            bk_audio_record_level((uint8_t)(port0177714 & 0x0040u));
+            break;
+        case 0177715:
+            port0177714 = (uint16_t)((port0177714 & 0x00FFu) | ((uint16_t)value << 8));
+            break;
         default: break;
         }
     } else if (addr >= BASIC_BASE || addr >= MONITOR_BASE) {
@@ -225,6 +308,10 @@ int sl_word(pdp_regs *p, c_addr addr, d_word value)
         case 0177664:
             port0177664 = value & 01377;
             bk_video_shift_changed((uint8_t)port0177664);
+            break;
+        case 0177714:
+            port0177714 = value;
+            bk_audio_record_level((uint8_t)(port0177714 & 0x0040u));
             break;
         default: break;
         }
