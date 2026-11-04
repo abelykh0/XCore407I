@@ -20,8 +20,6 @@ const AUDIO_STREAMING_SUBCLASS: u8 = 0x02;
 const AUDIO_ENDPOINT_IN: u8 = 0x82;
 const AUDIO_PACKET_BYTES: u16 = 12;
 const AUDIO_SAMPLES_PER_PACKET: usize = 6;
-const AUDIO_SAMPLE_PERIOD_CYCLES: u32 = 3_500; // 168 MHz / 48 kHz
-const AUDIO_STARTUP_LATENCY_CYCLES: u32 = 168_000; // 1 ms transition-queue lead
 
 static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
 static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -78,9 +76,7 @@ pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32,
 }
 
 unsafe extern "C" {
-    fn bk_audio_start() -> u8;
     fn bk_audio_stop();
-    fn bk_audio_pop_edge(cycles: *mut u32, level: *mut u8) -> u8;
     fn bk_audio_edge_count() -> u32;
     fn bk_audio_port_write_count() -> u32;
 }
@@ -92,9 +88,6 @@ pub struct AudioUsbClass<'a, B: UsbBus> {
     function_string: StringIndex,
     endpoint: EndpointIn<'a, B>,
     streaming_alt: u8,
-    next_sample_cycle: u32,
-    sample_level: bool,
-    pending_edge: Option<(u32, bool)>,
     packet_queued: bool,
     packet_buffer: [u8; AUDIO_PACKET_BYTES as usize],
 }
@@ -122,40 +115,8 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             function_string,
             endpoint,
             streaming_alt: 0,
-            next_sample_cycle: 0,
-            sample_level: false,
-            pending_edge: None,
             packet_queued: false,
             packet_buffer: [0; AUDIO_PACKET_BYTES as usize],
-        }
-    }
-
-    #[inline(always)]
-    fn cycle_counter() -> u32 {
-        cortex_m::peripheral::DWT::cycle_count()
-    }
-
-    fn apply_edges_through(&mut self, sample_cycle: u32) {
-        loop {
-            if self.pending_edge.is_none() {
-                let mut cycles = 0u32;
-                let mut level = 0u8;
-                let available = unsafe { bk_audio_pop_edge(&mut cycles, &mut level) };
-                if available == 0 {
-                    break;
-                }
-                self.pending_edge = Some((cycles, level != 0));
-            }
-
-            let (edge_cycle, edge_level) = self.pending_edge.unwrap();
-            // Signed wrapping subtraction is valid because the queue latency
-            // and maximum backlog are far below half the 32-bit DWT period.
-            if sample_cycle.wrapping_sub(edge_cycle) as i32 >= 0 {
-                self.sample_level = edge_level;
-                self.pending_edge = None;
-            } else {
-                break;
-            }
         }
     }
 
