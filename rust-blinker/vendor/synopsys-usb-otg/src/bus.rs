@@ -627,6 +627,24 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
         }
     }
 
+    fn write_iso_batch_fifo(
+        &self,
+        ep_addr: EndpointAddress,
+        buf: &[u8],
+        packet_count: u8,
+        transactions_per_microframe: u8,
+    ) -> Result<usize> {
+        if !ep_addr.is_in() || ep_addr.index() >= USB::ENDPOINT_COUNT {
+            return Err(UsbError::InvalidEndpoint);
+        }
+        if let Some(ep) = &self.allocator.endpoints_in[ep_addr.index()] {
+            ep.write_iso_batch_fifo(buf, packet_count, transactions_per_microframe)
+                .map(|_| buf.len())
+        } else {
+            Err(UsbError::InvalidEndpoint)
+        }
+    }
+
     #[cfg(feature = "internal-dma")]
     unsafe fn write_iso_batch_dma(
         &self,
