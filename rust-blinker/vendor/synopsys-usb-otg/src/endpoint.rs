@@ -28,6 +28,12 @@ static ISO_INCOMPLETE_DIEPINT: [core::sync::atomic::AtomicU32; 9] =
 static ISO_INCOMPLETE_FNSOF: [core::sync::atomic::AtomicU32; 9] =
     [const { core::sync::atomic::AtomicU32::new(0) }; 9];
 
+/// Full 14-bit microframe targeted by each armed high-speed isochronous IN transfer.
+/// Bit 31 marks the entry valid; bits 13:0 hold the target microframe number.
+#[cfg(all(feature = "internal-dma", feature = "hs"))]
+static ISO_IN_TARGET_FRAME: [core::sync::atomic::AtomicU32; 9] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 9];
+
 /// Return the register snapshot taken when an isochronous IN endpoint was
 /// reported incomplete: (DIEPCTL, DIEPTSIZ, DIEPINT, DSTS.FNSOF).
 #[cfg(feature = "internal-dma")]
@@ -162,9 +168,9 @@ impl EndpointIn {
         // TODO: deconfiguring TX FIFO
     }
 
-    /// Abort an incomplete isochronous IN transaction and flush its TX FIFO.
-    /// Match the endpoint's selected frame parity against the controller's
-    /// FNSOF parity, as in the original STM32 DWC2 recovery path.
+    /// Abort a missed isochronous IN transaction and flush its TX FIFO.
+    /// Returns true when an enabled isochronous endpoint was successfully
+    /// stopped, matching the STM32 HAL's incomplete-ISO interrupt handling.
     #[cfg(feature = "internal-dma")]
     pub fn abort_iso_incomplete(&self, current_frame: u32) -> bool {
         if !matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. })
@@ -175,19 +181,36 @@ impl EndpointIn {
 
         let ep = self.usb.endpoint_in(self.index() as usize);
         let index = self.index() as usize;
-        let diepctl = read_reg!(endpoint_in, ep, DIEPCTL);
-        let endpoint_frame_parity = (diepctl >> 16) & 1;
-        let endpoint_enabled = (diepctl >> 31) & 1;
 
-        // EONUM (DIEPCTL[16]) identifies the frame selected for this
-        // isochronous transfer. Only recover an enabled endpoint selected
-        // for the frame parity that raised IISOIXFR.
-        if endpoint_enabled == 0 || endpoint_frame_parity != (current_frame & 1) {
+        #[cfg(feature = "hs")]
+        {
+            // Compare the complete 14-bit microframe target recorded when this
+            // transfer was armed, using modulo arithmetic across counter wrap.
+            let target_state = ISO_IN_TARGET_FRAME[index].load(Ordering::Relaxed);
+            if target_state & 0x8000_0000 == 0 {
+                return false;
+            }
+            let target_frame = target_state & 0x3fff;
+            let elapsed = current_frame.wrapping_sub(target_frame) & 0x3fff;
+            if elapsed >= 0x2000 {
+                return false;
+            }
+        }
+        #[cfg(not(feature = "hs"))]
+        {
+            let _ = current_frame;
             return false;
         }
 
-        // Snapshot only the endpoint that is eligible for recovery.
-        ISO_INCOMPLETE_DIEPCTL[index].store(diepctl, Ordering::Relaxed);
+        if read_reg!(endpoint_in, ep, DIEPCTL, EPENA) == 0 {
+            return false;
+        }
+
+        // Capture only the endpoint whose armed isochronous transfer reached
+        // its target frame and is still enabled.
+        ISO_INCOMPLETE_DIEPCTL[index].store(
+            read_reg!(endpoint_in, ep, DIEPCTL), Ordering::Relaxed
+        );
         ISO_INCOMPLETE_DIEPTSIZ[index].store(
             read_reg!(endpoint_in, ep, DIEPTSIZ), Ordering::Relaxed
         );
@@ -427,6 +450,11 @@ impl EndpointIn {
             // frame. Match STM32's LL driver: queue odd when the received SOF
             // frame number is even, and vice versa.
             let frame = read_reg!(otg_device, self.usb.device(), DSTS, FNSOF);
+            #[cfg(feature = "internal-dma")]
+            ISO_IN_TARGET_FRAME[self.index() as usize].store(
+                0x8000_0000 | (frame.wrapping_add(1) & 0x3fff),
+                Ordering::Relaxed,
+            );
             if frame & 1 == 0 {
                 modify_reg!(endpoint_in, ep, DIEPCTL, SODDFRM: 1, SD0PID_SEVNFRM: 0);
             } else {
