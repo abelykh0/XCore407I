@@ -180,6 +180,7 @@ impl EndpointIn {
         }
 
         let ep = self.usb.endpoint_in(self.index() as usize);
+        let index = self.index() as usize;
 
         #[cfg(feature = "hs")]
         {
@@ -209,7 +210,6 @@ impl EndpointIn {
         // Capture only the endpoint whose armed isochronous transfer actually
         // reached its target frame and is still enabled. This prevents camera
         // endpoint events from refreshing the audio EP2 register snapshot.
-        let index = self.index() as usize;
         ISO_INCOMPLETE_DIEPCTL[index].store(
             read_reg!(endpoint_in, ep, DIEPCTL), Ordering::Relaxed
         );
