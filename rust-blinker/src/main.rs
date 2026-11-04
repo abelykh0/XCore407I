@@ -80,6 +80,7 @@ unsafe extern "C" {
     fn bk_loop() -> i32;
     fn sendInput(buffer: *mut u8, size: u8);
     fn bk_set_pc(start: u16);
+    fn bk_request_stop_irq();
     static mut RamBuffer: [u8; 0x4000];
 }
 
@@ -626,6 +627,13 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
             continue;
         }
 
+        // STOP is a hardware IRQ1, not a character sent through 177662.
+        // Pause and F12 are equivalent host keys for the BK STOP signal.
+        if key == 0x48 || key == 0x45 {
+            unsafe { bk_request_stop_irq(); }
+            continue;
+        }
+
         // F1 requests a camera mode change. The camera applies it at the
         // next UVC frame boundary and clears the canvas in the new format.
         if key == 0x3a {
@@ -751,7 +759,6 @@ fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: boo
         0x40 => return Some(0x12), // F7 -> ШАГ
         0x41 => return Some(0x13), // F8 -> СБР
         0x4e => return Some(0x18), // Page Down -> СТИР
-        0x48 | 0x45 => return Some(0x03), // Pause or F12 -> СТОП
         // The keypad navigation usages act as arrows when Num Lock is off.
         0x4f => return Some(0x19), // Right
         0x50 => return Some(0x08), // Left
