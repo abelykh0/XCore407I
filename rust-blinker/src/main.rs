@@ -388,16 +388,19 @@ fn main() -> ! {
             write_hex32(&mut line5[3..9], ep1_int);
             line5[10..13].copy_from_slice(b"2I:");
             write_hex32(&mut line5[13..19], ep2_int);
-            line5[20..22].copy_from_slice(b"M:");
-            write_hex32(&mut line5[22..26], incomplete_event & 0xFFFF);
-            line5[27..29].copy_from_slice(b"N:");
-            write_hex32(&mut line5[29..32], ep2_fnsof & 0xFFF);
+            line5[20..22].copy_from_slice(b"N:");
+            write_hex32(&mut line5[22..30], ep2_fnsof);
+
+            let mut line6 = [b' '; 32];
+            line6[..3].copy_from_slice(b"IM:");
+            write_hex32(&mut line6[3..11], incomplete_event);
 
             show_file_browser_line(27, &line3, false);
             show_file_browser_line(28, &line1, false);
             show_file_browser_line(29, &line2, false);
             show_file_browser_line(30, &line4, false);
             show_file_browser_line(31, &line5, false);
+            show_file_browser_line(32, &line6, false);
         }
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
