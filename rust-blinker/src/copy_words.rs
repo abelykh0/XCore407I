@@ -55,8 +55,14 @@ unsafe extern "C" {
 }
 
 /// Copy aligned words using the original FPU-register transfer trick.
+///
+/// # Safety
+/// `src` and `dst` must be valid for `bytes` bytes, non-overlapping, and
+/// readable/writable respectively. The assembly path additionally requires
+/// the common alignment handled below and a word-multiple transfer length.
 #[inline(always)]
 pub(crate) unsafe fn copy_words(src: *const u8, dst: *mut u8, bytes: usize) {
+    unsafe {
     if bytes == 0 {
         return;
     }
@@ -91,5 +97,6 @@ pub(crate) unsafe fn copy_words(src: *const u8, dst: *mut u8, bytes: usize) {
             dst.add(prefix + aligned_bytes),
             suffix,
         );
+    }
     }
 }
