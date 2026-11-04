@@ -32,7 +32,7 @@ static AUDIO_INCOMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_RETRY_STREAK: AtomicU32 = AtomicU32::new(0);
 const MAX_INCOMPLETE_RETRIES: u8 = 5;
 /// Snapshot of the USB Audio stream state and transfer counters.
-pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u8) {
+pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32) {
     (
         AUDIO_ALT1_ACTIVE.load(Ordering::Acquire),
         AUDIO_ATTEMPT_COUNT.load(Ordering::Relaxed),
