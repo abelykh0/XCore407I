@@ -116,7 +116,19 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
 
         // HS isochronous asynchronous data IN endpoint: 12 bytes per
         // 125-us microframe, corresponding to six mono 16-bit samples.
-        writer.endpoint(&self.endpoint)?;
+        // UAC1 requires the standard audio endpoint descriptor to be 9 bytes,
+        // not the generic 7-byte USB endpoint descriptor. The final two fields
+        // are bRefresh and bSynchAddress; both are zero for this capture stream.
+        writer.endpoint_ex(&self.endpoint, |buf| {
+            if buf.len() < 4 {
+                return Err(usb_device::UsbError::BufferOverflow);
+            }
+            buf[0] = 0; // bRefresh: no synchronization endpoint
+            buf[1] = 0; // bSynchAddress: no synchronization endpoint
+            buf[2] = 0;
+            buf[3] = 0;
+            Ok(4)
+        })?;
 
         // Class-specific endpoint descriptor; no endpoint controls advertised.
         writer.write(0x25, &[1, 0, 0, 0, 0])?;
