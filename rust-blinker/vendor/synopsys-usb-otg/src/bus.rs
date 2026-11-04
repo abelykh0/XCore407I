@@ -954,6 +954,7 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                                 // Retire this endpoint's armed-frame marker so a
                                 // later global incomplete-ISO interrupt cannot
                                 // mistake an already-completed transfer for a stall.
+                                #[cfg(feature = "hs")]
                                 ep.mark_iso_complete();
                                 write_reg!(endpoint_in, ep_regs, DIEPINT, XFRC: 1);
                                 ep_in_complete |= 1 << ep.address().index();
