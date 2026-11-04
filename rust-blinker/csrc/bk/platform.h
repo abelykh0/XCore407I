@@ -26,6 +26,7 @@ void bk_platform_init(const uint8_t *monitor_rom,
                       uint32_t basic_size_bytes);
 void bk_reset(void);
 void bk_set_pc(uint16_t start);
+void bk_request_stop_irq(void);
 int32_t bk_loop(void);
 void sendInput(uint8_t *buffer, uint8_t size);
 
