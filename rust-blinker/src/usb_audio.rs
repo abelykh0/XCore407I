@@ -23,6 +23,11 @@ const AUDIO_SAMPLES_PER_PACKET: usize = 6;
 const AUDIO_SAMPLE_PERIOD_CYCLES: u32 = 3_500; // 168 MHz / 48 kHz
 const AUDIO_STARTUP_LATENCY_CYCLES: u32 = 168_000; // 1 ms transition-queue lead
 
+// HS isochronous IN endpoints use direct DMA in this driver. The packet must
+// be word-aligned and remain unchanged until the endpoint completion callback.
+#[repr(C, align(4))]
+struct AudioPacketBuffer([u8; AUDIO_PACKET_BYTES as usize]);
+
 static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
 static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_SUBMIT_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -60,6 +65,7 @@ pub struct AudioUsbClass<'a, B: UsbBus> {
     sample_level: bool,
     pending_edge: Option<(u32, bool)>,
     packet_queued: bool,
+    packet_buffer: AudioPacketBuffer,
 }
 
 impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
@@ -89,6 +95,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             sample_level: false,
             pending_edge: None,
             packet_queued: false,
+            packet_buffer: AudioPacketBuffer([0; AUDIO_PACKET_BYTES as usize]),
         }
     }
 
@@ -121,8 +128,8 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
         }
     }
 
-    fn make_packet(&mut self) -> [u8; AUDIO_PACKET_BYTES as usize] {
-        let mut packet = [0u8; AUDIO_PACKET_BYTES as usize];
+    fn make_packet(&mut self) {
+        let packet = &mut self.packet_buffer.0;
 
         for sample_index in 0..AUDIO_SAMPLES_PER_PACKET {
             let sample_cycle = self.next_sample_cycle;
@@ -138,7 +145,6 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
                 self.next_sample_cycle.wrapping_add(AUDIO_SAMPLE_PERIOD_CYCLES);
         }
 
-        packet
     }
 
     fn submit_packet(&mut self) {
@@ -146,9 +152,15 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             return;
         }
         AUDIO_ATTEMPT_COUNT.fetch_add(1, Ordering::Relaxed);
-        let packet = self.make_packet();
-        match self.endpoint.write(&packet) {
-            Ok(n) if n == packet.len() => {
+        self.make_packet();
+        // SAFETY: packet_buffer is 4-byte aligned, lives in the static Audio
+        // class instance in DMA-accessible SRAM, and is not modified again
+        // until endpoint_in_complete/incomplete clears packet_queued.
+        let result = unsafe {
+            self.endpoint.write_iso_batch_dma(&self.packet_buffer.0, 1, 1)
+        };
+        match result {
+            Ok(n) if n == AUDIO_PACKET_BYTES as usize => {
                 self.packet_queued = true;
                 AUDIO_SUBMIT_COUNT.fetch_add(1, Ordering::Relaxed);
             }
