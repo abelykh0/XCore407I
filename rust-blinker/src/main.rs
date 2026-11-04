@@ -19,6 +19,7 @@ use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
+use xcore407i_blinker::usb_audio::AudioUsbClass;
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
@@ -87,11 +88,13 @@ unsafe extern "C" {
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
 type BoardUvcClass = UvcUsbClass<'static, BoardUsbBus>;
+type BoardAudioClass = AudioUsbClass<'static, BoardUsbBus>;
 
 // These pointers are published once, before TIM2 is enabled. After that,
 // TIM2 is the sole owner of both mutable objects. main() must not access them.
 static USB_DEVICE_PTR: AtomicPtr<BoardUsbDevice> = AtomicPtr::new(ptr::null_mut());
 static CAMERA_PTR: AtomicPtr<BoardUvcClass> = AtomicPtr::new(ptr::null_mut());
+static AUDIO_PTR: AtomicPtr<BoardAudioClass> = AtomicPtr::new(ptr::null_mut());
 
 #[entry]
 fn main() -> ! {
@@ -184,6 +187,7 @@ fn main() -> ! {
     // The large endpoint buffers remain in their existing DMA-visible SRAM
     // allocation. The UsbDevice itself remains in CCM as in the original code.
     static mut CAMERA: MaybeUninit<BoardUvcClass> = MaybeUninit::uninit();
+    static mut AUDIO: MaybeUninit<BoardAudioClass> = MaybeUninit::uninit();
 
     #[unsafe(link_section = ".ccmram.usb_device")]
     static mut USB_DEVICE: MaybeUninit<BoardUsbDevice> = MaybeUninit::uninit();
@@ -198,6 +202,14 @@ fn main() -> ! {
         camera_ptr.write(
             UvcUsbClass::new(bus).expect("UVC USB class initialization failed")
         );
+    }
+
+    let audio_ptr = unsafe {
+        (*ptr::addr_of_mut!(AUDIO)).as_mut_ptr()
+    };
+
+    unsafe {
+        audio_ptr.write(AudioUsbClass::new(bus));
     }
 
     let usb_ptr = unsafe {
@@ -219,6 +231,7 @@ fn main() -> ! {
     }
 
     CAMERA_PTR.store(camera_ptr, Ordering::Release);
+    AUDIO_PTR.store(audio_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
     // Start the independent USB service timers only after all USB objects
@@ -869,8 +882,9 @@ fn TIM2() {
 
     let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
     let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
+    let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
 
-    if usb_ptr.is_null() || camera_ptr.is_null() {
+    if usb_ptr.is_null() || camera_ptr.is_null() || audio_ptr.is_null() {
         return;
     }
 
@@ -878,8 +892,9 @@ fn TIM2() {
     // exclusive owner. main() never dereferences either pointer after publish.
     let usb = unsafe { &mut *usb_ptr };
     let camera = unsafe { &mut *camera_ptr };
+    let audio = unsafe { &mut *audio_ptr };
 
-    let _ = usb.poll(&mut [camera]);
+    let _ = usb.poll(&mut [camera, audio]);
 
     /*
     // CPU load reporting
