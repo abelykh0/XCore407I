@@ -21,6 +21,7 @@ tinyusb-sys = { path = "vendor/tinyusb-sys", default-features = false, features 
 [features]
 # Keep a one-packet-per-microframe UVC mode available for host compatibility.
 uvc-single-transaction = []
+camera-bw = []
 
 [patch.crates-io]
 usb-device = { path = "vendor/usb-device" }
