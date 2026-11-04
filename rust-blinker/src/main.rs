@@ -407,7 +407,7 @@ fn write_hex32(destination: &mut [u8], value: u32) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let digits = destination.len().min(8);
     for (index, byte) in destination.iter_mut().take(digits).enumerate() {
-        let shift = 28 - index * 4;
+        let shift = (digits - 1 - index) * 4;
         *byte = HEX[((value >> shift) & 0x0F) as usize];
     }
 }
