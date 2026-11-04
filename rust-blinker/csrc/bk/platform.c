@@ -37,6 +37,7 @@ static volatile uint16_t bk_audio_edge_tail;
 static volatile uint8_t bk_audio_enabled;
 static uint8_t bk_audio_level;
 static volatile uint32_t bk_audio_edges;
+static volatile uint32_t bk_audio_port_writes;
 static uint32_t bk_audio_edge_cycles[BK_AUDIO_EDGE_CAPACITY];
 static uint8_t bk_audio_edge_levels[BK_AUDIO_EDGE_CAPACITY];
 
@@ -70,6 +71,7 @@ uint8_t bk_audio_start(void)
     // Called from the USB ISR; the emulator producer is paused while this runs.
     bk_audio_edge_tail = bk_audio_edge_head;
     bk_audio_edges = 0;
+    bk_audio_port_writes = 0;
     bk_audio_level = (port0177714 & 0x0040u) ? 1u : 0u;
     __asm volatile("dmb" ::: "memory");
     bk_audio_enabled = 1u;
@@ -85,6 +87,11 @@ void bk_audio_stop(void)
 uint32_t bk_audio_edge_count(void)
 {
     return bk_audio_edges;
+}
+
+uint32_t bk_audio_port_write_count(void)
+{
+    return bk_audio_port_writes;
 }
 
 uint8_t bk_audio_pop_edge(uint32_t *cycles, uint8_t *level)
@@ -160,6 +167,7 @@ void bk_reset(void)
     bk_audio_edge_head = 0;
     bk_audio_edge_tail = 0;
     bk_audio_edges = 0;
+    bk_audio_port_writes = 0;
     stop_irq_pending = 0;
     io_stop_happened = 0;
     last_branch = 0;
@@ -280,6 +288,7 @@ int sl_byte(pdp_regs *p, c_addr addr, d_byte value)
             bk_video_shift_changed((uint8_t)port0177664);
             break;
         case 0177714:
+            bk_audio_port_writes++;
             port0177714 = (uint16_t)((port0177714 & 0xFF00u) | value);
             bk_audio_record_level((uint8_t)(port0177714 & 0x0040u));
             break;
@@ -319,6 +328,7 @@ int sl_word(pdp_regs *p, c_addr addr, d_word value)
             bk_video_shift_changed((uint8_t)port0177664);
             break;
         case 0177714:
+            bk_audio_port_writes++;
             port0177714 = value;
             bk_audio_record_level((uint8_t)(port0177714 & 0x0040u));
             break;
