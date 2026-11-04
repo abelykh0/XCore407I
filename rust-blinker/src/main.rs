@@ -590,7 +590,6 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
     let gui = modifiers & 0x88 != 0;
     let control_or_alt = modifiers & 0xdd != 0;
     let previous_modifiers = unsafe { PREVIOUS_MODIFIERS };
-    let alt_pressed = alt && previous_modifiers & 0x44 == 0;
     let control_pressed = control && previous_modifiers & 0x11 == 0;
     let gui_pressed = gui && previous_modifiers & 0x88 == 0;
     let locks_before = KEYBOARD_LOCKS.load(Ordering::Acquire);
@@ -607,18 +606,16 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
     if control_pressed {
         append_keyboard_char(&mut emulator_input, &mut emulator_used, 0x1c); // СУ
     }
-    if alt_pressed {
-        append_keyboard_char(&mut emulator_input, &mut emulator_used, 0x0f); // АР2
-    }
+    // АР2 is a modifier (Alt/AltGr), not a standalone BK key code.
     if gui_pressed {
         // A single Win key toggles the language. Read the live BK flag so
         // changes made by the emulator itself are respected:
         // bit 7 set = РУС, clear = ЛАТ.
         let language_flag = unsafe { RamBuffer[0x23] };
         let language_key = if language_flag & 0x80 != 0 {
-            0x11 // Currently РУС: request ЛАТ.
+            0x0f // Currently РУС: request ЛАТ.
         } else {
-            0x10 // Currently ЛАТ: request РУС.
+            0x0e // Currently ЛАТ: request РУС.
         };
         append_keyboard_char(&mut emulator_input, &mut emulator_used, language_key);
     }
