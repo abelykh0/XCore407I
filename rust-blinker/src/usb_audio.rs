@@ -174,6 +174,11 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
     }
 
     fn submit_packet(&mut self) {
+        // Diagnostic isolation: leave UAC descriptors and stream activation intact,
+        // but do not generate or submit any audio isochronous IN packets.
+        return;
+
+        #[allow(unreachable_code)]
         if self.streaming_alt != 1 || self.packet_queued {
             return;
         }
