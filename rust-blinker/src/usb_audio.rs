@@ -23,11 +23,6 @@ const AUDIO_SAMPLES_PER_PACKET: usize = 6;
 const AUDIO_SAMPLE_PERIOD_CYCLES: u32 = 3_500; // 168 MHz / 48 kHz
 const AUDIO_STARTUP_LATENCY_CYCLES: u32 = 168_000; // 1 ms transition-queue lead
 
-// HS isochronous IN endpoints use direct DMA in this driver. The packet must
-// be word-aligned and remain unchanged until the endpoint completion callback.
-#[repr(C, align(4))]
-struct AudioPacketBuffer([u8; AUDIO_PACKET_BYTES as usize]);
-
 static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
 static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_SUBMIT_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -76,8 +71,8 @@ pub struct AudioUsbClass<'a, B: UsbBus> {
     sample_level: bool,
     pending_edge: Option<(u32, bool)>,
     packet_queued: bool,
+    packet_buffer: [u8; AUDIO_PACKET_BYTES as usize],
     incomplete_count: u8,
-    packet_buffer: AudioPacketBuffer,
 }
 
 impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
@@ -107,8 +102,8 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             sample_level: false,
             pending_edge: None,
             packet_queued: false,
+            packet_buffer: [0; AUDIO_PACKET_BYTES as usize],
             incomplete_count: 0,
-            packet_buffer: AudioPacketBuffer([0; AUDIO_PACKET_BYTES as usize]),
         }
     }
 
@@ -150,7 +145,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             // deliberately conservative; later we can tune level/filtering.
             let sample: i16 = if self.sample_level { 12_000 } else { -12_000 };
             let offset = sample_index * 2;
-            self.packet_buffer.0[offset..offset + 2].copy_from_slice(&sample.to_le_bytes());
+            self.packet_buffer[offset..offset + 2].copy_from_slice(&sample.to_le_bytes());
 
             self.next_sample_cycle =
                 self.next_sample_cycle.wrapping_add(AUDIO_SAMPLE_PERIOD_CYCLES);
@@ -163,12 +158,9 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             return;
         }
         AUDIO_ATTEMPT_COUNT.fetch_add(1, Ordering::Relaxed);
-        // SAFETY: packet_buffer is 4-byte aligned, lives in the Audio class
-        // instance in DMA-accessible SRAM, and is not modified until this
-        // transfer completes or is explicitly retried after an incomplete ISO.
-        let result = unsafe {
-            self.endpoint.write_iso_batch_dma(&self.packet_buffer.0, 1, 1)
-        };
+        // The 12-byte audio payload is copied directly into EP2's TX FIFO.
+        // No DMA buffer or DMA lifetime constraint is involved.
+        let result = self.endpoint.write_iso_batch_fifo(&self.packet_buffer, 1, 1);
         match result {
             Ok(n) if n == AUDIO_PACKET_BYTES as usize => {
                 self.packet_queued = true;
