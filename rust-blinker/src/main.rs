@@ -353,7 +353,7 @@ fn main() -> ! {
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
             // Restore the visible section label above the diagnostic rows.
-            show_file_browser_line(19, b"DIAG BELOW:", false);
+            show_file_browser_line(19, b"TEST ROW 19", false);
             let (_, _, submits, _, completes, incompletes, _, _, _, _, _, _) = audio_diagnostics();
             let (_, (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
                 endpoint_incomplete_snapshots();
