@@ -981,7 +981,7 @@ fn TIM2() {
         n = append_diag_text(&mut line, n, b" I="); n = append_diag_hex(&mut line, n, incompletes);
         n = append_diag_text(&mut line, n, b" R="); n = append_diag_hex(&mut line, n, streak);
         line[n..n + 2].copy_from_slice(b"\\r\\n"); n += 2;
-        let _ = serial.write(&line[..n]);
+        if serial.dtr() { let _ = serial.write(&line[..n]); }
     }
 
     /*
