@@ -747,8 +747,8 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                 write_reg!(otg_global, regs.global(), GINTSTS, IISOIXFR: 1);
                 #[cfg(feature = "internal-dma")]
                 {
-                    // Sample FNSOF once for diagnostics and use its parity
-                    // for the original endpoint-selected-frame recovery test.
+                    // Use one controller-wide sample so every endpoint is
+                    // checked against the same current microframe.
                     let current_frame =
                         read_reg!(otg_device, regs.device(), DSTS, FNSOF);
                     for ep in self.allocator.endpoints_in.iter().flatten() {
