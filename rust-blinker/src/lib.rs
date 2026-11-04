@@ -10,5 +10,4 @@ mod palette;
 pub mod rom;
 pub mod rtc;
 pub mod usb_uvc;
-pub mod usb_audio;
 pub mod uvc;
