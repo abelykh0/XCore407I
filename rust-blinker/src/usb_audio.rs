@@ -263,7 +263,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         unsafe { bk_audio_stop(); }
         AUDIO_ALT1_ACTIVE.store(false, Ordering::Release);
         self.streaming_alt = 0;
-        self.pending_edge = None;
+        
         self.packet_queued = false;
     }
 
@@ -294,7 +294,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
             AUDIO_COMPLETE_COUNT.store(0, Ordering::Relaxed);
             AUDIO_INCOMPLETE_COUNT.store(0, Ordering::Relaxed);
         }
-        self.pending_edge = None;
+        
         self.packet_queued = false;
 
         if alternative == 1 {
