@@ -315,20 +315,15 @@ impl<USB: UsbPeripheral> EndpointAllocator<USB> {
         let tx_fifo_size = if descr.address.index() == 0 {
             // Match the original C configuration's 32-word EP0 TX FIFO.
             core::cmp::max(descr.max_packet_size as usize, 128)
+        } else if matches!(descr.ep_type, EndpointType::Isochronous { .. }) {
+            // The HS UVC endpoint carries three 768-byte transactions per
+            // microframe. Keep 48 words of refill margin beyond that payload.
+            // Small DMA-backed isochronous endpoints (the 12-byte audio
+            // endpoint) need only the allocator's 16-word minimum.
+            descr.max_packet_size as usize * 3
+                + if descr.max_packet_size > 64 { 48 * 4 } else { 0 }
         } else {
-            // Reserve enough for three high-bandwidth isochronous transactions
-            // at the endpoint MPS plus 64 words of refill margin.
             descr.max_packet_size as usize
-                * if matches!(descr.ep_type, EndpointType::Isochronous { .. }) {
-                    3
-                } else {
-                    1
-                }
-                + if matches!(descr.ep_type, EndpointType::Isochronous { .. }) {
-                    64 * 4
-                } else {
-                    0
-                }
         };
         #[cfg(feature = "hs")]
         // Reserve the high-bandwidth packet budget plus refill margin above.
