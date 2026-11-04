@@ -746,15 +746,9 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
             if incomplete_iso_in != 0 {
                 write_reg!(otg_global, regs.global(), GINTSTS, IISOIXFR: 1);
                 #[cfg(feature = "internal-dma")]
-                {
-                    // Sample the frame once for all endpoints. EONUM (DIEPCTL[16])
-                    // identifies the frame selected for each isochronous IN transfer.
-                    let current_frame_parity =
-                        read_reg!(otg_device, regs.device(), DSTS, FNSOF) & 1;
-                    for ep in self.allocator.endpoints_in.iter().flatten() {
-                        if ep.abort_iso_incomplete(current_frame_parity) {
-                            ep_in_incomplete |= 1 << ep.address().index();
-                        }
+                for ep in self.allocator.endpoints_in.iter().flatten() {
+                    if ep.abort_iso_incomplete() {
+                        ep_in_incomplete |= 1 << ep.address().index();
                     }
                 }
                 ISO_INCOMPLETE_EVENT_SNAPSHOT.store(
