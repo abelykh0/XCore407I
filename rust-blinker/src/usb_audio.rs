@@ -4,6 +4,7 @@
 //! Transitions are timestamped by the STM32 DWT counter and converted to
 //! 48 kHz mono, 16-bit PCM for the USB isochronous IN endpoint.
 
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus, UsbBusAllocator};
 use usb_device::class::UsbClass;
 use usb_device::descriptor::DescriptorWriter;
@@ -22,10 +23,26 @@ const AUDIO_SAMPLES_PER_PACKET: usize = 6;
 const AUDIO_SAMPLE_PERIOD_CYCLES: u32 = 3_500; // 168 MHz / 48 kHz
 const AUDIO_STARTUP_LATENCY_CYCLES: u32 = 168_000; // 1 ms transition-queue lead
 
+static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
+static AUDIO_SUBMIT_COUNT: AtomicU32 = AtomicU32::new(0);
+static AUDIO_COMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Snapshot of the USB Audio stream state and activity counters.
+pub fn diagnostics() -> (bool, u32, u32, u32) {
+    let edges = unsafe { bk_audio_edge_count() };
+    (
+        AUDIO_ALT1_ACTIVE.load(Ordering::Acquire),
+        AUDIO_SUBMIT_COUNT.load(Ordering::Relaxed),
+        AUDIO_COMPLETE_COUNT.load(Ordering::Relaxed),
+        edges,
+    )
+}
+
 unsafe extern "C" {
     fn bk_audio_start() -> u8;
     fn bk_audio_stop();
     fn bk_audio_pop_edge(cycles: *mut u32, level: *mut u8) -> u8;
+    fn bk_audio_edge_count() -> u32;
 }
 
 /// USB Audio Class 1.0 capture function (device-to-host audio source).
@@ -126,6 +143,9 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
         }
         let packet = self.make_packet();
         self.packet_queued = matches!(self.endpoint.write(&packet), Ok(n) if n == packet.len());
+        if self.packet_queued {
+            AUDIO_SUBMIT_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn write_audio_control_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
@@ -228,6 +248,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
 
     fn reset(&mut self) {
         unsafe { bk_audio_stop(); }
+        AUDIO_ALT1_ACTIVE.store(false, Ordering::Release);
         self.streaming_alt = 0;
         self.pending_edge = None;
         self.packet_queued = false;
@@ -252,6 +273,11 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         }
 
         self.streaming_alt = alternative;
+        AUDIO_ALT1_ACTIVE.store(alternative == 1, Ordering::Release);
+        if alternative == 1 {
+            AUDIO_SUBMIT_COUNT.store(0, Ordering::Relaxed);
+            AUDIO_COMPLETE_COUNT.store(0, Ordering::Relaxed);
+        }
         self.pending_edge = None;
         self.packet_queued = false;
 
@@ -277,6 +303,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
 
     fn endpoint_in_complete(&mut self, address: EndpointAddress) {
         if address == self.endpoint.address() {
+            AUDIO_COMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
             self.packet_queued = false;
             self.submit_packet();
         }
