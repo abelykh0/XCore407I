@@ -202,7 +202,11 @@ impl EndpointIn {
             return false;
         }
 
-        if read_reg!(endpoint_in, ep, DIEPCTL, EPENA) == 0 {
+        // A completed transfer is not stalled, even if its target-frame
+        // marker has not yet been consumed by the global interrupt handler.
+        if read_reg!(endpoint_in, ep, DIEPINT, XFRC) != 0
+            || read_reg!(endpoint_in, ep, DIEPCTL, EPENA) == 0
+        {
             return false;
         }
 
@@ -227,7 +231,10 @@ impl EndpointIn {
             timeout -= 1;
         }
         if read_reg!(endpoint_in, ep, DIEPCTL, EPENA) != 0 {
-            return false;
+            // The endpoint-specific disable did not complete. Reinitialize
+            // only this endpoint; never reset the device or another endpoint.
+            self.recover_iso_endpoint_hw();
+            return true;
         }
 
         write_reg!(endpoint_in, ep, DIEPINT, EPDISD: 1);
@@ -237,7 +244,10 @@ impl EndpointIn {
             timeout -= 1;
         }
         if read_reg!(otg_global, global, GRSTCTL, AHBIDL) == 0 {
-            return false;
+            // AHB did not become idle in time. Recover only the endpoint
+            // identified as incomplete instead of leaving its stream dead.
+            self.recover_iso_endpoint_hw();
+            return true;
         }
 
         write_reg!(
@@ -251,7 +261,13 @@ impl EndpointIn {
         while read_reg!(otg_global, global, GRSTCTL, TXFFLSH) != 0 && timeout != 0 {
             timeout -= 1;
         }
-        read_reg!(otg_global, global, GRSTCTL, TXFFLSH) == 0
+        if read_reg!(otg_global, global, GRSTCTL, TXFFLSH) == 0 {
+            true
+        } else {
+            // FIFO flush timed out. Reconfigure only this endpoint/FIFO.
+            self.recover_iso_endpoint_hw();
+            true
+        }
     }
 
     /// Reinitialize an isochronous endpoint after repeated incomplete frames.
