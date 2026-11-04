@@ -270,6 +270,14 @@ impl EndpointIn {
         }
     }
 
+    /// Clear the armed-frame marker after this endpoint completes normally.
+    #[cfg(all(feature = "internal-dma", feature = "hs"))]
+    pub(crate) fn mark_iso_complete(&self) {
+        if matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. }) {
+            ISO_IN_TARGET_FRAME[self.index() as usize].store(0, Ordering::Relaxed);
+        }
+    }
+
     /// Reinitialize an isochronous endpoint after repeated incomplete frames.
     #[cfg(feature = "internal-dma")]
     pub(crate) fn recover_iso_endpoint_hw(&self) {
