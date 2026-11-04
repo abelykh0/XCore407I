@@ -122,8 +122,8 @@ fn main() -> ! {
 
     // initialize_demo_canvas();
     clear_demo_canvas(0x10);
-    // Restore the previously verified blue row fill across rows 6-31.
-    for row in 6..32 {
+    // Reserve rows 22-31 for diagnostics; initialize them to blue.
+    for row in 22..32 {
         show_file_browser_line(row, b"", false);
     }
     show_usb_status(b"USB FS: INIT");
@@ -353,35 +353,54 @@ fn main() -> ! {
         // USB polling and camera-class access now belong exclusively to TIM2.
         let now = TICKS.load(Ordering::Relaxed);
 
-        // Visibility isolation test: repaint all rows 6-31 once per second.
+        // Refresh the diagnostic area at 1 Hz. Rows 26-31 remain blue.
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
-            show_file_browser_line(6, b"ROW 06 TEST", false);
-            show_file_browser_line(7, b"ROW 07 TEST", false);
-            show_file_browser_line(8, b"ROW 08 TEST", false);
-            show_file_browser_line(9, b"ROW 09 TEST", false);
-            show_file_browser_line(10, b"ROW 10 TEST", false);
-            show_file_browser_line(11, b"ROW 11 TEST", false);
-            show_file_browser_line(12, b"ROW 12 TEST", false);
-            show_file_browser_line(13, b"ROW 13 TEST", false);
-            show_file_browser_line(14, b"ROW 14 TEST", false);
-            show_file_browser_line(15, b"ROW 15 TEST", false);
-            show_file_browser_line(16, b"ROW 16 TEST", false);
-            show_file_browser_line(17, b"ROW 17 TEST", false);
-            show_file_browser_line(18, b"ROW 18 TEST", false);
-            show_file_browser_line(19, b"ROW 19 TEST", false);
-            show_file_browser_line(20, b"ROW 20 TEST", false);
-            show_file_browser_line(21, b"ROW 21 TEST", false);
-            show_file_browser_line(22, b"ROW 22 TEST", false);
-            show_file_browser_line(23, b"ROW 23 TEST", false);
-            show_file_browser_line(24, b"ROW 24 TEST", false);
-            show_file_browser_line(25, b"ROW 25 TEST", false);
-            show_file_browser_line(26, b"ROW 26 TEST", false);
-            show_file_browser_line(27, b"ROW 27 TEST", false);
-            show_file_browser_line(28, b"ROW 28 TEST", false);
-            show_file_browser_line(29, b"ROW 29 TEST", false);
-            show_file_browser_line(30, b"ROW 30 TEST", false);
-            show_file_browser_line(31, b"ROW 31 TEST", false);
+
+            let (
+                _active, _attempts, submits, _write_fails, completes, incompletes,
+                _edges, _port_writes, diepctl, dieptsiz, diepint, fnsof,
+            ) = audio_diagnostics();
+
+            let mut line = [b' '; 32];
+            line[0..2].copy_from_slice(b"S:");
+            write_hex32(&mut line[2..10], submits);
+            line[10] = b' ';
+            line[11..13].copy_from_slice(b"I:");
+            write_hex32(&mut line[13..21], incompletes);
+            line[21] = b' ';
+            line[22..24].copy_from_slice(b"D:");
+            write_hex32(&mut line[24..32], completes);
+            show_file_browser_line(22, &line, false);
+
+            let mut line = [b' '; 32];
+            line[0..3].copy_from_slice(b"2C:");
+            write_hex32(&mut line[3..11], diepctl);
+            line[11] = b' ';
+            line[12..15].copy_from_slice(b"2Z:");
+            write_hex32(&mut line[15..23], dieptsiz);
+            show_file_browser_line(23, &line, false);
+
+            let mut line = [b' '; 32];
+            line[0..3].copy_from_slice(b"2I:");
+            write_hex32(&mut line[3..11], diepint);
+            line[11] = b' ';
+            line[12..14].copy_from_slice(b"N:");
+            write_hex32(&mut line[14..22], fnsof);
+            show_file_browser_line(24, &line, false);
+
+            let (ep1, _ep2) = endpoint_incomplete_snapshots();
+            let callback = incomplete_callback_address();
+            let mut line = [b' '; 32];
+            line[0..3].copy_from_slice(b"CA:");
+            write_hex32(&mut line[3..11], callback);
+            line[12..15].copy_from_slice(b"1C:");
+            write_hex32(&mut line[15..23], ep1.0);
+            show_file_browser_line(25, &line, false);
+
+            for row in 26..32 {
+                show_file_browser_line(row, b"", false);
+            }
         }
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
