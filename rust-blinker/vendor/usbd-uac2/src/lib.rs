@@ -1110,6 +1110,14 @@ impl<'a, B: UsbBus, AU: AudioHandler<'a, B> + ClockSource> UsbAudioClass<'a, B, 
             return;
         }
 
+        // The AudioControl interface has only alternate setting zero.
+        if iface == self.control_iface.into() {
+            if alt_setting == 0 {
+                xfer.accept().ok();
+            }
+            return;
+        }
+
         if let Some(input) = &mut self.input
             && iface == self.in_iface
         {
@@ -1118,24 +1126,29 @@ impl<'a, B: UsbBus, AU: AudioHandler<'a, B> + ClockSource> UsbAudioClass<'a, B, 
                 self.audio_impl
                     .alternate_setting_changed(UsbDirection::In, alt_setting);
                 input.alt_setting = alt_setting;
-                // Start the IN cycle
-                self.audio_impl.audio_data_tx(&input.endpoint);
-                xfer.accept().ok();
+                if alt_setting == 1 {
+                    // Start the capture IN cycle.
+                    self.audio_impl.audio_data_tx(&input.endpoint);
+                }
             }
+            // SET_INTERFACE(0) is valid even when alt zero is already active.
+            xfer.accept().ok();
         } else if self.output.is_some() && iface == self.out_iface {
             let old_alt = self.output.as_ref().unwrap().alt_setting;
             if old_alt != alt_setting {
                 self.audio_impl
                     .alternate_setting_changed(UsbDirection::Out, alt_setting);
-                // Start the IN cycle running
-                self.emit_feedback();
                 self.output.as_mut().unwrap().alt_setting = alt_setting;
-                xfer.accept().ok();
+                if alt_setting == 1 {
+                    // Start the playback feedback IN cycle.
+                    self.emit_feedback();
+                }
             }
+            xfer.accept().ok();
         } else {
             debug!(
-                "   not handled (in: {}, out: {}, got: {}).",
-                self.in_iface, self.out_iface, iface
+                "   not handled (control: {}, in: {}, out: {}, got: {}).",
+                u8::from(self.control_iface), self.in_iface, self.out_iface, iface
             );
         }
     }
@@ -1143,6 +1156,10 @@ impl<'a, B: UsbBus, AU: AudioHandler<'a, B> + ClockSource> UsbAudioClass<'a, B, 
         let req = xfer.request();
         let iface = req.index as u8;
         debug!("  GET_ALT_INTERFACE {}", iface);
+        if iface == self.control_iface.into() {
+            xfer.accept_with(&[0]).ok();
+            return;
+        }
         if let Some(input) = self.input.as_ref()
             && iface == self.in_iface
         {
