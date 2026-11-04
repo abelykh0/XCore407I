@@ -19,7 +19,9 @@ use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
-use xcore407i_blinker::usb_audio::{diagnostics as audio_diagnostics, AudioUsbClass};
+use xcore407i_blinker::usb_audio::{
+    diagnostics as audio_diagnostics, endpoint_incomplete_snapshots, AudioUsbClass,
+};
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
@@ -347,7 +349,9 @@ fn main() -> ! {
         // Keep audio diagnostics on two fixed rows; no USB traffic capture needed.
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
-            let (alt1, attempts, submits, failures, completes, incompletes, edges, port_writes, diepctl, dieptsiz, diepint, fnsof) = audio_diagnostics();
+            let (alt1, attempts, submits, failures, completes, incompletes, _, _, _, _, _, _) = audio_diagnostics();
+            let ((ep1_ctl, ep1_size, ep1_int, _), (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
+                endpoint_incomplete_snapshots();
 
             let mut line1 = [b' '; 32];
             line1[..2].copy_from_slice(b"A:");
@@ -365,23 +369,26 @@ fn main() -> ! {
             line2[18..20].copy_from_slice(b"I:");
             write_hex32(&mut line2[20..26], incompletes);
 
+            // Capture both IN endpoints: EP1 is camera, EP2 is audio.
             let mut line3 = [b' '; 32];
-            line3[..2].copy_from_slice(b"E:");
-            write_hex32(&mut line3[2..8], edges);
-            line3[9..11].copy_from_slice(b"W:");
-            write_hex32(&mut line3[11..17], port_writes);
+            line3[..3].copy_from_slice(b"1C:");
+            write_hex32(&mut line3[3..11], ep1_ctl);
+            line3[12..15].copy_from_slice(b"1Z:");
+            write_hex32(&mut line3[15..23], ep1_size);
 
             let mut line4 = [b' '; 32];
-            line4[..2].copy_from_slice(b"C:");
-            write_hex32(&mut line4[2..10], diepctl);
-            line4[11..13].copy_from_slice(b"Z:");
-            write_hex32(&mut line4[13..21], dieptsiz);
+            line4[..3].copy_from_slice(b"2C:");
+            write_hex32(&mut line4[3..11], ep2_ctl);
+            line4[12..15].copy_from_slice(b"2Z:");
+            write_hex32(&mut line4[15..23], ep2_size);
 
             let mut line5 = [b' '; 32];
-            line5[..2].copy_from_slice(b"I:");
-            write_hex32(&mut line5[2..10], diepint);
-            line5[11..13].copy_from_slice(b"N:");
-            write_hex32(&mut line5[13..21], fnsof);
+            line5[..3].copy_from_slice(b"1I:");
+            write_hex32(&mut line5[3..9], ep1_int);
+            line5[10..13].copy_from_slice(b"2I:");
+            write_hex32(&mut line5[13..19], ep2_int);
+            line5[20..22].copy_from_slice(b"N:");
+            write_hex32(&mut line5[22..30], ep2_fnsof);
 
             show_file_browser_line(27, &line3, false);
             show_file_browser_line(28, &line1, false);
