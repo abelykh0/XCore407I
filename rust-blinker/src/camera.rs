@@ -563,14 +563,6 @@ impl Nv12DemoImage {
         self.cpu_submit_percent = submit.min(100);
     }
 
-    /// Fill one UVC payload transfer into caller-owned storage.
-    ///
-    /// `out` must hold at least `TRANSFER_BYTES` bytes. Bytes 0..4 are the
-    /// UVC payload header; the remaining bytes are a chunk of the NV12 frame.
-    pub fn next_packet(&mut self, out: &mut [u8]) -> Option<Packet> {
-        self.next_payload_transfer(out, TRANSFER_BYTES)
-    }
-
     /// Fill one UVC payload transfer, which may span multiple USB packets in
     /// a high-bandwidth HS microframe. UVC places a single payload header at
     /// the start of the transfer; continuation transactions contain video
@@ -799,91 +791,3 @@ unsafe fn copy_canvas_range(mut offset: usize, mut destination: *mut u8, mut byt
     }
 }
 
-const OVERLAY_X: usize = 8;
-const OVERLAY_Y: usize = 8;
-const OVERLAY_TEXT: &[u8] = b"UVC FREE: ";
-const OVERLAY_LINE_2_PREFIX: &[u8] = b"GEN: ";
-const OVERLAY_LINE_2_MIDDLE: &[u8] = b" TX: ";
-const OVERLAY_CHARS: usize = OVERLAY_LINE_2_PREFIX.len() + 4 + OVERLAY_LINE_2_MIDDLE.len() + 4;
-
-fn overlay_cpu_text(offset: usize, out: &mut [u8], available: u8, generate: u8, submit: u8) {
-    use crate::font8x8::FONT8X8;
-
-    let end = offset + out.len();
-    for y in OVERLAY_Y..OVERLAY_Y + 16 {
-        let row_start = y * WIDTH + OVERLAY_X;
-        let row_end = row_start + OVERLAY_CHARS * 8;
-        let start = offset.max(row_start);
-        let stop = end.min(row_end);
-        for pos in start..stop {
-            let x = pos - row_start;
-            let text_col = x / 8;
-            let line = (y - OVERLAY_Y) / 8;
-            let glyph_row = (y - OVERLAY_Y) & 7;
-            let glyph_col = x & 7;
-            let ch = if line == 0 {
-                overlay_char(text_col, available)
-            } else {
-                overlay_profile_char(text_col, generate, submit)
-            };
-            let bitmap = FONT8X8[(ch as usize - 1) * 8 + glyph_row];
-            out[pos - offset] = if bitmap & (0x80 >> glyph_col) != 0 {
-                235
-            } else {
-                16
-            };
-        }
-    }
-
-    let chroma_first_row = OVERLAY_Y / 2;
-    let chroma_end_row = (OVERLAY_Y + 16) / 2;
-    for row in chroma_first_row..chroma_end_row {
-        let row_start = Y_PLANE_BYTES + row * WIDTH + OVERLAY_X;
-        let row_end = row_start + OVERLAY_CHARS * 8;
-        let start = offset.max(row_start);
-        let stop = end.min(row_end);
-        if start < stop {
-            out[start - offset..stop - offset].fill(128);
-        }
-    }
-}
-
-fn overlay_char(index: usize, available: u8) -> u8 {
-    if index < OVERLAY_TEXT.len() {
-        return OVERLAY_TEXT[index];
-    }
-    let percent = available.min(100);
-    match index - OVERLAY_TEXT.len() {
-        0 => b'0' + percent / 100,
-        1 => b'0' + (percent / 10) % 10,
-        2 => b'0' + percent % 10,
-        3 => b'%',
-        _ => b' ',
-    }
-}
-
-fn overlay_profile_char(index: usize, generate: u8, submit: u8) -> u8 {
-    if index < OVERLAY_LINE_2_PREFIX.len() {
-        return OVERLAY_LINE_2_PREFIX[index];
-    }
-    let index = index - OVERLAY_LINE_2_PREFIX.len();
-    if index < 4 {
-        return percent_char(index, generate);
-    }
-    let index = index - 4;
-    if index < OVERLAY_LINE_2_MIDDLE.len() {
-        return OVERLAY_LINE_2_MIDDLE[index];
-    }
-    percent_char(index - OVERLAY_LINE_2_MIDDLE.len(), submit)
-}
-
-fn percent_char(index: usize, percent: u8) -> u8 {
-    let percent = percent.min(100);
-    match index {
-        0 => b'0' + percent / 100,
-        1 => b'0' + (percent / 10) % 10,
-        2 => b'0' + percent % 10,
-        3 => b'%',
-        _ => b' ',
-    }
-}
