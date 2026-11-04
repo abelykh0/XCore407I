@@ -24,15 +24,19 @@ const AUDIO_SAMPLE_PERIOD_CYCLES: u32 = 3_500; // 168 MHz / 48 kHz
 const AUDIO_STARTUP_LATENCY_CYCLES: u32 = 168_000; // 1 ms transition-queue lead
 
 static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
+static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_SUBMIT_COUNT: AtomicU32 = AtomicU32::new(0);
+static AUDIO_WRITE_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_COMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Snapshot of the USB Audio stream state and activity counters.
-pub fn diagnostics() -> (bool, u32, u32, u32) {
+pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32) {
     let edges = unsafe { bk_audio_edge_count() };
     (
         AUDIO_ALT1_ACTIVE.load(Ordering::Acquire),
+        AUDIO_ATTEMPT_COUNT.load(Ordering::Relaxed),
         AUDIO_SUBMIT_COUNT.load(Ordering::Relaxed),
+        AUDIO_WRITE_FAIL_COUNT.load(Ordering::Relaxed),
         AUDIO_COMPLETE_COUNT.load(Ordering::Relaxed),
         edges,
     )
@@ -141,10 +145,17 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
         if self.streaming_alt != 1 || self.packet_queued {
             return;
         }
+        AUDIO_ATTEMPT_COUNT.fetch_add(1, Ordering::Relaxed);
         let packet = self.make_packet();
-        self.packet_queued = matches!(self.endpoint.write(&packet), Ok(n) if n == packet.len());
-        if self.packet_queued {
-            AUDIO_SUBMIT_COUNT.fetch_add(1, Ordering::Relaxed);
+        match self.endpoint.write(&packet) {
+            Ok(n) if n == packet.len() => {
+                self.packet_queued = true;
+                AUDIO_SUBMIT_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {
+                self.packet_queued = false;
+                AUDIO_WRITE_FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
@@ -275,7 +286,9 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         self.streaming_alt = alternative;
         AUDIO_ALT1_ACTIVE.store(alternative == 1, Ordering::Release);
         if alternative == 1 {
+            AUDIO_ATTEMPT_COUNT.store(0, Ordering::Relaxed);
             AUDIO_SUBMIT_COUNT.store(0, Ordering::Relaxed);
+            AUDIO_WRITE_FAIL_COUNT.store(0, Ordering::Relaxed);
             AUDIO_COMPLETE_COUNT.store(0, Ordering::Relaxed);
         }
         self.pending_edge = None;
