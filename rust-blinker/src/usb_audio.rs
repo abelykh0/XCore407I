@@ -36,9 +36,11 @@ static AUDIO_COMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_INCOMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Snapshot of the USB Audio stream state and activity counters.
-pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32, u32) {
+pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32) {
     let edges = unsafe { bk_audio_edge_count() };
     let port_writes = unsafe { bk_audio_port_write_count() };
+    let (diepctl, dieptsiz, diepint, fnsof) =
+        synopsys_usb_otg::iso_incomplete_snapshot(2);
     (
         AUDIO_ALT1_ACTIVE.load(Ordering::Acquire),
         AUDIO_ATTEMPT_COUNT.load(Ordering::Relaxed),
@@ -48,6 +50,10 @@ pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32, u32) {
         AUDIO_INCOMPLETE_COUNT.load(Ordering::Relaxed),
         edges,
         port_writes,
+        diepctl,
+        dieptsiz,
+        diepint,
+        fnsof,
     )
 }
 
