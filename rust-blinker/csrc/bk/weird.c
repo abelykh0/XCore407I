@@ -50,6 +50,7 @@ register pdp_regs *p;
 }
 
 int halt(pdp_regs *p) {
+	(void)p;
 	io_stop_happened = 4;
 	return CPU_HALT;
 }
