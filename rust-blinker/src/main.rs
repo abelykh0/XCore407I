@@ -586,7 +586,7 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
     let modifiers = report[0];
     let shift = modifiers & 0x22 != 0;
     let alt = modifiers & 0x44 != 0;
-    let control_or_alt = modifiers & 0x99 != 0;
+    let control_or_alt = modifiers & 0xdd != 0;
     let previous_modifiers = unsafe { PREVIOUS_MODIFIERS };
     let alt_pressed = alt && previous_modifiers & 0x44 == 0;
     let locks_before = KEYBOARD_LOCKS.load(Ordering::Acquire);
