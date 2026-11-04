@@ -224,8 +224,8 @@ fn main() -> ! {
 
     loop {
         // BK instruction execution and keyboard forwarding
-        // TEMP TEST: emulator initialized, but instruction loop paused.
-        // unsafe { bk_loop(); }
+        // TEMP TEST: run the emulator instruction loop with initialization enabled.
+        unsafe { bk_loop(); }
         let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
         if input_len > 0 {
             let mut buffer = [0u8; 32];
