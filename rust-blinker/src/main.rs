@@ -19,7 +19,7 @@ use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
-use xcore407i_blinker::usb_audio::AudioUsbClass;
+use xcore407i_blinker::usb_audio::{diagnostics as audio_diagnostics, AudioUsbClass};
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
@@ -257,6 +257,7 @@ fn main() -> ! {
     let mut browser_count = 0usize;
     let mut browser_selected = 0usize;
     let mut browser_open = false;
+    let mut last_audio_diagnostic = 0u32;
 
     loop {
         let browser_action = FILE_BROWSER_ACTION.swap(0, Ordering::AcqRel);
@@ -347,6 +348,27 @@ fn main() -> ! {
         // USB polling and camera-class access now belong exclusively to TIM2.
         let now = TICKS.load(Ordering::Relaxed);
 
+        // Keep audio diagnostics on two fixed rows; no USB traffic capture needed.
+        if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
+            last_audio_diagnostic = now;
+            let (alt1, submits, completes, edges) = audio_diagnostics();
+
+            let mut line1 = [b' '; 32];
+            line1[..5].copy_from_slice(b"ALT1:");
+            line1[5] = if alt1 { b'1' } else { b'0' };
+            line1[7..11].copy_from_slice(b"SUB:");
+            write_hex32(&mut line1[12..20], submits);
+
+            let mut line2 = [b' '; 32];
+            line2[..5].copy_from_slice(b"DONE:");
+            write_hex32(&mut line2[5..13], completes);
+            line2[14..19].copy_from_slice(b"EDGE:");
+            write_hex32(&mut line2[19..27], edges);
+
+            show_file_browser_line(28, &line1, false);
+            show_file_browser_line(29, &line2, false);
+        }
+
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
         //     last_rtc_sample = now;
         //     rtc::refresh_display_time();
@@ -376,6 +398,14 @@ fn main() -> ! {
     }
 }
 
+
+fn write_hex32(destination: &mut [u8], value: u32) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for (index, byte) in destination.iter_mut().take(8).enumerate() {
+        let shift = 28 - index * 4;
+        *byte = HEX[((value >> shift) & 0x0F) as usize];
+    }
+}
 
 /// Read up to 25 regular files from the LittleFS root directory.
 /// Paths are retained as NUL-terminated ASCII strings for the later load.
