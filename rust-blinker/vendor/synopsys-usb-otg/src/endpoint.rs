@@ -282,6 +282,8 @@ impl EndpointIn {
     #[cfg(feature = "internal-dma")]
     pub(crate) fn recover_iso_endpoint_hw(&self) {
         if matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. }) {
+            #[cfg(feature = "hs")]
+            ISO_IN_TARGET_FRAME[self.index() as usize].store(0, Ordering::Relaxed);
             critical_section::with(|cs| {
                 self.deconfigure(cs);
                 self.configure(cs);
