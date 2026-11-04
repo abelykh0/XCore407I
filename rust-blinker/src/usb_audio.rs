@@ -107,7 +107,9 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
         )?;
 
         // AS_GENERAL: USB-streaming output terminal (ID 3), PCM format.
-        writer.write(0x24, &[1, 3, 1, 0, 1, 0])?;
+        // AS_GENERAL: terminal link 3, no delay, PCM format tag 0x0001.
+        // The descriptor is 7 bytes total: 2-byte header + 5-byte payload.
+        writer.write(0x24, &[1, 3, 0, 1, 0])?;
 
         // FORMAT_TYPE_I: mono, 16-bit samples, one discrete rate (48 kHz).
         writer.write(0x24, &[2, 1, 1, 2, 16, 1, 0x80, 0xBB, 0x00])?;
