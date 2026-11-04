@@ -359,19 +359,23 @@ fn main() -> ! {
             last_audio_diagnostic = now;
 
             let (
-                _active, _attempts, submits, _write_fails, completes, incompletes,
+                _active, attempts, submits, write_fails, completes, incompletes,
                 _edges, _port_writes, diepctl, dieptsiz, diepint, fnsof,
             ) = audio_diagnostics();
 
+            // Compact 16-bit views of the five audio transfer counters.
+            // This keeps the diagnostic on one 32-character display row.
             let mut line = [b' '; 32];
-            line[0..2].copy_from_slice(b"S:");
-            write_hex32(&mut line[2..10], submits);
-            line[10] = b' ';
-            line[11..13].copy_from_slice(b"I:");
-            write_hex32(&mut line[13..21], incompletes);
-            line[21] = b' ';
-            line[22..24].copy_from_slice(b"D:");
-            write_hex32(&mut line[24..32], completes);
+            line[0] = b'A';
+            write_hex32(&mut line[1..5], attempts & 0xFFFF);
+            line[6] = b'S';
+            write_hex32(&mut line[7..11], submits & 0xFFFF);
+            line[12] = b'W';
+            write_hex32(&mut line[13..17], write_fails & 0xFFFF);
+            line[18] = b'C';
+            write_hex32(&mut line[19..23], completes & 0xFFFF);
+            line[24] = b'I';
+            write_hex32(&mut line[25..29], incompletes & 0xFFFF);
             show_file_browser_line(22, &line, false);
 
             let mut line = [b' '; 32];
