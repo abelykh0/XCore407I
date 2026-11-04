@@ -88,7 +88,7 @@ type BoardAudioClass = usbd_uac2::UsbAudioClass<'static, BoardUsbBus, BoardAudio
 type BoardSerial = SerialPort<'static, BoardUsbBus>;
 
 // These pointers are published once, before TIM2 is enabled. After that,
-// TIM2 is the sole owner of both mutable objects. main() must not access them.
+// TIM2 is the sole owner of all three USB objects. main() must not access them.
 static USB_DEVICE_PTR: AtomicPtr<BoardUsbDevice> = AtomicPtr::new(ptr::null_mut());
 static AUDIO_PTR: AtomicPtr<BoardAudioClass> = AtomicPtr::new(ptr::null_mut());
 static SERIAL_PTR: AtomicPtr<BoardSerial> = AtomicPtr::new(ptr::null_mut());
@@ -150,7 +150,7 @@ fn main() -> ! {
     core.SYST.enable_counter();
 
     // Enable and reset OTG_FS before handing it to TinyUSB. OTG_HS remains
-    // owned by the UVC driver and is not reset here.
+    // owned by the USB audio/CDC device and is not reset here.
     unsafe {
         const RCC_AHB2ENR: *mut u32 = 0x4002_3834 as *mut u32;
         const RCC_AHB2RSTR: *mut u32 = 0x4002_3814 as *mut u32;
@@ -242,7 +242,7 @@ fn main() -> ! {
     unsafe {
         usb_ptr.write(
             // UAC2's builder configures the composite/IAD device class codes.
-            // UVC and UAC2 each provide their own function association descriptor.
+            // UAC2 and CDC-ACM are the only registered device functions.
             usbd_uac2::builder(bus, UsbVidPid(0x1209, 0x4071))
             .max_packet_size_0(64)
             .unwrap()
