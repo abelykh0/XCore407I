@@ -46,7 +46,15 @@ pub static SystemCoreClock: u32 = 168_000_000;
 const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
 const CORE_CLOCK_HZ: u64 = 168_000_000;
 static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
-static LOAD_TETRIS_PENDING: AtomicBool = AtomicBool::new(false);
+const FILE_BROWSER_OPEN: u8 = 1;
+const FILE_BROWSER_UP: u8 = 2;
+const FILE_BROWSER_DOWN: u8 = 3;
+const FILE_BROWSER_ENTER: u8 = 4;
+const FILE_BROWSER_ESCAPE: u8 = 5;
+const MAX_BROWSER_FILES: usize = 25;
+const MAX_BROWSER_PATH: usize = 256;
+static FILE_BROWSER_ACTIVE: AtomicBool = AtomicBool::new(false);
+static FILE_BROWSER_ACTION: AtomicU8 = AtomicU8::new(0);
 static USB_FS_STATUS: AtomicU32 = AtomicU32::new(0);
 // TIM3 schedules TinyUSB host work; the actual task runs in thread context.
 static USB_HOST_TASK_PENDING: AtomicBool = AtomicBool::new(false);
@@ -225,30 +233,92 @@ fn main() -> ! {
 
     // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
 
+    let mut browser_paths = [[0u8; MAX_BROWSER_PATH]; MAX_BROWSER_FILES];
+    let mut browser_path_lengths = [0u16; MAX_BROWSER_FILES];
+    let mut browser_count = 0usize;
+    let mut browser_selected = 0usize;
+    let mut browser_open = false;
+
     loop {
-        // NAND/LittleFS access is deferred to thread context. It never runs
-        // from the TinyUSB HID callback or an interrupt.
-        if LOAD_TETRIS_PENDING.swap(false, Ordering::AcqRel) {
-            if load_tetris_from_nand().is_ok() {
-                show_usb_status(b"TETRIS: LOADED");
-            } else {
-                show_usb_status(b"TETRIS: LOAD FAILED");
+        let browser_action = FILE_BROWSER_ACTION.swap(0, Ordering::AcqRel);
+
+        if browser_action == FILE_BROWSER_OPEN && !browser_open {
+            KEYBOARD_INPUT_LEN.store(0, Ordering::Release);
+            match list_root_files(&mut browser_paths, &mut browser_path_lengths) {
+                Ok(count) => {
+                    browser_count = count;
+                    browser_selected = 0;
+                    browser_open = true;
+                    FILE_BROWSER_ACTIVE.store(true, Ordering::Release);
+                    draw_file_browser(
+                        &browser_paths,
+                        &browser_path_lengths,
+                        browser_count,
+                        browser_selected,
+                    );
+                }
+                Err(()) => {
+                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
+                    show_usb_status(b"NAND FILE LIST FAILED");
+                }
             }
         }
 
-        // BK instruction execution and keyboard forwarding
-        // TEMP TEST: run the emulator instruction loop with initialization enabled.
-        unsafe { bk_loop(); }
-        let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
-        if input_len > 0 {
-            let mut buffer = [0u8; 32];
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
-                    buffer.as_mut_ptr(),
-                    input_len as usize,
+        if browser_open {
+            let mut redraw = false;
+            match browser_action {
+                FILE_BROWSER_UP if browser_count != 0 && browser_selected > 0 => {
+                    browser_selected -= 1;
+                    redraw = true;
+                }
+                FILE_BROWSER_DOWN if browser_count != 0 && browser_selected + 1 < browser_count => {
+                    browser_selected += 1;
+                    redraw = true;
+                }
+                FILE_BROWSER_ENTER if browser_count != 0 => {
+                    let path_len = browser_path_lengths[browser_selected] as usize;
+                    let result = load_tetris_from_path(&browser_paths[browser_selected][..path_len]);
+                    browser_open = false;
+                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
+                    clear_demo_canvas(0x10);
+                    if result.is_ok() {
+                        show_usb_status(b"PROGRAM LOADED");
+                    } else {
+                        show_usb_status(b"LOAD FAILED - CHECK FILE FORMAT");
+                    }
+                }
+                FILE_BROWSER_ESCAPE => {
+                    browser_open = false;
+                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
+                    clear_demo_canvas(0x10);
+                    show_usb_status(b"FILE BROWSER CANCELLED");
+                }
+                _ => {}
+            }
+            if redraw {
+                draw_file_browser(
+                    &browser_paths,
+                    &browser_path_lengths,
+                    browser_count,
+                    browser_selected,
                 );
-                sendInput(buffer.as_mut_ptr(), input_len);
+            }
+        }
+
+        // Pause emulator execution while the file browser owns the canvas.
+        if !browser_open {
+            unsafe { bk_loop(); }
+            let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
+            if input_len > 0 {
+                let mut buffer = [0u8; 32];
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
+                        buffer.as_mut_ptr(),
+                        input_len as usize,
+                    );
+                    sendInput(buffer.as_mut_ptr(), input_len);
+                }
             }
         }
 
@@ -289,13 +359,78 @@ fn main() -> ! {
 }
 
 
-/// Load /tetris.bin from the existing NAND LittleFS volume.
-///
-/// File format: little-endian uint16 Start, uint16 Size, then Size payload
-/// bytes. The payload is copied directly into the BK 16 KiB RAM window.
-fn load_tetris_from_nand() -> Result<(), ()> {
+/// Read up to 25 regular files from the LittleFS root directory.
+/// Paths are retained as NUL-terminated ASCII strings for the later load.
+fn list_root_files(
+    paths: &mut [[u8; MAX_BROWSER_PATH]; MAX_BROWSER_FILES],
+    path_lengths: &mut [u16; MAX_BROWSER_FILES],
+) -> Result<usize, ()> {
+    xcore407i_blinker::nand_fs::with_mounted(|fs| {
+        fs.read_dir_and_then(&littlefs2::path!("/"), |directory| {
+            let mut count = 0usize;
+            for item in directory {
+                let entry = item?;
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+
+                let full_path = entry.path();
+                let path_bytes = full_path.as_str_ref_with_trailing_nul().as_bytes();
+                if path_bytes.len() < 3
+                    || path_bytes.len() > MAX_BROWSER_PATH
+                    || !path_bytes[..path_bytes.len() - 1]
+                        .iter()
+                        .all(|byte| byte.is_ascii_graphic() || *byte == b'/')
+                {
+                    continue;
+                }
+
+                paths[count][..path_bytes.len()].copy_from_slice(path_bytes);
+                path_lengths[count] = path_bytes.len() as u16;
+                count += 1;
+                if count == MAX_BROWSER_FILES {
+                    break;
+                }
+            }
+            Ok(count)
+        })
+    })
+    .map_err(|_| ())
+}
+
+fn draw_file_browser(
+    paths: &[[u8; MAX_BROWSER_PATH]; MAX_BROWSER_FILES],
+    path_lengths: &[u16; MAX_BROWSER_FILES],
+    count: usize,
+    selected: usize,
+) {
+    clear_demo_canvas(0);
+    show_file_browser_line(0, b"NAND FILES - SELECT PROGRAM", false);
+
+    for row in 0..MAX_BROWSER_FILES {
+        let mut line = [b' '; 64];
+        if row < count {
+            line[0] = if row == selected { b'>' } else { b' ' };
+            line[1] = b' ';
+            let path_len = path_lengths[row] as usize;
+            // Root paths have the form "/filename\\0".
+            let name = &paths[row][1..path_len - 1];
+            let copy_len = name.len().min(line.len() - 2);
+            line[2..2 + copy_len].copy_from_slice(&name[..copy_len]);
+        } else if row == 0 && count == 0 {
+            line[..8].copy_from_slice(b"NO FILES");
+        }
+        show_file_browser_line(row + 1, &line, row == selected && count != 0);
+    }
+
+    show_file_browser_line(27, b"UP/DOWN MOVE  ENTER LOAD  ESC CANCEL", false);
+}
+
+/// Load a selected file containing the 4-byte Start/Size header and payload.
+fn load_tetris_from_path(path_bytes: &[u8]) -> Result<(), ()> {
+    let path = littlefs2::path::Path::from_bytes_with_nul(path_bytes).map_err(|_| ())?;
     let (start, _size) = xcore407i_blinker::nand_fs::with_mounted(|fs| {
-        fs.open_file_and_then(&littlefs2::path!("/tetris.bin"), |file| {
+        fs.open_file_and_then(path, |file| {
             let mut header = [0u8; 4];
             let mut header_read = 0usize;
             while header_read < header.len() {
@@ -333,7 +468,6 @@ fn load_tetris_from_nand() -> Result<(), ()> {
     unsafe { bk_set_pc(start); }
     Ok(())
 }
-
 
 #[interrupt]
 fn OTG_FS() {
@@ -461,9 +595,26 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
             continue;
         }
 
-        // F2 requests a Tetris load; NAND/LittleFS work is deferred to main().
+        // F2 opens the NAND file browser; directory access runs in main().
         if key == 0x3b {
-            LOAD_TETRIS_PENDING.store(true, Ordering::Release);
+            FILE_BROWSER_ACTIVE.store(true, Ordering::Release);
+            FILE_BROWSER_ACTION.store(FILE_BROWSER_OPEN, Ordering::Release);
+            continue;
+        }
+
+        // While the browser is active, consume navigation/selection keys and
+        // prevent them from reaching the BK emulator.
+        if FILE_BROWSER_ACTIVE.load(Ordering::Acquire) {
+            let action = match key {
+                0x52 => FILE_BROWSER_UP,    // Up Arrow
+                0x51 => FILE_BROWSER_DOWN,  // Down Arrow
+                0x28 => FILE_BROWSER_ENTER, // Enter
+                0x29 => FILE_BROWSER_ESCAPE,// Escape
+                _ => 0,
+            };
+            if action != 0 {
+                FILE_BROWSER_ACTION.store(action, Ordering::Release);
+            }
             continue;
         }
 
