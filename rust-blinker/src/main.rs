@@ -251,6 +251,22 @@ fn main() -> ! {
         audio_ptr.write(audio_class);
     }
 
+    // Reserve OUT endpoint numbers 1-4 so the three USB functions use
+    // globally distinct endpoint numbers, not merely distinct direction/address
+    // pairs. UVC owns 0x81 and UAC2 owns 0x82. usbd-serial allocates its
+    // notification IN endpoint next (0x83), then data OUT and data IN.
+    // Reserving OUT 1-4 makes CDC data OUT become 0x05; its data IN becomes
+    // 0x84. EP0 remains the shared control pipe.
+    for endpoint_number in 1u8..=4 {
+        bus.alloc::<usb_device::endpoint::Out>(
+            Some(usb_device::endpoint::EndpointAddress::from(endpoint_number)),
+            usb_device::endpoint::EndpointType::Bulk,
+            64,
+            0,
+        )
+        .expect("failed to reserve unique USB OUT endpoint number");
+    }
+
     let serial_ptr = unsafe { (*ptr::addr_of_mut!(SERIAL)).as_mut_ptr() };
     unsafe { serial_ptr.write(SerialPort::new(bus)); }
 
