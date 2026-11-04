@@ -353,6 +353,7 @@ fn main() -> ! {
             let (_, (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
                 endpoint_incomplete_snapshots();
             let incomplete_event = synopsys_usb_otg::bus::iso_incomplete_event_snapshot();
+            let callback_address = usb_audio::incomplete_callback_address();
 
             // Keep only the values needed to diagnose the audio IN incomplete event.
             let mut line1 = [b' '; 32];
@@ -378,6 +379,8 @@ fn main() -> ! {
             let mut line4 = [b' '; 32];
             line4[..3].copy_from_slice(b"IM:");
             write_hex32(&mut line4[3..11], incomplete_event);
+            line4[13..15].copy_from_slice(b"CA:");
+            write_hex32(&mut line4[15..21], callback_address);
 
             // Rows 20-23 are within the 24-line display.
             show_file_browser_line(20, &line1, false);
