@@ -189,12 +189,16 @@ pub fn initialize_demo_canvas() {
 /// Copy a row from the split SRAM/CCM canvas into an aligned temporary row.
 #[inline]
 unsafe fn copy_canvas_row_to(row: usize, destination: *mut u8) {
+    unsafe {
     copy_canvas_range(row * WIDTH, destination, WIDTH);
+
+    }
 }
 
 /// Copy a temporary row into the split SRAM/CCM canvas.
 #[inline]
 unsafe fn copy_row_to_canvas(source: *const u8, row: usize) {
+    unsafe {
     let mut offset = row * WIDTH;
     let mut source = source;
     let mut remaining = WIDTH;
@@ -217,11 +221,14 @@ unsafe fn copy_row_to_canvas(source: *const u8, row: usize) {
         offset += run;
         remaining -= run;
     }
+
+    }
 }
 
 /// Copy one canvas row directly to another, splitting at the SRAM/CCM
 /// boundary independently for source and destination.
 unsafe fn copy_canvas_row(src_row: usize, dst_row: usize) {
+    unsafe {
     let mut src_offset = src_row * WIDTH;
     let mut dst_offset = dst_row * WIDTH;
     let mut remaining = WIDTH;
@@ -256,11 +263,14 @@ unsafe fn copy_canvas_row(src_row: usize, dst_row: usize) {
         dst_offset += run;
         remaining -= run;
     }
+
+    }
 }
 
 /// Reverse a range of canvas rows in place, using one temporary row.
 /// A row may straddle the SRAM/CCM boundary, so copies are split as needed.
 unsafe fn reverse_canvas_rows(first: usize, end: usize, temporary: *mut u8) {
+    unsafe {
     let mut left = first;
     let mut right = end;
     while left < right {
@@ -273,6 +283,8 @@ unsafe fn reverse_canvas_rows(first: usize, end: usize, temporary: *mut u8) {
         copy_canvas_row(right, left);
         copy_row_to_canvas(temporary, right);
         left += 1;
+    }
+
     }
 }
 
@@ -747,16 +759,23 @@ impl Nv12DemoImage {
 
 #[inline(always)]
 unsafe fn y_row_ptr() -> *mut u8 {
+    unsafe {
     core::ptr::addr_of_mut!(ROW_BUFFERS.0).cast::<u8>()
+
+    }
 }
 
 #[inline(always)]
 unsafe fn uv_row_ptr() -> *mut u8 {
+    unsafe {
     core::ptr::addr_of_mut!(ROW_BUFFERS.0).cast::<u8>().add(WIDTH)
+
+    }
 }
 
 /// Copy an aligned region from the C-style main SRAM + CCM canvas split.
 unsafe fn copy_canvas_range(mut offset: usize, mut destination: *mut u8, mut bytes: usize) {
+    unsafe {
     while bytes != 0 {
         let (source, available) = if offset < CANVAS_MAIN_BYTES {
             (
@@ -775,6 +794,8 @@ unsafe fn copy_canvas_range(mut offset: usize, mut destination: *mut u8, mut byt
         offset += run;
         destination = destination.add(run);
         bytes -= run;
+    }
+
     }
 }
 
