@@ -352,6 +352,7 @@ fn main() -> ! {
             let (alt1, attempts, submits, failures, completes, incompletes, _, _, _, _, _, _) = audio_diagnostics();
             let ((ep1_ctl, ep1_size, ep1_int, _), (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
                 endpoint_incomplete_snapshots();
+            let incomplete_event = synopsys_usb_otg::bus::iso_incomplete_event_snapshot();
 
             let mut line1 = [b' '; 32];
             line1[..2].copy_from_slice(b"A:");
@@ -387,8 +388,10 @@ fn main() -> ! {
             write_hex32(&mut line5[3..9], ep1_int);
             line5[10..13].copy_from_slice(b"2I:");
             write_hex32(&mut line5[13..19], ep2_int);
-            line5[20..22].copy_from_slice(b"N:");
-            write_hex32(&mut line5[22..30], ep2_fnsof);
+            line5[20..22].copy_from_slice(b"M:");
+            write_hex32(&mut line5[22..26], incomplete_event & 0xFFFF);
+            line5[27..29].copy_from_slice(b"N:");
+            write_hex32(&mut line5[29..32], ep2_fnsof & 0xFFF);
 
             show_file_browser_line(27, &line3, false);
             show_file_browser_line(28, &line1, false);
