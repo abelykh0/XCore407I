@@ -351,7 +351,7 @@ fn main() -> ! {
         // Keep audio diagnostics on two fixed rows; no USB traffic capture needed.
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
-            let (alt1, attempts, submits, failures, completes, incompletes, edges, port_writes) = audio_diagnostics();
+            let (alt1, attempts, submits, failures, completes, incompletes, edges, port_writes, diepctl, dieptsiz, diepint, fnsof) = audio_diagnostics();
 
             let mut line1 = [b' '; 32];
             line1[..2].copy_from_slice(b"A:");
@@ -375,9 +375,23 @@ fn main() -> ! {
             line3[9..11].copy_from_slice(b"W:");
             write_hex32(&mut line3[11..17], port_writes);
 
+            let mut line4 = [b' '; 32];
+            line4[..2].copy_from_slice(b"C:");
+            write_hex32(&mut line4[2..10], diepctl);
+            line4[11..13].copy_from_slice(b"Z:");
+            write_hex32(&mut line4[13..21], dieptsiz);
+
+            let mut line5 = [b' '; 32];
+            line5[..2].copy_from_slice(b"I:");
+            write_hex32(&mut line5[2..10], diepint);
+            line5[11..13].copy_from_slice(b"N:");
+            write_hex32(&mut line5[13..21], fnsof);
+
             show_file_browser_line(27, &line3, false);
             show_file_browser_line(28, &line1, false);
             show_file_browser_line(29, &line2, false);
+            show_file_browser_line(30, &line4, false);
+            show_file_browser_line(31, &line5, false);
         }
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
