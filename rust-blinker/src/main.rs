@@ -46,6 +46,7 @@ pub static SystemCoreClock: u32 = 168_000_000;
 const CPU_SAMPLE_INTERVAL_MS: u32 = 1000;
 const CORE_CLOCK_HZ: u64 = 168_000_000;
 static LAST_CPU_SAMPLE: AtomicU32 = AtomicU32::new(0);
+static LOAD_TETRIS_PENDING: AtomicBool = AtomicBool::new(false);
 static USB_FS_STATUS: AtomicU32 = AtomicU32::new(0);
 // TIM3 schedules TinyUSB host work; the actual task runs in thread context.
 static USB_HOST_TASK_PENDING: AtomicBool = AtomicBool::new(false);
@@ -65,6 +66,8 @@ unsafe extern "C" {
     fn bk_platform_init(monitor_rom: *const u8, basic_rom: *const u8, basic_size_bytes: u32);
     fn bk_loop() -> i32;
     fn sendInput(buffer: *mut u8, size: u8);
+    fn bk_set_pc(start: u16);
+    static mut RamBuffer: [u8; 0x4000];
 }
 
 type BoardUsbBus = UsbBus<F407UsbHs>;
@@ -223,6 +226,16 @@ fn main() -> ! {
     // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
 
     loop {
+        // NAND/LittleFS access is deferred to thread context. It never runs
+        // from the TinyUSB HID callback or an interrupt.
+        if LOAD_TETRIS_PENDING.swap(false, Ordering::AcqRel) {
+            if load_tetris_from_nand().is_ok() {
+                show_usb_status(b"TETRIS: LOADED");
+            } else {
+                show_usb_status(b"TETRIS: LOAD FAILED");
+            }
+        }
+
         // BK instruction execution and keyboard forwarding
         // TEMP TEST: run the emulator instruction loop with initialization enabled.
         unsafe { bk_loop(); }
@@ -273,6 +286,52 @@ fn main() -> ! {
 */
         // rotozoom.render_next();
     }
+}
+
+
+/// Load /tetris.bin from the existing NAND LittleFS volume.
+///
+/// File format: little-endian uint16 Start, uint16 Size, then Size payload
+/// bytes. The payload is copied directly into the BK 16 KiB RAM window.
+fn load_tetris_from_nand() -> Result<(), ()> {
+    let (start, _size) = xcore407i_blinker::nand_fs::with_mounted(|fs| {
+        fs.open_file_and_then(&littlefs2::path!("/tetris.bin"), |file| {
+            let mut header = [0u8; 4];
+            let mut header_read = 0usize;
+            while header_read < header.len() {
+                let count = file.read(&mut header[header_read..])?;
+                if count == 0 {
+                    return Err(littlefs2::io::Error::IO);
+                }
+                header_read += count;
+            }
+
+            let start = u16::from_le_bytes([header[0], header[1]]);
+            let size = u16::from_le_bytes([header[2], header[3]]);
+            if size == 0 || start as u32 + size as u32 > 0x4000 {
+                return Err(littlefs2::io::Error::IO);
+            }
+
+            let destination = unsafe {
+                core::slice::from_raw_parts_mut(
+                    core::ptr::addr_of_mut!(RamBuffer).cast::<u8>().add(start as usize),
+                    size as usize,
+                )
+            };
+            let mut total = 0usize;
+            while total < size as usize {
+                let count = file.read(&mut destination[total..])?;
+                if count == 0 {
+                    return Err(littlefs2::io::Error::IO);
+                }
+                total += count;
+            }
+            Ok((start, size))
+        })
+    }).map_err(|_| ())?;
+
+    unsafe { bk_set_pc(start); }
+    Ok(())
 }
 
 
@@ -399,6 +458,12 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
         // next UVC frame boundary and clears the canvas in the new format.
         if key == 0x3a {
             request_camera_mode_toggle();
+            continue;
+        }
+
+        // F2 requests a Tetris load; NAND/LittleFS work is deferred to main().
+        if key == 0x3b {
+            LOAD_TETRIS_PENDING.store(true, Ordering::Release);
             continue;
         }
 
