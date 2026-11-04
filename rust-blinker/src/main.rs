@@ -352,8 +352,7 @@ fn main() -> ! {
         // Keep audio diagnostics on two fixed rows; no USB traffic capture needed.
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
-            // Refresh the diagnostic label and values at 1 Hz, not on every BK loop.
-            show_file_browser_line(19, b"DIAG BELOW:", false);
+            // Draw the first diagnostic row where the visible label was.
             let (_, _, submits, _, completes, incompletes, _, _, _, _, _, _) = audio_diagnostics();
             let (_, (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
                 endpoint_incomplete_snapshots();
@@ -387,9 +386,9 @@ fn main() -> ! {
             line4[13..15].copy_from_slice(b"CA:");
             write_hex32(&mut line4[15..21], callback_address);
 
-            // Rows 20-23 are within the 24-line display.
-            show_file_browser_line(20, &line1, false);
-            show_file_browser_line(21, &line2, false);
+            // Put the first diagnostic row on the known-visible label row.
+            show_file_browser_line(19, &line1, false);
+            show_file_browser_line(20, &line2, false);
             show_file_browser_line(22, &line3, false);
             show_file_browser_line(23, &line4, false);
         }
