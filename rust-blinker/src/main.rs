@@ -12,7 +12,7 @@ use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
+use xcore407i_blinker::camera::{clear_demo_canvas, invalidate_canvas_cache, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
 //use xcore407i_blinker::nand_device;
@@ -20,7 +20,10 @@ use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
 use xcore407i_blinker::usb_audio::{
-    diagnostics as audio_diagnostics, endpoint_incomplete_snapshots, AudioUsbClass,
+    diagnostics as audio_diagnostics,
+    endpoint_incomplete_snapshots,
+    incomplete_callback_address,
+    AudioUsbClass,
 };
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
@@ -353,7 +356,7 @@ fn main() -> ! {
             let (_, (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
                 endpoint_incomplete_snapshots();
             let incomplete_event = synopsys_usb_otg::bus::iso_incomplete_event_snapshot();
-            let callback_address = usb_audio::incomplete_callback_address();
+            let callback_address = incomplete_callback_address();
 
             // Keep only the values needed to diagnose the audio IN incomplete event.
             let mut line1 = [b' '; 32];
@@ -387,6 +390,8 @@ fn main() -> ! {
             show_file_browser_line(21, &line2, false);
             show_file_browser_line(22, &line3, false);
             show_file_browser_line(23, &line4, false);
+            // Ensure the UVC row cache picks up the updated diagnostic rows.
+            invalidate_canvas_cache();
         }
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
