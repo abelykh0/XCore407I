@@ -3,6 +3,18 @@ use crate::ral::{
 };
 use crate::transition::{EndpointConfig, EndpointDescriptor};
 use core::marker::PhantomData;
+#[cfg(feature = "internal-dma")]
+use core::sync::atomic::{AtomicU32, Ordering};
+
+#[cfg(feature = "internal-dma")]
+static ISO_INCOMPLETE_EVENT_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
+
+/// Last global incomplete-ISO event: bit 31 indicates an event was observed,
+/// bits 0..15 contain the endpoint mask returned by the abort checks.
+#[cfg(feature = "internal-dma")]
+pub fn iso_incomplete_event_snapshot() -> u32 {
+    ISO_INCOMPLETE_EVENT_SNAPSHOT.load(Ordering::Relaxed)
+}
 use critical_section::{CriticalSection, Mutex};
 use embedded_hal::blocking::delay::DelayMs;
 use usb_device::bus::{PollResult, UsbBusAllocator};
@@ -739,6 +751,10 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                         ep_in_incomplete |= 1 << ep.address().index();
                     }
                 }
+                ISO_INCOMPLETE_EVENT_SNAPSHOT.store(
+                    0x8000_0000 | ep_in_incomplete as u32,
+                    Ordering::Relaxed,
+                );
             }
 
             if reset != 0 {
