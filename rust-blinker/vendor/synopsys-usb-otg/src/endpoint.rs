@@ -181,20 +181,6 @@ impl EndpointIn {
 
         let ep = self.usb.endpoint_in(self.index() as usize);
 
-        // Preserve the hardware state before abort_iso_incomplete() changes
-        // DIEPCTL, clears endpoint interrupts, or flushes the TX FIFO.
-        let index = self.index() as usize;
-        ISO_INCOMPLETE_DIEPCTL[index].store(
-            read_reg!(endpoint_in, ep, DIEPCTL), Ordering::Relaxed
-        );
-        ISO_INCOMPLETE_DIEPTSIZ[index].store(
-            read_reg!(endpoint_in, ep, DIEPTSIZ), Ordering::Relaxed
-        );
-        ISO_INCOMPLETE_DIEPINT[index].store(
-            read_reg!(endpoint_in, ep, DIEPINT), Ordering::Relaxed
-        );
-        ISO_INCOMPLETE_FNSOF[index].store(current_frame, Ordering::Relaxed);
-
         #[cfg(feature = "hs")]
         {
             // A parity-only comparison can match multiple endpoints. Compare the
@@ -219,6 +205,22 @@ impl EndpointIn {
         if read_reg!(endpoint_in, ep, DIEPCTL, EPENA) == 0 {
             return false;
         }
+
+        // Capture only the endpoint whose armed isochronous transfer actually
+        // reached its target frame and is still enabled. This prevents camera
+        // endpoint events from refreshing the audio EP2 register snapshot.
+        let index = self.index() as usize;
+        ISO_INCOMPLETE_DIEPCTL[index].store(
+            read_reg!(endpoint_in, ep, DIEPCTL), Ordering::Relaxed
+        );
+        ISO_INCOMPLETE_DIEPTSIZ[index].store(
+            read_reg!(endpoint_in, ep, DIEPTSIZ), Ordering::Relaxed
+        );
+        ISO_INCOMPLETE_DIEPINT[index].store(
+            read_reg!(endpoint_in, ep, DIEPINT), Ordering::Relaxed
+        );
+        ISO_INCOMPLETE_FNSOF[index].store(current_frame, Ordering::Relaxed);
+
         modify_reg!(endpoint_in, ep, DIEPCTL, SNAK: 1);
         modify_reg!(endpoint_in, ep, DIEPCTL, EPDIS: 1);
 
