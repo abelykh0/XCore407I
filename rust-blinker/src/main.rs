@@ -12,7 +12,7 @@ use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, service_camera_mode_change, show_file_browser_line, show_usb_status};
+use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
 //use xcore407i_blinker::nand_device;
@@ -330,7 +330,6 @@ fn main() -> ! {
 
         // Canvas clearing is deferred to thread context; TIM2 emits black
         // frames until the new mode's canvas has been cleared.
-        service_camera_mode_change();
 
         // USB polling and camera-class access now belong exclusively to TIM2.
         let now = TICKS.load(Ordering::Relaxed);
