@@ -409,6 +409,35 @@ pub fn show_usb_status(message: &[u8]) {
     }
 }
 
+/// Draw one fixed 8-pixel text row for the NAND file browser.
+pub fn show_file_browser_line(row: usize, message: &[u8], selected: bool) {
+    use crate::font8x8::FONT8X8;
+
+    if row >= CANVAS_HEIGHT / 8 {
+        return;
+    }
+    let columns = canvas_width() / 8;
+    let foreground = if selected { 63 } else { 48 };
+    let background = if selected { 12 } else { 0 };
+
+    for column in 0..columns {
+        let raw = message.get(column).copied().unwrap_or(b' ');
+        let character = if (32..=126).contains(&raw) { raw } else { b'?' };
+        let glyph = (character as usize - 1) * 8;
+        for y in 0..8 {
+            let bits = FONT8X8[glyph + y];
+            for x in 0..8 {
+                let color = if bits & (0x80 >> x) != 0 {
+                    foreground
+                } else {
+                    background
+                };
+                set_demo_pixel(column * 8 + x, row * 8 + y, color);
+            }
+        }
+    }
+}
+
 /// Append keyboard input to one persistent canvas row instead of allocating a
 /// new status row for every key report. When the line fills, overwrite it from
 /// the beginning; a single key press never advances the row.
