@@ -1012,6 +1012,15 @@ impl<'a, B: UsbBus, AU: AudioHandler<'a, B> + ClockSource> UsbClass<B>
 
     fn reset(&mut self) {
         info!("usb reset");
+        // A bus reset returns every AudioStreaming interface to its implicit
+        // zero-bandwidth alternate setting. Keep the software state in sync so
+        // a later SET_INTERFACE(1) restarts the capture pipeline.
+        if let Some(input) = self.input.as_mut() {
+            input.alt_setting = 0;
+        }
+        if let Some(output) = self.output.as_mut() {
+            output.alt_setting = 0;
+        }
         self.audio_impl
             .alternate_setting_changed(UsbDirection::In, 0);
         self.audio_impl
@@ -1093,6 +1102,13 @@ impl<'a, B: UsbBus, AU: AudioHandler<'a, B> + ClockSource> UsbAudioClass<'a, B, 
         let alt_setting = req.value as u8;
 
         debug!("  SET_ALT_INTERFACE {} {}", iface, alt_setting);
+
+        // This implementation defines only alt 0 (zero bandwidth) and alt 1
+        // (the configured PCM stream).
+        if alt_setting > 1 {
+            debug!("   unsupported alternate setting {}", alt_setting);
+            return;
+        }
 
         if let Some(input) = &mut self.input
             && iface == self.in_iface
