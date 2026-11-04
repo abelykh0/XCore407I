@@ -379,7 +379,8 @@ fn main() -> ! {
             line[18] = b'R';
             write_hex32(&mut line[19..23], retry_streak as u32);
             line[24] = b'E';
-            write_hex32(&mut line[25..29], iso_incomplete_event_snapshot() & 0xFFFF);
+            // Only EP2 (0x82, audio IN); ignore the camera's EP1 incomplete events.
+            write_hex32(&mut line[25..29], iso_incomplete_event_snapshot() & (1 << 2));
             show_file_browser_line(23, &line, false);
 
             // Minimal DWC2 snapshot from the most recent isochronous-IN
