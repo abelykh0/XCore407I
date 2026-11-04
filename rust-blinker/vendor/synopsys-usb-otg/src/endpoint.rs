@@ -16,6 +16,35 @@ use critical_section::{CriticalSection, Mutex};
 use usb_device::endpoint::{EndpointAddress, EndpointType};
 use usb_device::{Result, UsbDirection, UsbError};
 
+#[cfg(feature = "internal-dma")]
+static ISO_INCOMPLETE_DIEPCTL: [core::sync::atomic::AtomicU32; 9] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 9];
+#[cfg(feature = "internal-dma")]
+static ISO_INCOMPLETE_DIEPTSIZ: [core::sync::atomic::AtomicU32; 9] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 9];
+#[cfg(feature = "internal-dma")]
+static ISO_INCOMPLETE_DIEPINT: [core::sync::atomic::AtomicU32; 9] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 9];
+#[cfg(feature = "internal-dma")]
+static ISO_INCOMPLETE_FNSOF: [core::sync::atomic::AtomicU32; 9] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; 9];
+
+/// Return the register snapshot taken when an isochronous IN endpoint was
+/// reported incomplete: (DIEPCTL, DIEPTSIZ, DIEPINT, DSTS.FNSOF).
+#[cfg(feature = "internal-dma")]
+pub fn iso_incomplete_snapshot(index: usize) -> (u32, u32, u32, u32) {
+    if index >= 9 {
+        return (0, 0, 0, 0);
+    }
+    use core::sync::atomic::Ordering::Relaxed;
+    (
+        ISO_INCOMPLETE_DIEPCTL[index].load(Relaxed),
+        ISO_INCOMPLETE_DIEPTSIZ[index].load(Relaxed),
+        ISO_INCOMPLETE_DIEPINT[index].load(Relaxed),
+        ISO_INCOMPLETE_FNSOF[index].load(Relaxed),
+    )
+}
+
 pub fn set_stalled(usb: UsbRegisters, address: EndpointAddress, stalled: bool) {
     critical_section::with(|_| match address.direction() {
         UsbDirection::Out => {
@@ -146,6 +175,24 @@ impl EndpointIn {
         }
 
         let ep = self.usb.endpoint_in(self.index() as usize);
+
+        // Preserve the hardware state before abort_iso_incomplete() changes
+        // DIEPCTL, clears endpoint interrupts, or flushes the TX FIFO.
+        let index = self.index() as usize;
+        ISO_INCOMPLETE_DIEPCTL[index].store(
+            read_reg!(endpoint_in, ep, DIEPCTL), Ordering::Relaxed
+        );
+        ISO_INCOMPLETE_DIEPTSIZ[index].store(
+            read_reg!(endpoint_in, ep, DIEPTSIZ), Ordering::Relaxed
+        );
+        ISO_INCOMPLETE_DIEPINT[index].store(
+            read_reg!(endpoint_in, ep, DIEPINT), Ordering::Relaxed
+        );
+        ISO_INCOMPLETE_FNSOF[index].store(
+            read_reg!(otg_device, self.usb.device(), DSTS, FNSOF),
+            Ordering::Relaxed
+        );
+
         if read_reg!(endpoint_in, ep, DIEPCTL, EPENA) == 0 {
             return false;
         }
