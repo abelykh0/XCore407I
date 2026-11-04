@@ -211,6 +211,23 @@ impl<B: UsbBus> Endpoint<'_, B, In> {
         )
     }
 
+    /// Writes an isochronous transfer through the USB endpoint TX FIFO.
+    ///
+    /// This is useful for small packets that should not use the DMA buffer path.
+    pub fn write_iso_batch_fifo(
+        &self,
+        data: &[u8],
+        packet_count: u8,
+        transactions_per_microframe: u8,
+    ) -> Result<usize> {
+        self.bus().write_iso_batch_fifo(
+            self.address,
+            data,
+            packet_count,
+            transactions_per_microframe,
+        )
+    }
+
     /// Writes an isochronous transfer directly from a DMA-accessible buffer.
     ///
     /// # Safety
