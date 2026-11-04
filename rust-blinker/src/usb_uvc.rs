@@ -263,7 +263,7 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
             }
             #[cfg(not(feature = "camera-bw"))]
             {
-                Some("Static 512x512 NV12 camera")
+                Some("512x512 NV12 camera")
             }
         } else {
             None
