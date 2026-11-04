@@ -164,20 +164,15 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
     }
 
     fn make_packet(&mut self) {
-        for sample_index in 0..AUDIO_SAMPLES_PER_PACKET {
-            let sample_cycle = self.next_sample_cycle;
-            self.apply_edges_through(sample_cycle);
-
-            // A simple square wave from the BK speaker output. Amplitude is
-            // deliberately conservative; later we can tune level/filtering.
-            let sample: i16 = if self.sample_level { 12_000 } else { -12_000 };
-            let offset = sample_index * 2;
-            self.packet_buffer[offset..offset + 2].copy_from_slice(&sample.to_le_bytes());
-
-            self.next_sample_cycle =
-                self.next_sample_cycle.wrapping_add(AUDIO_SAMPLE_PERIOD_CYCLES);
+        // Fixed nonzero PCM pattern for isolating USB transport from BK sampling.
+        const TEST_SAMPLES: [i16; AUDIO_SAMPLES_PER_PACKET] = [
+            12_000, -12_000, 24_000, -24_000, 6_000, -6_000,
+        ];
+        for (index, sample) in TEST_SAMPLES.iter().enumerate() {
+            let offset = index * 2;
+            self.packet_buffer[offset..offset + 2]
+                .copy_from_slice(&sample.to_le_bytes());
         }
-
     }
 
     fn queue_current_packet(&mut self) {
