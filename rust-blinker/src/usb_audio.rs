@@ -30,6 +30,15 @@ static AUDIO_WRITE_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_COMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_INCOMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 
+/// Capture the DWC2 snapshots for both active HS isochronous IN endpoints.
+/// The global IISOIXFR interrupt can involve either endpoint, so inspect EP1 and EP2.
+pub fn endpoint_incomplete_snapshots() -> ((u32, u32, u32, u32), (u32, u32, u32, u32)) {
+    (
+        synopsys_usb_otg::iso_incomplete_snapshot(1),
+        synopsys_usb_otg::iso_incomplete_snapshot(2),
+    )
+}
+
 /// Snapshot of the USB Audio stream state and activity counters.
 pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32) {
     let edges = unsafe { bk_audio_edge_count() };
