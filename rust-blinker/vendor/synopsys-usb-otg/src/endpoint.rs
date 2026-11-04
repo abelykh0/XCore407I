@@ -166,7 +166,7 @@ impl EndpointIn {
     /// Match the endpoint's selected frame parity against the controller's
     /// FNSOF parity, as in the original STM32 DWC2 recovery path.
     #[cfg(feature = "internal-dma")]
-    pub fn abort_iso_incomplete(&self, current_frame_parity: u32) -> bool {
+    pub fn abort_iso_incomplete(&self, current_frame: u32) -> bool {
         if !matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. })
             || self.index() == 0
         {
@@ -182,7 +182,7 @@ impl EndpointIn {
         // EONUM (DIEPCTL[16]) identifies the frame selected for this
         // isochronous transfer. Only recover an enabled endpoint selected
         // for the frame parity that raised IISOIXFR.
-        if endpoint_enabled == 0 || endpoint_frame_parity != (current_frame_parity & 1) {
+        if endpoint_enabled == 0 || endpoint_frame_parity != (current_frame & 1) {
             return false;
         }
 
@@ -194,7 +194,7 @@ impl EndpointIn {
         ISO_INCOMPLETE_DIEPINT[index].store(
             read_reg!(endpoint_in, ep, DIEPINT), Ordering::Relaxed
         );
-        ISO_INCOMPLETE_FNSOF[index].store(current_frame_parity, Ordering::Relaxed);
+        ISO_INCOMPLETE_FNSOF[index].store(current_frame, Ordering::Relaxed);
 
         modify_reg!(endpoint_in, ep, DIEPCTL, SNAK: 1);
         modify_reg!(endpoint_in, ep, DIEPCTL, EPDIS: 1);
