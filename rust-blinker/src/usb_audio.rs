@@ -30,6 +30,8 @@ static AUDIO_WRITE_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_COMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_INCOMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_INCOMPLETE_ADDRESS: AtomicU32 = AtomicU32::new(0);
+static EP1_INCOMPLETE_CALLBACKS: AtomicU32 = AtomicU32::new(0);
+static EP2_INCOMPLETE_CALLBACKS: AtomicU32 = AtomicU32::new(0);
 
 /// Capture the DWC2 snapshots for both active HS isochronous IN endpoints.
 /// The global IISOIXFR interrupt can involve either endpoint, so inspect EP1 and EP2.
@@ -43,6 +45,14 @@ pub fn endpoint_incomplete_snapshots() -> ((u32, u32, u32, u32), (u32, u32, u32,
 /// Raw endpoint address passed to the most recent incomplete callback.
 pub fn incomplete_callback_address() -> u32 {
     AUDIO_INCOMPLETE_ADDRESS.load(Ordering::Relaxed)
+}
+
+/// Counts incomplete callbacks observed for camera EP1 and audio EP2.
+pub fn incomplete_callback_counts() -> (u32, u32) {
+    (
+        EP1_INCOMPLETE_CALLBACKS.load(Ordering::Relaxed),
+        EP2_INCOMPLETE_CALLBACKS.load(Ordering::Relaxed),
+    )
 }
 
 /// Snapshot of the USB Audio stream state and activity counters.
@@ -366,7 +376,13 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     }
 
     fn endpoint_in_incomplete(&mut self, address: EndpointAddress) {
-        AUDIO_INCOMPLETE_ADDRESS.store(u8::from(address) as u32, Ordering::Relaxed);
+        let raw_address = u8::from(address);
+        AUDIO_INCOMPLETE_ADDRESS.store(raw_address as u32, Ordering::Relaxed);
+        match raw_address {
+            0x81 => { EP1_INCOMPLETE_CALLBACKS.fetch_add(1, Ordering::Relaxed); }
+            0x82 => { EP2_INCOMPLETE_CALLBACKS.fetch_add(1, Ordering::Relaxed); }
+            _ => {}
+        }
         if address != self.endpoint.address() {
             return;
         }
