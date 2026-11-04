@@ -951,6 +951,10 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                         if let Some(ep) = ep {
                             let ep_regs = regs.endpoint_in(ep.address().index());
                             if read_reg!(endpoint_in, ep_regs, DIEPINT, XFRC) != 0 {
+                                // Retire this endpoint's armed-frame marker so a
+                                // later global incomplete-ISO interrupt cannot
+                                // mistake an already-completed transfer for a stall.
+                                ep.mark_iso_complete();
                                 write_reg!(endpoint_in, ep_regs, DIEPINT, XFRC: 1);
                                 ep_in_complete |= 1 << ep.address().index();
                             }
