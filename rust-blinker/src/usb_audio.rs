@@ -38,6 +38,7 @@ pub struct AudioUsbClass<'a, B: UsbBus> {
     next_sample_cycle: u32,
     sample_level: bool,
     pending_edge: Option<(u32, bool)>,
+    packet_queued: bool,
 }
 
 impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
@@ -66,6 +67,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             next_sample_cycle: 0,
             sample_level: false,
             pending_edge: None,
+            packet_queued: false,
         }
     }
 
@@ -119,11 +121,11 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
     }
 
     fn submit_packet(&mut self) {
-        if self.streaming_alt != 1 {
+        if self.streaming_alt != 1 || self.packet_queued {
             return;
         }
         let packet = self.make_packet();
-        let _ = self.endpoint.write(&packet);
+        self.packet_queued = matches!(self.endpoint.write(&packet), Ok(n) if n == packet.len());
     }
 
     fn write_audio_control_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
@@ -228,6 +230,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         unsafe { bk_audio_stop(); }
         self.streaming_alt = 0;
         self.pending_edge = None;
+        self.packet_queued = false;
     }
 
     fn get_alt_setting(&mut self, interface: InterfaceNumber) -> Option<u8> {
@@ -250,6 +253,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
 
         self.streaming_alt = alternative;
         self.pending_edge = None;
+        self.packet_queued = false;
 
         if alternative == 1 {
             self.sample_level = unsafe { bk_audio_start() != 0 };
@@ -265,14 +269,22 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         true
     }
 
+    fn poll(&mut self) {
+        // Retry if the controller was not ready when the previous packet
+        // was first submitted. Never queue a second packet while one is active.
+        self.submit_packet();
+    }
+
     fn endpoint_in_complete(&mut self, address: EndpointAddress) {
         if address == self.endpoint.address() {
+            self.packet_queued = false;
             self.submit_packet();
         }
     }
 
     fn endpoint_in_incomplete(&mut self, address: EndpointAddress) {
         if address == self.endpoint.address() {
+            self.packet_queued = false;
             // Keep the stream moving after a missed isochronous service slot.
             self.submit_packet();
         }
