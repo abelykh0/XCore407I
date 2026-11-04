@@ -12,7 +12,7 @@ use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::{iso_incomplete_snapshot, UsbBus};
 use synopsys_usb_otg::bus::iso_incomplete_event_snapshot;
-use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
+use usb_device::device::{UsbDevice, UsbVidPid};
 use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
@@ -22,7 +22,7 @@ use xcore407i_blinker::usb_uvc::{
 };
 use xcore407i_blinker::usb_audio::{
     diagnostics as audio_diagnostics,
-    AudioUsbClass,
+    BkAudio,
 };
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
@@ -88,7 +88,8 @@ unsafe extern "C" {
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
 type BoardUvcClass = UvcUsbClass<'static, BoardUsbBus>;
-type BoardAudioClass = AudioUsbClass<'static, BoardUsbBus>;
+type BoardAudioHandler = BkAudio;
+type BoardAudioClass = usbd_uac2::UsbAudioClass<'static, BoardUsbBus, BoardAudioHandler>;
 
 // These pointers are published once, before TIM2 is enabled. After that,
 // TIM2 is the sole owner of both mutable objects. main() must not access them.
@@ -191,6 +192,7 @@ fn main() -> ! {
     // The large endpoint buffers remain in their existing DMA-visible SRAM
     // allocation. The UsbDevice itself remains in CCM as in the original code.
     static mut CAMERA: MaybeUninit<BoardUvcClass> = MaybeUninit::uninit();
+    static mut AUDIO_IMPL: MaybeUninit<BoardAudioHandler> = MaybeUninit::uninit();
     static mut AUDIO: MaybeUninit<BoardAudioClass> = MaybeUninit::uninit();
 
     #[unsafe(link_section = ".ccmram.usb_device")]
@@ -208,12 +210,40 @@ fn main() -> ! {
         );
     }
 
+    // The UAC2 class borrows its application audio handler for the class
+    // lifetime. Keep that handler in static storage just like the class itself.
+    let audio_impl_ptr = unsafe {
+        (*ptr::addr_of_mut!(AUDIO_IMPL)).as_mut_ptr()
+    };
+    unsafe {
+        audio_impl_ptr.write(BkAudio::new());
+    }
+    let audio_impl: &'static mut BoardAudioHandler = unsafe { &mut *audio_impl_ptr };
+
+    let audio_class = usbd_uac2::UsbAudioClassConfig::new(
+        usbd_uac2::UsbSpeed::High,
+        usbd_uac2::constants::FunctionCode::SoundRecorder,
+        audio_impl,
+    )
+    .with_input_config(
+        usbd_uac2::TerminalConfig::<usb_device::endpoint::In>::builder()
+            .base_id(4)
+            .num_channels(1)
+            .format(usbd_uac2::descriptors::FormatType1 {
+                bytes_per_sample: 2,
+                bit_resolution: 16,
+            })
+            .terminal_type(usbd_uac2::constants::TerminalType::ExtLineConnector)
+            .build(),
+    )
+    .build(bus)
+    .expect("UAC2 Line In class initialization failed");
+
     let audio_ptr = unsafe {
         (*ptr::addr_of_mut!(AUDIO)).as_mut_ptr()
     };
-
     unsafe {
-        audio_ptr.write(AudioUsbClass::new(bus));
+        audio_ptr.write(audio_class);
     }
 
     let usb_ptr = unsafe {
@@ -222,12 +252,9 @@ fn main() -> ! {
 
     unsafe {
         usb_ptr.write(
-            UsbDeviceBuilder::new(
-                bus,
-                // Development VID/PID; USB class descriptors identify this as UVC.
-                UsbVidPid(0x1209, 0x4071),
-            )
-            .composite_with_iads()
+            // UAC2's builder configures the composite/IAD device class codes.
+            // UVC and UAC2 each provide their own function association descriptor.
+            usbd_uac2::builder(bus, UsbVidPid(0x1209, 0x4071))
             .max_packet_size_0(64)
             .unwrap()
             .build(),
