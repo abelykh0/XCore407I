@@ -21,7 +21,6 @@ use xcore407i_blinker::usb_uvc::{
 };
 use xcore407i_blinker::usb_audio::{
     diagnostics as audio_diagnostics,
-    endpoint_incomplete_snapshots,
     incomplete_callback_address,
     incomplete_callback_counts,
     AudioUsbClass,
@@ -390,7 +389,6 @@ fn main() -> ! {
             write_hex32(&mut line[14..22], fnsof);
             show_file_browser_line(24, &line, false);
 
-            let _ = endpoint_incomplete_snapshots();
             let callback = incomplete_callback_address();
             let (ep1_count, ep2_count) = incomplete_callback_counts();
             let mut line = [b' '; 32];
