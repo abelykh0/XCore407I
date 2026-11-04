@@ -349,58 +349,41 @@ fn main() -> ! {
         // Keep audio diagnostics on two fixed rows; no USB traffic capture needed.
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
-            let (alt1, attempts, submits, failures, completes, incompletes, _, _, _, _, _, _) = audio_diagnostics();
-            let ((ep1_ctl, ep1_size, ep1_int, _), (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
+            let (_, _, submits, _, completes, incompletes, _, _, _, _, _, _) = audio_diagnostics();
+            let (_, (ep2_ctl, ep2_size, ep2_int, ep2_fnsof)) =
                 endpoint_incomplete_snapshots();
             let incomplete_event = synopsys_usb_otg::bus::iso_incomplete_event_snapshot();
 
+            // Keep only the values needed to diagnose the audio IN incomplete event.
             let mut line1 = [b' '; 32];
-            line1[..2].copy_from_slice(b"A:");
-            line1[2] = if alt1 { b'1' } else { b'0' };
-            line1[4..6].copy_from_slice(b"T:");
-            write_hex32(&mut line1[6..12], attempts);
-            line1[13..15].copy_from_slice(b"S:");
-            write_hex32(&mut line1[15..21], submits);
+            line1[..2].copy_from_slice(b"S:");
+            write_hex32(&mut line1[2..8], submits);
+            line1[10..12].copy_from_slice(b"I:");
+            write_hex32(&mut line1[12..18], incompletes);
+            line1[20..22].copy_from_slice(b"D:");
+            write_hex32(&mut line1[22..28], completes);
 
             let mut line2 = [b' '; 32];
-            line2[..2].copy_from_slice(b"F:");
-            write_hex32(&mut line2[2..8], failures);
-            line2[9..11].copy_from_slice(b"D:");
-            write_hex32(&mut line2[11..17], completes);
-            line2[18..20].copy_from_slice(b"I:");
-            write_hex32(&mut line2[20..26], incompletes);
+            line2[..3].copy_from_slice(b"2C:");
+            write_hex32(&mut line2[3..11], ep2_ctl);
+            line2[13..16].copy_from_slice(b"2Z:");
+            write_hex32(&mut line2[16..24], ep2_size);
 
-            // Capture both IN endpoints: EP1 is camera, EP2 is audio.
             let mut line3 = [b' '; 32];
-            line3[..3].copy_from_slice(b"1C:");
-            write_hex32(&mut line3[3..11], ep1_ctl);
-            line3[12..15].copy_from_slice(b"1Z:");
-            write_hex32(&mut line3[15..23], ep1_size);
+            line3[..3].copy_from_slice(b"2I:");
+            write_hex32(&mut line3[3..9], ep2_int);
+            line3[11..13].copy_from_slice(b"N:");
+            write_hex32(&mut line3[13..21], ep2_fnsof);
 
             let mut line4 = [b' '; 32];
-            line4[..3].copy_from_slice(b"2C:");
-            write_hex32(&mut line4[3..11], ep2_ctl);
-            line4[12..15].copy_from_slice(b"2Z:");
-            write_hex32(&mut line4[15..23], ep2_size);
+            line4[..3].copy_from_slice(b"IM:");
+            write_hex32(&mut line4[3..11], incomplete_event);
 
-            let mut line5 = [b' '; 32];
-            line5[..3].copy_from_slice(b"1I:");
-            write_hex32(&mut line5[3..9], ep1_int);
-            line5[10..13].copy_from_slice(b"2I:");
-            write_hex32(&mut line5[13..19], ep2_int);
-            line5[20..22].copy_from_slice(b"N:");
-            write_hex32(&mut line5[22..30], ep2_fnsof);
-
-            let mut line6 = [b' '; 32];
-            line6[..3].copy_from_slice(b"IM:");
-            write_hex32(&mut line6[3..11], incomplete_event);
-
-            show_file_browser_line(27, &line3, false);
-            show_file_browser_line(28, &line1, false);
-            show_file_browser_line(29, &line2, false);
-            show_file_browser_line(30, &line4, false);
-            show_file_browser_line(31, &line5, false);
-            show_file_browser_line(32, &line6, false);
+            // Rows 20-23 are within the 24-line display.
+            show_file_browser_line(20, &line1, false);
+            show_file_browser_line(21, &line2, false);
+            show_file_browser_line(22, &line3, false);
+            show_file_browser_line(23, &line4, false);
         }
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
