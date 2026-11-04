@@ -23,6 +23,7 @@ use xcore407i_blinker::usb_audio::{
     diagnostics as audio_diagnostics,
     endpoint_incomplete_snapshots,
     incomplete_callback_address,
+    incomplete_callback_counts,
     AudioUsbClass,
 };
 
@@ -389,13 +390,16 @@ fn main() -> ! {
             write_hex32(&mut line[14..22], fnsof);
             show_file_browser_line(24, &line, false);
 
-            let (ep1, _ep2) = endpoint_incomplete_snapshots();
+            let _ = endpoint_incomplete_snapshots();
             let callback = incomplete_callback_address();
+            let (ep1_count, ep2_count) = incomplete_callback_counts();
             let mut line = [b' '; 32];
-            line[0..3].copy_from_slice(b"CA:");
-            write_hex32(&mut line[3..11], callback);
-            line[12..15].copy_from_slice(b"1C:");
-            write_hex32(&mut line[15..23], ep1.0);
+            line[0..3].copy_from_slice(b"A1:");
+            write_hex32(&mut line[3..11], ep1_count);
+            line[12..15].copy_from_slice(b"A2:");
+            write_hex32(&mut line[15..23], ep2_count);
+            line[24..27].copy_from_slice(b"CA:");
+            write_hex32(&mut line[27..32], callback);
             show_file_browser_line(25, &line, false);
 
             for row in 26..32 {
