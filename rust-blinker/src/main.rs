@@ -53,6 +53,10 @@ const FILE_BROWSER_ENTER: u8 = 4;
 const FILE_BROWSER_ESCAPE: u8 = 5;
 const MAX_BROWSER_FILES: usize = 25;
 const MAX_BROWSER_PATH: usize = 256;
+// Keep the browser's path table in ordinary .bss, not on the limited stack.
+static mut BROWSER_PATHS: [[u8; MAX_BROWSER_PATH]; MAX_BROWSER_FILES] =
+    [[0; MAX_BROWSER_PATH]; MAX_BROWSER_FILES];
+static mut BROWSER_PATH_LENGTHS: [u16; MAX_BROWSER_FILES] = [0; MAX_BROWSER_FILES];
 static FILE_BROWSER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static FILE_BROWSER_ACTION: AtomicU8 = AtomicU8::new(0);
 static USB_FS_STATUS: AtomicU32 = AtomicU32::new(0);
@@ -233,8 +237,8 @@ fn main() -> ! {
 
     // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
 
-    let mut browser_paths = [[0u8; MAX_BROWSER_PATH]; MAX_BROWSER_FILES];
-    let mut browser_path_lengths = [0u16; MAX_BROWSER_FILES];
+    let browser_paths = unsafe { &mut *ptr::addr_of_mut!(BROWSER_PATHS) };
+    let browser_path_lengths = unsafe { &mut *ptr::addr_of_mut!(BROWSER_PATH_LENGTHS) };
     let mut browser_count = 0usize;
     let mut browser_selected = 0usize;
     let mut browser_open = false;
@@ -380,7 +384,7 @@ fn list_root_files(
                     || path_bytes.len() > MAX_BROWSER_PATH
                     || !path_bytes[..path_bytes.len() - 1]
                         .iter()
-                        .all(|byte| byte.is_ascii_graphic() || *byte == b'/')
+                        .all(|byte| byte.is_ascii_graphic() || *byte == b' ')
                 {
                     continue;
                 }
