@@ -166,7 +166,7 @@ impl EndpointIn {
     /// Returns true when an enabled isochronous endpoint was successfully
     /// stopped, matching the STM32 HAL's incomplete-ISO interrupt handling.
     #[cfg(feature = "internal-dma")]
-    pub fn abort_iso_incomplete(&self, current_frame: u32) -> bool {
+    pub fn abort_iso_incomplete(&self) -> bool {
         if !matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. })
             || self.index() == 0
         {
@@ -175,23 +175,24 @@ impl EndpointIn {
 
         let ep = self.usb.endpoint_in(self.index() as usize);
 
-        // Preserve the state of every isochronous endpoint for diagnostics.
-        // IISOIXFR is global; only endpoints whose programmed EONUM matches
-        // the current FNSOF parity and whose EPENA bit remains set are incomplete.
+        // Preserve the hardware state before abort_iso_incomplete() changes
+        // DIEPCTL, clears endpoint interrupts, or flushes the TX FIFO.
         let index = self.index() as usize;
-        let diepctl = read_reg!(endpoint_in, ep, DIEPCTL);
-        let diep_size = read_reg!(endpoint_in, ep, DIEPTSIZ);
-        let diep_int = read_reg!(endpoint_in, ep, DIEPINT);
-        ISO_INCOMPLETE_DIEPCTL[index].store(diepctl, Ordering::Relaxed);
-        ISO_INCOMPLETE_DIEPTSIZ[index].store(diep_size, Ordering::Relaxed);
-        ISO_INCOMPLETE_DIEPINT[index].store(diep_int, Ordering::Relaxed);
-        ISO_INCOMPLETE_FNSOF[index].store(current_frame, Ordering::Relaxed);
+        ISO_INCOMPLETE_DIEPCTL[index].store(
+            read_reg!(endpoint_in, ep, DIEPCTL), Ordering::Relaxed
+        );
+        ISO_INCOMPLETE_DIEPTSIZ[index].store(
+            read_reg!(endpoint_in, ep, DIEPTSIZ), Ordering::Relaxed
+        );
+        ISO_INCOMPLETE_DIEPINT[index].store(
+            read_reg!(endpoint_in, ep, DIEPINT), Ordering::Relaxed
+        );
+        ISO_INCOMPLETE_FNSOF[index].store(
+            read_reg!(otg_device, self.usb.device(), DSTS, FNSOF),
+            Ordering::Relaxed
+        );
 
-        const EPENA: u32 = 1 << 31;
-        const EONUM: u32 = 1 << 16;
-        let target_odd = (diepctl & EONUM) != 0;
-        let current_odd = (current_frame & 1) != 0;
-        if (diepctl & EPENA) == 0 || target_odd != current_odd {
+        if read_reg!(endpoint_in, ep, DIEPCTL, EPENA) == 0 {
             return false;
         }
         modify_reg!(endpoint_in, ep, DIEPCTL, SNAK: 1);
