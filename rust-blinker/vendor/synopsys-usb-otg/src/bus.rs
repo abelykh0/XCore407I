@@ -765,6 +765,7 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                         }
                     }
                 }
+                #[cfg(feature = "internal-dma")]
                 ISO_INCOMPLETE_EVENT_SNAPSHOT.store(
                     0x8000_0000 | ep_in_incomplete as u32,
                     Ordering::Relaxed,
