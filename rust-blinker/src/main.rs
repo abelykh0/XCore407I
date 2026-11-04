@@ -21,9 +21,6 @@ use xcore407i_blinker::usb_uvc::{
 };
 use xcore407i_blinker::usb_audio::{
     diagnostics as audio_diagnostics,
-    incomplete_callback_address,
-    incomplete_callback_counts,
-    endpoint_incomplete_snapshots,
     AudioUsbClass,
 };
 
@@ -123,7 +120,7 @@ fn main() -> ! {
 
     // initialize_demo_canvas();
     clear_demo_canvas(0x10);
-    // Reserve rows 22-31 for diagnostics; initialize them to blue.
+    // Reserve rows 22-23 for the audio diagnostics still needed; clear the rest.
     for row in 22..32 {
         show_file_browser_line(row, b"", false);
     }
@@ -354,92 +351,31 @@ fn main() -> ! {
         // USB polling and camera-class access now belong exclusively to TIM2.
         let now = TICKS.load(Ordering::Relaxed);
 
-        // Refresh the diagnostic area at 1 Hz. Rows 26-31 remain blue.
+        // Keep only the audio stream state and transfer counters needed to
+        // determine whether Windows activates the stream and EP2 transfers run.
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
 
-            let (
-                _active, attempts, submits, write_fails, completes, incompletes,
-                _edges, _port_writes, diepctl, dieptsiz, diepint, fnsof,
-            ) = audio_diagnostics();
+            let (active, attempts, submits, write_fails, completes, incompletes) =
+                audio_diagnostics();
 
-            // Compact 16-bit views of the five audio transfer counters.
-            // This keeps the diagnostic on one 32-character display row.
             let mut line = [b' '; 32];
-            line[0] = b'A';
-            write_hex32(&mut line[1..5], attempts & 0xFFFF);
-            line[6] = b'S';
-            write_hex32(&mut line[7..11], submits & 0xFFFF);
-            line[12] = b'W';
-            write_hex32(&mut line[13..17], write_fails & 0xFFFF);
-            line[18] = b'C';
-            write_hex32(&mut line[19..23], completes & 0xFFFF);
-            line[24] = b'I';
-            write_hex32(&mut line[25..29], incompletes & 0xFFFF);
+            line[0..4].copy_from_slice(b"ALT:");
+            line[4] = if active { b'1' } else { b'0' };
+            line[6] = b'A';
+            write_hex32(&mut line[7..11], attempts & 0xFFFF);
+            line[12] = b'S';
+            write_hex32(&mut line[13..17], submits & 0xFFFF);
             show_file_browser_line(22, &line, false);
 
             let mut line = [b' '; 32];
-            line[0..3].copy_from_slice(b"2C:");
-            write_hex32(&mut line[3..11], diepctl);
-            line[11] = b' ';
-            line[12..15].copy_from_slice(b"2Z:");
-            write_hex32(&mut line[15..23], dieptsiz);
+            line[0] = b'W';
+            write_hex32(&mut line[1..5], write_fails & 0xFFFF);
+            line[6] = b'C';
+            write_hex32(&mut line[7..11], completes & 0xFFFF);
+            line[12] = b'I';
+            write_hex32(&mut line[13..17], incompletes & 0xFFFF);
             show_file_browser_line(23, &line, false);
-
-            let mut line = [b' '; 32];
-            line[0..3].copy_from_slice(b"2I:");
-            write_hex32(&mut line[3..11], diepint);
-            line[11] = b' ';
-            line[12..14].copy_from_slice(b"N:");
-            write_hex32(&mut line[14..22], fnsof);
-            show_file_browser_line(24, &line, false);
-
-            let callback = incomplete_callback_address();
-            let (ep1_count, ep2_count) = incomplete_callback_counts();
-            let mut line = [b' '; 32];
-            line[0..3].copy_from_slice(b"A1:");
-            write_hex32(&mut line[3..11], ep1_count);
-            line[12..15].copy_from_slice(b"A2:");
-            write_hex32(&mut line[15..23], ep2_count);
-            line[24..27].copy_from_slice(b"CA:");
-            write_hex32(&mut line[27..32], callback);
-            show_file_browser_line(25, &line, false);
-
-            let (
-                (ep1_ctl, ep1_size, ep1_int, ep1_frame),
-                (ep2_ctl, ep2_size, ep2_int, ep2_frame),
-            ) = endpoint_incomplete_snapshots();
-            let mut line = [b' '; 32];
-            line[0..3].copy_from_slice(b"C1:");
-            write_hex32(&mut line[3..11], ep1_ctl);
-            line[12..15].copy_from_slice(b"F1:");
-            write_hex32(&mut line[15..23], ep1_frame);
-            show_file_browser_line(26, &line, false);
-
-            let mut line = [b' '; 32];
-            line[0..3].copy_from_slice(b"I1:");
-            write_hex32(&mut line[3..11], ep1_int);
-            line[12..15].copy_from_slice(b"Z1:");
-            write_hex32(&mut line[15..23], ep1_size);
-            show_file_browser_line(27, &line, false);
-
-            let mut line = [b' '; 32];
-            line[0..3].copy_from_slice(b"C2:");
-            write_hex32(&mut line[3..11], ep2_ctl);
-            line[12..15].copy_from_slice(b"F2:");
-            write_hex32(&mut line[15..23], ep2_frame);
-            show_file_browser_line(28, &line, false);
-
-            let mut line = [b' '; 32];
-            line[0..3].copy_from_slice(b"I2:");
-            write_hex32(&mut line[3..11], ep2_int);
-            line[12..15].copy_from_slice(b"Z2:");
-            write_hex32(&mut line[15..23], ep2_size);
-            show_file_browser_line(29, &line, false);
-
-            for row in 30..32 {
-                show_file_browser_line(row, b"", false);
-            }
         }
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
