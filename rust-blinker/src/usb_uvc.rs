@@ -440,8 +440,10 @@ pub fn usb_bus() -> core::result::Result<&'static BoardUsbAllocator, UsbBusAlrea
     // isochronous endpoint submits directly from the camera buffer.
     const EP0_OUT_WORDS: usize = 256 / 4;
     const EP0_IN_WORDS: usize = 64 / 4;
-    static mut EP_MEMORY: [u32; EP0_OUT_WORDS + EP0_IN_WORDS] =
-        [0; EP0_OUT_WORDS + EP0_IN_WORDS];
+    // CDC-ACM EP5 OUT needs one 64-byte receive buffer (16 words).
+    const CDC_OUT_WORDS: usize = 64 / 4;
+    static mut EP_MEMORY: [u32; EP0_OUT_WORDS + EP0_IN_WORDS + CDC_OUT_WORDS] =
+        [0; EP0_OUT_WORDS + EP0_IN_WORDS + CDC_OUT_WORDS];
     static mut BUS: MaybeUninit<BoardUsbAllocator> = MaybeUninit::uninit();
     let memory = unsafe { &mut *core::ptr::addr_of_mut!(EP_MEMORY) };
     let bus = synopsys_usb_otg::UsbBus::new(F407UsbHs, memory);
