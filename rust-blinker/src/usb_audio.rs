@@ -45,8 +45,6 @@ unsafe extern "C" {
     fn bk_audio_start() -> u8;
     fn bk_audio_stop();
     fn bk_audio_pop_edge(cycles: *mut u32, level: *mut u8) -> u8;
-    fn bk_audio_edge_count() -> u32;
-    fn bk_audio_port_write_count() -> u32;
 }
 
 /// USB Audio Class 1.0 capture function (device-to-host audio source).
