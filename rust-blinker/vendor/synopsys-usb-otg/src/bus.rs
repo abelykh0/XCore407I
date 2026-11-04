@@ -746,9 +746,15 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
             if incomplete_iso_in != 0 {
                 write_reg!(otg_global, regs.global(), GINTSTS, IISOIXFR: 1);
                 #[cfg(feature = "internal-dma")]
-                for ep in self.allocator.endpoints_in.iter().flatten() {
-                    if ep.abort_iso_incomplete() {
-                        ep_in_incomplete |= 1 << ep.address().index();
+                {
+                    // Use one controller-wide sample so every endpoint is
+                    // checked against the same current microframe.
+                    let current_frame =
+                        read_reg!(otg_device, regs.device(), DSTS, FNSOF);
+                    for ep in self.allocator.endpoints_in.iter().flatten() {
+                        if ep.abort_iso_incomplete(current_frame) {
+                            ep_in_incomplete |= 1 << ep.address().index();
+                        }
                     }
                 }
                 ISO_INCOMPLETE_EVENT_SNAPSHOT.store(
