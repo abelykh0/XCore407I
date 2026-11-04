@@ -375,10 +375,8 @@ fn main() -> ! {
         // Canvas clearing is deferred to thread context; TIM2 emits black
         // frames until the new mode's canvas has been cleared.
 
-        // USB polling and camera-class access now belong exclusively to TIM2.
-        let now = TICKS.load(Ordering::Relaxed);
-
-        // No on-screen audio diagnostics: the camera canvas is not used by this test.
+        // USB polling remains in TIM2. No on-screen audio diagnostics are
+        // drawn, so the camera canvas is not overwritten by test status.
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
         //     last_rtc_sample = now;
