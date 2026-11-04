@@ -351,7 +351,7 @@ fn main() -> ! {
         // Keep audio diagnostics on two fixed rows; no USB traffic capture needed.
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
-            let (alt1, attempts, submits, failures, completes, edges) = audio_diagnostics();
+            let (alt1, attempts, submits, failures, completes, incompletes, edges, port_writes) = audio_diagnostics();
 
             let mut line1 = [b' '; 32];
             line1[..2].copy_from_slice(b"A:");
@@ -366,9 +366,16 @@ fn main() -> ! {
             write_hex32(&mut line2[2..8], failures);
             line2[9..11].copy_from_slice(b"D:");
             write_hex32(&mut line2[11..17], completes);
-            line2[18..20].copy_from_slice(b"E:");
-            write_hex32(&mut line2[20..26], edges);
+            line2[18..20].copy_from_slice(b"I:");
+            write_hex32(&mut line2[20..26], incompletes);
 
+            let mut line3 = [b' '; 32];
+            line3[..2].copy_from_slice(b"E:");
+            write_hex32(&mut line3[2..8], edges);
+            line3[9..11].copy_from_slice(b"W:");
+            write_hex32(&mut line3[11..17], port_writes);
+
+            show_file_browser_line(27, &line3, false);
             show_file_browser_line(28, &line1, false);
             show_file_browser_line(29, &line2, false);
         }
