@@ -13,6 +13,7 @@ use stm32f4xx_hal::pac;
 use synopsys_usb_otg::{iso_incomplete_snapshot, UsbBus};
 use synopsys_usb_otg::bus::iso_incomplete_event_snapshot;
 use usb_device::device::{UsbDevice, UsbVidPid};
+use usbd_serial::SerialPort;
 use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
@@ -87,12 +88,15 @@ type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
 type BoardUvcClass = UvcUsbClass<'static, BoardUsbBus>;
 type BoardAudioHandler = TestToneAudio;
 type BoardAudioClass = usbd_uac2::UsbAudioClass<'static, BoardUsbBus, BoardAudioHandler>;
+type BoardSerial = SerialPort<'static, BoardUsbBus>;
 
 // These pointers are published once, before TIM2 is enabled. After that,
 // TIM2 is the sole owner of both mutable objects. main() must not access them.
 static USB_DEVICE_PTR: AtomicPtr<BoardUsbDevice> = AtomicPtr::new(ptr::null_mut());
 static CAMERA_PTR: AtomicPtr<BoardUvcClass> = AtomicPtr::new(ptr::null_mut());
 static AUDIO_PTR: AtomicPtr<BoardAudioClass> = AtomicPtr::new(ptr::null_mut());
+static SERIAL_PTR: AtomicPtr<BoardSerial> = AtomicPtr::new(ptr::null_mut());
+static SERIAL_DIAG_DIVIDER: AtomicU32 = AtomicU32::new(0);
 
 #[entry]
 fn main() -> ! {
@@ -191,6 +195,7 @@ fn main() -> ! {
     static mut CAMERA: MaybeUninit<BoardUvcClass> = MaybeUninit::uninit();
     static mut AUDIO_IMPL: MaybeUninit<BoardAudioHandler> = MaybeUninit::uninit();
     static mut AUDIO: MaybeUninit<BoardAudioClass> = MaybeUninit::uninit();
+    static mut SERIAL: MaybeUninit<BoardSerial> = MaybeUninit::uninit();
 
     #[unsafe(link_section = ".ccmram.usb_device")]
     static mut USB_DEVICE: MaybeUninit<BoardUsbDevice> = MaybeUninit::uninit();
@@ -246,6 +251,9 @@ fn main() -> ! {
         audio_ptr.write(audio_class);
     }
 
+    let serial_ptr = unsafe { (*ptr::addr_of_mut!(SERIAL)).as_mut_ptr() };
+    unsafe { serial_ptr.write(SerialPort::new(bus)); }
+
     let usb_ptr = unsafe {
         (*ptr::addr_of_mut!(USB_DEVICE)).as_mut_ptr()
     };
@@ -263,6 +271,7 @@ fn main() -> ! {
 
     CAMERA_PTR.store(camera_ptr, Ordering::Release);
     AUDIO_PTR.store(audio_ptr, Ordering::Release);
+    SERIAL_PTR.store(serial_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
     // Start the independent USB service timers only after all USB objects
@@ -922,8 +931,9 @@ fn TIM2() {
     let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
     let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
     let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
+    let serial_ptr = SERIAL_PTR.load(Ordering::Acquire);
 
-    if usb_ptr.is_null() || camera_ptr.is_null() || audio_ptr.is_null() {
+    if usb_ptr.is_null() || camera_ptr.is_null() || audio_ptr.is_null() || serial_ptr.is_null() {
         return;
     }
 
@@ -933,8 +943,29 @@ fn TIM2() {
     let usb = unsafe { &mut *usb_ptr };
     let camera = unsafe { &mut *camera_ptr };
     let audio = unsafe { &mut *audio_ptr };
+    let serial = unsafe { &mut *serial_ptr };
 
-    let _ = usb.poll(&mut [camera, audio]);
+    let _ = usb.poll(&mut [camera, audio, serial]);
+
+    // Emit diagnostics from the same ISR that owns UsbDevice and SerialPort.
+    // 2,000 polls at 8 kHz = one report every 250 ms.
+    if SERIAL_DIAG_DIVIDER.fetch_add(1, Ordering::Relaxed) >= 1_999 {
+        SERIAL_DIAG_DIVIDER.store(0, Ordering::Relaxed);
+        let (active, attempts, submits, failures, completions, incompletes, streak) =
+            xcore407i_blinker::usb_audio::diagnostics();
+        let mut line = [0u8; 96];
+        let mut n = 0usize;
+        n = append_diag_text(&mut line, n, b"ALT=");
+        line[n] = if active { b'1' } else { b'0' }; n += 1;
+        n = append_diag_text(&mut line, n, b" A="); n = append_diag_hex(&mut line, n, attempts);
+        n = append_diag_text(&mut line, n, b" S="); n = append_diag_hex(&mut line, n, submits);
+        n = append_diag_text(&mut line, n, b" F="); n = append_diag_hex(&mut line, n, failures);
+        n = append_diag_text(&mut line, n, b" C="); n = append_diag_hex(&mut line, n, completions);
+        n = append_diag_text(&mut line, n, b" I="); n = append_diag_hex(&mut line, n, incompletes);
+        n = append_diag_text(&mut line, n, b" R="); n = append_diag_hex(&mut line, n, streak);
+        line[n..n + 2].copy_from_slice(b"\\r\\n"); n += 2;
+        let _ = serial.write(&line[..n]);
+    }
 
     /*
     // CPU load reporting
