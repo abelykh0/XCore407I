@@ -66,6 +66,7 @@ static USB_HOST_TASK_PENDING: AtomicBool = AtomicBool::new(false);
 // HID boot-keyboard state. TinyUSB invokes HID callbacks from tuh_task_ext(),
 // so these non-atomic key snapshots are only accessed serially there.
 static mut PREVIOUS_KEYS: [u8; 6] = [0; 6];
+static mut PREVIOUS_MODIFIERS: u8 = 0;
 static KEYBOARD_LOCKS: AtomicU8 = AtomicU8::new(0);
 static KEYBOARD_DEVICE: AtomicU8 = AtomicU8::new(0);
 static KEYBOARD_INSTANCE: AtomicU8 = AtomicU8::new(0);
@@ -584,7 +585,10 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
 
     let modifiers = report[0];
     let shift = modifiers & 0x22 != 0;
-    let control_or_alt = modifiers & 0xdd != 0;
+    let alt = modifiers & 0x44 != 0;
+    let control_or_alt = modifiers & 0x99 != 0;
+    let previous_modifiers = unsafe { PREVIOUS_MODIFIERS };
+    let alt_pressed = alt && previous_modifiers & 0x44 == 0;
     let locks_before = KEYBOARD_LOCKS.load(Ordering::Acquire);
     let mut locks = locks_before;
     let mut text = [b' '; 32];
@@ -594,6 +598,12 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
 
     let previous = unsafe { PREVIOUS_KEYS };
     let mut current = [0u8; 6];
+
+    // BK АР2: Alt is a dedicated keyboard key (code 0x0F).
+    // Emit it once when either left or right Alt is pressed.
+    if alt_pressed {
+        append_keyboard_char(&mut emulator_input, &mut emulator_used, 0x0f);
+    }
     current.copy_from_slice(&report[2..8]);
 
     for &key in current.iter() {
@@ -648,7 +658,10 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
         }
     }
 
-    unsafe { PREVIOUS_KEYS = current; }
+    unsafe {
+        PREVIOUS_KEYS = current;
+        PREVIOUS_MODIFIERS = modifiers;
+    }
 
     if locks != locks_before {
         KEYBOARD_LOCKS.store(locks, Ordering::Release);
@@ -711,6 +724,8 @@ fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: boo
     // Original BK OnKey() control codes for the cursor keys.
     // The keypad navigation usages act as arrows when Num Lock is off.
     match key {
+        0x49 => return Some(23),   // Insert -> BK ВС
+        0x2b => return Some(20),   // Tab -> BK ТАБ
         0x4f => return Some(0x19), // Right
         0x50 => return Some(0x08), // Left
         0x51 => return Some(0x1b), // Down
