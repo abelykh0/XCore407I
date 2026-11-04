@@ -413,9 +413,11 @@ pub fn show_file_browser_line(row: usize, message: &[u8], selected: bool) {
         return;
     }
     let columns = canvas_width() / 8;
-    // Use the same high-contrast palette for every file-browser row.
-    let foreground = 63; // white
-    let background = 55; // blue
+    // Palette indices use BBGGRR: all channels set gives white; blue-only is 00010000.
+    const FOREGROUND_WHITE: u8 = 0b00111111;
+    const BACKGROUND_BLUE: u8 = 0b00010000;
+    let foreground = FOREGROUND_WHITE;
+    let background = BACKGROUND_BLUE;
 
     for column in 0..columns {
         let raw = message.get(column).copied().unwrap_or(b' ');
