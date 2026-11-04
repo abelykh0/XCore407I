@@ -12,7 +12,7 @@ use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
 use synopsys_usb_otg::UsbBus;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::{clear_demo_canvas, invalidate_canvas_cache, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
+use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
 //use xcore407i_blinker::nand_device;
@@ -390,8 +390,6 @@ fn main() -> ! {
             show_file_browser_line(21, &line2, false);
             show_file_browser_line(22, &line3, false);
             show_file_browser_line(23, &line4, false);
-            // Ensure the UVC row cache picks up the updated diagnostic rows.
-            invalidate_canvas_cache();
         }
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
