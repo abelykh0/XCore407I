@@ -10,7 +10,8 @@ use panic_halt as _;
 use stm32f4xx_hal::gpio::{GpioExt, Speed};
 use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
-use synopsys_usb_otg::UsbBus;
+use synopsys_usb_otg::{iso_incomplete_snapshot, UsbBus};
+use synopsys_usb_otg::bus::iso_incomplete_event_snapshot;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
 use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
 use tinyusb_sys as tusb;
@@ -377,7 +378,26 @@ fn main() -> ! {
             write_hex32(&mut line[13..17], incompletes & 0xFFFF);
             line[18] = b'R';
             write_hex32(&mut line[19..23], retry_streak as u32);
+            line[24] = b'E';
+            write_hex32(&mut line[25..29], iso_incomplete_event_snapshot() & 0xFFFF);
             show_file_browser_line(23, &line, false);
+
+            // Minimal DWC2 snapshot from the most recent isochronous-IN
+            // incomplete event, for EP2 (audio).
+            let (diepctl, dieptsiz, diepint, fnsof) = iso_incomplete_snapshot(2);
+            let mut line = [b' '; 32];
+            line[0..4].copy_from_slice(b"CTL:");
+            write_hex32(&mut line[4..12], diepctl);
+            line[13..18].copy_from_slice(b"SIZE:");
+            write_hex32(&mut line[18..26], dieptsiz);
+            show_file_browser_line(24, &line, false);
+
+            let mut line = [b' '; 32];
+            line[0..4].copy_from_slice(b"INT:");
+            write_hex32(&mut line[4..12], diepint);
+            line[13..16].copy_from_slice(b"FN:");
+            write_hex32(&mut line[16..24], fnsof);
+            show_file_browser_line(25, &line, false);
         }
 
         // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
