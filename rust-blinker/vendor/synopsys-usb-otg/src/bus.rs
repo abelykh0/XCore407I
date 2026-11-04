@@ -3,15 +3,13 @@ use crate::ral::{
 };
 use crate::transition::{EndpointConfig, EndpointDescriptor};
 use core::marker::PhantomData;
-#[cfg(feature = "internal-dma")]
 use core::sync::atomic::{AtomicU32, Ordering};
 
-#[cfg(feature = "internal-dma")]
 static ISO_INCOMPLETE_EVENT_SNAPSHOT: AtomicU32 = AtomicU32::new(0);
 
 /// Last global incomplete-ISO event: bit 31 indicates an event was observed,
 /// bits 0..15 contain the endpoint mask returned by the abort checks.
-#[cfg(feature = "internal-dma")]
+/// Returns zero in builds without internal DMA.
 pub fn iso_incomplete_event_snapshot() -> u32 {
     ISO_INCOMPLETE_EVENT_SNAPSHOT.load(Ordering::Relaxed)
 }
