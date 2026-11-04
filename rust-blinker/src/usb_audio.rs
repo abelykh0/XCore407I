@@ -1,7 +1,8 @@
-//! USB Audio Class 1.0 capture transport test.
+//! USB Audio Class 1.0 capture function for BK-0010 sound output.
 //!
-//! Sends a fixed, nonzero 48 kHz mono, 16-bit PCM pattern over the
-//! isochronous IN endpoint, independently of the BK emulator audio source.
+//! The BK emulator writes the speaker level to bit 6 of port 0177714.
+//! Transitions are timestamped by the STM32 DWT counter and converted to
+//! 48 kHz mono, 16-bit PCM for the USB isochronous IN endpoint.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus, UsbBusAllocator};
@@ -19,6 +20,8 @@ const AUDIO_STREAMING_SUBCLASS: u8 = 0x02;
 const AUDIO_ENDPOINT_IN: u8 = 0x82;
 const AUDIO_PACKET_BYTES: u16 = 12;
 const AUDIO_SAMPLES_PER_PACKET: usize = 6;
+const AUDIO_SAMPLE_PERIOD_CYCLES: u32 = 3_500; // 168 MHz / 48 kHz
+const AUDIO_STARTUP_LATENCY_CYCLES: u32 = 168_000; // 1 ms transition-queue lead
 
 static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
 static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -75,6 +78,9 @@ pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32,
 }
 
 unsafe extern "C" {
+    fn bk_audio_start() -> u8;
+    fn bk_audio_stop();
+    fn bk_audio_pop_edge(cycles: *mut u32, level: *mut u8) -> u8;
     fn bk_audio_edge_count() -> u32;
     fn bk_audio_port_write_count() -> u32;
 }
@@ -86,8 +92,13 @@ pub struct AudioUsbClass<'a, B: UsbBus> {
     function_string: StringIndex,
     endpoint: EndpointIn<'a, B>,
     streaming_alt: u8,
+    next_sample_cycle: u32,
+    sample_level: bool,
+    pending_edge: Option<(u32, bool)>,
     packet_queued: bool,
     packet_buffer: [u8; AUDIO_PACKET_BYTES as usize],
+    incomplete_count: u8,
+    halted_after_incomplete: bool,
 }
 
 impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
@@ -113,22 +124,60 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             function_string,
             endpoint,
             streaming_alt: 0,
+            next_sample_cycle: 0,
+            sample_level: false,
+            pending_edge: None,
             packet_queued: false,
             packet_buffer: [0; AUDIO_PACKET_BYTES as usize],
+            incomplete_count: 0,
+            halted_after_incomplete: false,
+        }
+    }
+
+    #[inline(always)]
+    fn cycle_counter() -> u32 {
+        cortex_m::peripheral::DWT::cycle_count()
+    }
+
+    fn apply_edges_through(&mut self, sample_cycle: u32) {
+        loop {
+            if self.pending_edge.is_none() {
+                let mut cycles = 0u32;
+                let mut level = 0u8;
+                let available = unsafe { bk_audio_pop_edge(&mut cycles, &mut level) };
+                if available == 0 {
+                    break;
+                }
+                self.pending_edge = Some((cycles, level != 0));
+            }
+
+            let (edge_cycle, edge_level) = self.pending_edge.unwrap();
+            // Signed wrapping subtraction is valid because the queue latency
+            // and maximum backlog are far below half the 32-bit DWT period.
+            if sample_cycle.wrapping_sub(edge_cycle) as i32 >= 0 {
+                self.sample_level = edge_level;
+                self.pending_edge = None;
+            } else {
+                break;
+            }
         }
     }
 
     fn make_packet(&mut self) {
-        // Fixed nonzero PCM pattern for isolating USB transport from the BK
-        // emulator audio source. The same six samples are sent every microframe.
-        const TEST_SAMPLES: [i16; AUDIO_SAMPLES_PER_PACKET] = [
-            12_000, -12_000, 24_000, -24_000, 6_000, -6_000,
-        ];
-        for (index, sample) in TEST_SAMPLES.iter().enumerate() {
-            let offset = index * 2;
-            self.packet_buffer[offset..offset + 2]
-                .copy_from_slice(&sample.to_le_bytes());
+        for sample_index in 0..AUDIO_SAMPLES_PER_PACKET {
+            let sample_cycle = self.next_sample_cycle;
+            self.apply_edges_through(sample_cycle);
+
+            // A simple square wave from the BK speaker output. Amplitude is
+            // deliberately conservative; later we can tune level/filtering.
+            let sample: i16 = if self.sample_level { 12_000 } else { -12_000 };
+            let offset = sample_index * 2;
+            self.packet_buffer[offset..offset + 2].copy_from_slice(&sample.to_le_bytes());
+
+            self.next_sample_cycle =
+                self.next_sample_cycle.wrapping_add(AUDIO_SAMPLE_PERIOD_CYCLES);
         }
+
     }
 
     fn queue_current_packet(&mut self) {
@@ -152,7 +201,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
     }
 
     fn submit_packet(&mut self) {
-        if self.streaming_alt != 1 || self.packet_queued {
+        if self.streaming_alt != 1 || self.packet_queued || self.halted_after_incomplete {
             return;
         }
         self.make_packet();
@@ -183,7 +232,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             &[2, 1, 0x03, 0x06, 0, 1, 0x01, 0x00, 0, 0],
         )?;
 
-        // Output Terminal: USB Streaming, fed by the fixed PCM test source.
+        // Output Terminal: USB Streaming, fed by the BK audio source.
         writer.write(0x24, &[3, 3, 0x01, 0x01, 0, 1, 0])?;
         Ok(())
     }
@@ -258,8 +307,10 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     }
 
     fn reset(&mut self) {
+        unsafe { bk_audio_stop(); }
         AUDIO_ALT1_ACTIVE.store(false, Ordering::Release);
         self.streaming_alt = 0;
+        self.pending_edge = None;
         self.packet_queued = false;
     }
 
@@ -290,14 +341,20 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
             AUDIO_COMPLETE_COUNT.store(0, Ordering::Relaxed);
             AUDIO_INCOMPLETE_COUNT.store(0, Ordering::Relaxed);
         }
-        
+        self.pending_edge = None;
         self.packet_queued = false;
+        self.incomplete_count = 0;
+        self.halted_after_incomplete = false;
 
         if alternative == 1 {
+            self.sample_level = unsafe { bk_audio_start() != 0 };
+            self.next_sample_cycle = Self::cycle_counter()
+                .wrapping_sub(AUDIO_STARTUP_LATENCY_CYCLES);
             // Prime the endpoint immediately; subsequent packets are queued
             // from endpoint_in_complete once per HS microframe.
             self.submit_packet();
         } else {
+            unsafe { bk_audio_stop(); }
         }
 
         true
@@ -312,6 +369,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     fn endpoint_in_complete(&mut self, address: EndpointAddress) {
         if address == self.endpoint.address() {
             AUDIO_COMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
+            self.incomplete_count = 0;
             self.packet_queued = false;
             self.submit_packet();
         }
@@ -331,5 +389,11 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
 
         AUDIO_INCOMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
         self.packet_queued = false;
+        self.incomplete_count = self.incomplete_count.saturating_add(1);
+
+        // Diagnostic isolation: stop the audio retry/recovery loop after the
+        // first missed isochronous frame. A successful completion can still
+        // keep the stream running; an incomplete callback halts submissions.
+        self.halted_after_incomplete = true;
     }
 }
