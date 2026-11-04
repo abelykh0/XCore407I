@@ -682,11 +682,14 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
     }
 
     fn recover_iso_endpoint(&self, ep_addr: EndpointAddress) {
+        #[cfg(feature = "internal-dma")]
         if ep_addr.is_in() && (ep_addr.index() as usize) < USB::ENDPOINT_COUNT {
             if let Some(ep) = &self.allocator.endpoints_in[ep_addr.index() as usize] {
                 ep.recover_iso_endpoint_hw();
             }
         }
+        #[cfg(not(feature = "internal-dma"))]
+        let _ = ep_addr;
     }
 
     fn read(&self, ep_addr: EndpointAddress, buf: &mut [u8]) -> Result<usize> {
@@ -959,7 +962,7 @@ impl<USB: UsbPeripheral> usb_device::bus::UsbBus for UsbBus<USB> {
                                 // Retire this endpoint's armed-frame marker so a
                                 // later global incomplete-ISO interrupt cannot
                                 // mistake an already-completed transfer for a stall.
-                                #[cfg(feature = "hs")]
+                                #[cfg(all(feature = "internal-dma", feature = "hs"))]
                                 ep.mark_iso_complete();
                                 write_reg!(endpoint_in, ep_regs, DIEPINT, XFRC: 1);
                                 ep_in_complete |= 1 << ep.address().index();
