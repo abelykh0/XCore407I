@@ -351,19 +351,23 @@ fn main() -> ! {
         // Keep audio diagnostics on two fixed rows; no USB traffic capture needed.
         if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
             last_audio_diagnostic = now;
-            let (alt1, submits, completes, edges) = audio_diagnostics();
+            let (alt1, attempts, submits, failures, completes, edges) = audio_diagnostics();
 
             let mut line1 = [b' '; 32];
-            line1[..5].copy_from_slice(b"ALT1:");
-            line1[5] = if alt1 { b'1' } else { b'0' };
-            line1[7..11].copy_from_slice(b"SUB:");
-            write_hex32(&mut line1[12..20], submits);
+            line1[..2].copy_from_slice(b"A:");
+            line1[2] = if alt1 { b'1' } else { b'0' };
+            line1[4..6].copy_from_slice(b"T:");
+            write_hex32(&mut line1[6..12], attempts);
+            line1[13..15].copy_from_slice(b"S:");
+            write_hex32(&mut line1[15..21], submits);
 
             let mut line2 = [b' '; 32];
-            line2[..5].copy_from_slice(b"DONE:");
-            write_hex32(&mut line2[5..13], completes);
-            line2[14..19].copy_from_slice(b"EDGE:");
-            write_hex32(&mut line2[19..27], edges);
+            line2[..2].copy_from_slice(b"F:");
+            write_hex32(&mut line2[2..8], failures);
+            line2[9..11].copy_from_slice(b"D:");
+            write_hex32(&mut line2[11..17], completes);
+            line2[18..20].copy_from_slice(b"E:");
+            write_hex32(&mut line2[20..26], edges);
 
             show_file_browser_line(28, &line1, false);
             show_file_browser_line(29, &line2, false);
@@ -401,7 +405,8 @@ fn main() -> ! {
 
 fn write_hex32(destination: &mut [u8], value: u32) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    for (index, byte) in destination.iter_mut().take(8).enumerate() {
+    let digits = destination.len().min(8);
+    for (index, byte) in destination.iter_mut().take(digits).enumerate() {
         let shift = 28 - index * 4;
         *byte = HEX[((value >> shift) & 0x0F) as usize];
     }
