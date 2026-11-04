@@ -318,7 +318,7 @@ impl<USB: UsbPeripheral> EndpointAllocator<USB> {
         } else if matches!(descr.ep_type, EndpointType::Isochronous { .. }) {
             // The HS UVC endpoint carries three 768-byte transactions per
             // microframe. Keep 48 words of refill margin beyond that payload.
-            // Small DMA-backed isochronous endpoints (the 12-byte audio
+            // Small isochronous endpoints (the 12-byte FIFO-backed audio
             // endpoint) need only the allocator's 16-word minimum.
             descr.max_packet_size as usize * 3
                 + if descr.max_packet_size > 64 { 48 * 4 } else { 0 }
