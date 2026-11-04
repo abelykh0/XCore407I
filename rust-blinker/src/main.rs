@@ -586,9 +586,13 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
     let modifiers = report[0];
     let shift = modifiers & 0x22 != 0;
     let alt = modifiers & 0x44 != 0;
+    let control = modifiers & 0x11 != 0;
+    let gui = modifiers & 0x88 != 0;
     let control_or_alt = modifiers & 0xdd != 0;
     let previous_modifiers = unsafe { PREVIOUS_MODIFIERS };
     let alt_pressed = alt && previous_modifiers & 0x44 == 0;
+    let control_pressed = control && previous_modifiers & 0x11 == 0;
+    let gui_pressed = gui && previous_modifiers & 0x88 == 0;
     let locks_before = KEYBOARD_LOCKS.load(Ordering::Acquire);
     let mut locks = locks_before;
     let mut text = [b' '; 32];
@@ -599,10 +603,15 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
     let previous = unsafe { PREVIOUS_KEYS };
     let mut current = [0u8; 6];
 
-    // BK АР2: Alt is a dedicated keyboard key (code 0x0F).
-    // Emit it once when either left or right Alt is pressed.
+    // AZBK standard modifier keys are emitted on the modifier's rising edge.
+    if control_pressed {
+        append_keyboard_char(&mut emulator_input, &mut emulator_used, 0x1c); // СУ
+    }
     if alt_pressed {
-        append_keyboard_char(&mut emulator_input, &mut emulator_used, 0x0f);
+        append_keyboard_char(&mut emulator_input, &mut emulator_used, 0x0f); // АР2
+    }
+    if gui_pressed {
+        append_keyboard_char(&mut emulator_input, &mut emulator_used, 0x0e); // РУС / ЛАТ
     }
     current.copy_from_slice(&report[2..8]);
 
@@ -719,13 +728,22 @@ fn append_keyboard_text(out: &mut [u8; 32], used: &mut usize, text: &[u8]) {
 }
 
 fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: bool) -> Option<u8> {
-    if control_or_alt { return None; }
-
-    // Original BK OnKey() control codes for the cursor keys.
-    // The keypad navigation usages act as arrows when Num Lock is off.
+    // AZBK standard PC-to-BK special-key assignments.
+    // Values are the BK control-key codes consumed by the emulator.
     match key {
-        0x49 => return Some(23),   // Insert -> BK ВС
-        0x2b => return Some(20),   // Tab -> BK ТАБ
+        0x29 => return Some(0x1b), // Esc -> КТ
+        0x49 => return Some(0x17), // Insert -> ВС
+        0x4c => return Some(0x1d), // Delete -> ГРАФ
+        0x3c => return Some(0x1e), // F3 -> УСТ
+        0x4d => return Some(0x1f), // End -> ЗАП
+        0x4a => return Some(0x14), // Home -> ТАБ
+        0x3e => return Some(0x10), // F5 -> ИНД СУ
+        0x3f => return Some(0x11), // F6 -> БЛОК РЕД
+        0x40 => return Some(0x12), // F7 -> ШАГ
+        0x41 => return Some(0x13), // F8 -> СБР
+        0x4e => return Some(0x18), // Page Down -> СТИР
+        0x48 | 0x45 => return Some(0x03), // Pause or F12 -> СТОП
+        // The keypad navigation usages act as arrows when Num Lock is off.
         0x4f => return Some(0x19), // Right
         0x50 => return Some(0x08), // Left
         0x51 => return Some(0x1b), // Down
@@ -736,6 +754,8 @@ fn key_to_ascii(key: u8, shift: bool, caps: bool, num: bool, control_or_alt: boo
         0x60 if !num => return Some(0x1a), // Keypad Up
         _ => {}
     }
+
+    if control_or_alt { return None; }
 
     match key {
         0x04..=0x1d => {
