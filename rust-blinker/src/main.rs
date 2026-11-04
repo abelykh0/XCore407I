@@ -611,7 +611,16 @@ fn process_boot_keyboard_report(dev_addr: u8, instance: u8, report: &[u8]) {
         append_keyboard_char(&mut emulator_input, &mut emulator_used, 0x0f); // АР2
     }
     if gui_pressed {
-        append_keyboard_char(&mut emulator_input, &mut emulator_used, 0x0e); // РУС / ЛАТ
+        // A single Win key toggles the language. Read the live BK flag so
+        // changes made by the emulator itself are respected:
+        // bit 7 set = РУС, clear = ЛАТ.
+        let language_flag = unsafe { RamBuffer[0x23] };
+        let language_key = if language_flag & 0x80 != 0 {
+            0x11 // Currently РУС: request ЛАТ.
+        } else {
+            0x10 // Currently ЛАТ: request РУС.
+        };
+        append_keyboard_char(&mut emulator_input, &mut emulator_used, language_key);
     }
     current.copy_from_slice(&report[2..8]);
 
