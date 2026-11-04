@@ -17,6 +17,8 @@ mod target;
 pub mod bus;
 
 pub use crate::bus::UsbBus;
+#[cfg(feature = "internal-dma")]
+pub use crate::endpoint::iso_incomplete_snapshot;
 
 mod ral;
 mod transition;
