@@ -91,7 +91,7 @@ int ev_fire( int priority )
 
 	earliest = 10.0e38;
 
-	for( x = 0; x < NUM_PRI && (1<<x) <= pending_interrupts; ++x ) {
+	for( x = 0; x < NUM_PRI && (1UL<<x) <= pending_interrupts; ++x ) {
 		if ((mask & pending_interrupts & (1<<x)) &&
 			ticks >= events[x].when) {
 			events[x].handler(events[x].info);
