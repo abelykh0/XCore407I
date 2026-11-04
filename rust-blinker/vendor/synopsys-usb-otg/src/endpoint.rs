@@ -166,7 +166,7 @@ impl EndpointIn {
     /// Returns true when an enabled isochronous endpoint was successfully
     /// stopped, matching the STM32 HAL's incomplete-ISO interrupt handling.
     #[cfg(feature = "internal-dma")]
-    pub fn abort_iso_incomplete(&self) -> bool {
+    pub fn abort_iso_incomplete(&self, current_frame_parity: u32) -> bool {
         if !matches!(self.common.descriptor.ep_type, EndpointType::Isochronous { .. })
             || self.index() == 0
         {
@@ -178,9 +178,8 @@ impl EndpointIn {
         // Preserve the hardware state before abort_iso_incomplete() changes
         // DIEPCTL, clears endpoint interrupts, or flushes the TX FIFO.
         let index = self.index() as usize;
-        ISO_INCOMPLETE_DIEPCTL[index].store(
-            read_reg!(endpoint_in, ep, DIEPCTL), Ordering::Relaxed
-        );
+        let diepctl = read_reg!(endpoint_in, ep, DIEPCTL);
+        ISO_INCOMPLETE_DIEPCTL[index].store(diepctl, Ordering::Relaxed);
         ISO_INCOMPLETE_DIEPTSIZ[index].store(
             read_reg!(endpoint_in, ep, DIEPTSIZ), Ordering::Relaxed
         );
@@ -192,7 +191,12 @@ impl EndpointIn {
             Ordering::Relaxed
         );
 
-        if read_reg!(endpoint_in, ep, DIEPCTL, EPENA) == 0 {
+        // Only abort an endpoint that is still enabled and whose selected
+        // frame (read-only EONUM, DIEPCTL[16]) matches the frame that raised
+        // IISOIXFR. The SODDFRM/SEVNFRM command bits themselves are write-only.
+        let endpoint_frame_parity = (diepctl >> 16) & 1;
+        let endpoint_enabled = (diepctl >> 31) & 1;
+        if endpoint_enabled == 0 || endpoint_frame_parity != (current_frame_parity & 1) {
             return false;
         }
         modify_reg!(endpoint_in, ep, DIEPCTL, SNAK: 1);
