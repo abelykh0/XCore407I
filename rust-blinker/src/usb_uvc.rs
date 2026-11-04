@@ -102,6 +102,7 @@ pub struct UvcUsbClass<'a, B: UsbBus> {
     interface_string: StringIndex,
     endpoint: EndpointIn<'a, B>,
     incomplete_count: u8,
+    streaming_enabled: bool,
 }
 
 impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
@@ -132,7 +133,14 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
             interface_string,
             endpoint,
             incomplete_count: 0,
+            streaming_enabled: true,
         })
+    }
+
+    /// Disable camera payload submissions while retaining the UVC function,
+    /// descriptors, endpoint allocation, and control-interface handling.
+    pub fn disable_streaming_for_test(&mut self) {
+        self.streaming_enabled = false;
     }
 
     pub fn set_cpu_metrics(&mut self, available: u8, generate: u8, submit: u8) {
@@ -337,7 +345,7 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
             return false;
         };
         self.incomplete_count = 0;
-        if alternative == 1 {
+        if alternative == 1 && self.streaming_enabled {
             let start = cycle_counter();
             let marker = self.function.start_stream_batch();
             record_uvc_cycles(start, &UVC_GENERATE_CYCLES);
@@ -356,6 +364,7 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
     }
 
     fn endpoint_in_complete(&mut self, address: EndpointAddress) {
+        if !self.streaming_enabled { return; }
         if address == self.endpoint.address() {
             self.incomplete_count = 0;
             UVC_DEBUG_IN_COMPLETIONS.fetch_add(1, Ordering::Relaxed);
@@ -376,6 +385,7 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
     }
 
     fn endpoint_in_incomplete(&mut self, address: EndpointAddress) {
+        if !self.streaming_enabled { return; }
         if address != self.endpoint.address() {
             return;
         }
