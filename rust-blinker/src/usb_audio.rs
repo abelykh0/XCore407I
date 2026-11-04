@@ -33,17 +33,21 @@ static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_SUBMIT_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_WRITE_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_COMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
+static AUDIO_INCOMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
 
 /// Snapshot of the USB Audio stream state and activity counters.
-pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32) {
+pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32, u32) {
     let edges = unsafe { bk_audio_edge_count() };
+    let port_writes = unsafe { bk_audio_port_write_count() };
     (
         AUDIO_ALT1_ACTIVE.load(Ordering::Acquire),
         AUDIO_ATTEMPT_COUNT.load(Ordering::Relaxed),
         AUDIO_SUBMIT_COUNT.load(Ordering::Relaxed),
         AUDIO_WRITE_FAIL_COUNT.load(Ordering::Relaxed),
         AUDIO_COMPLETE_COUNT.load(Ordering::Relaxed),
+        AUDIO_INCOMPLETE_COUNT.load(Ordering::Relaxed),
         edges,
+        port_writes,
     )
 }
 
@@ -52,6 +56,7 @@ unsafe extern "C" {
     fn bk_audio_stop();
     fn bk_audio_pop_edge(cycles: *mut u32, level: *mut u8) -> u8;
     fn bk_audio_edge_count() -> u32;
+    fn bk_audio_port_write_count() -> u32;
 }
 
 /// USB Audio Class 1.0 capture function (device-to-host audio source).
@@ -300,6 +305,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
             AUDIO_SUBMIT_COUNT.store(0, Ordering::Relaxed);
             AUDIO_WRITE_FAIL_COUNT.store(0, Ordering::Relaxed);
             AUDIO_COMPLETE_COUNT.store(0, Ordering::Relaxed);
+            AUDIO_INCOMPLETE_COUNT.store(0, Ordering::Relaxed);
         }
         self.pending_edge = None;
         self.packet_queued = false;
@@ -334,6 +340,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
 
     fn endpoint_in_incomplete(&mut self, address: EndpointAddress) {
         if address == self.endpoint.address() {
+            AUDIO_INCOMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
             self.packet_queued = false;
             // Keep the stream moving after a missed isochronous service slot.
             self.submit_packet();
