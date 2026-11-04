@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 //! Experimental device-side USB stack for embedded devices.
 //!
 //! ## Implementing a USB device

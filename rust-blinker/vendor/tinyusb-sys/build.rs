@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 use cc::Build;
 use std::{env, path::{Path, PathBuf}};
 use std::fs::File;

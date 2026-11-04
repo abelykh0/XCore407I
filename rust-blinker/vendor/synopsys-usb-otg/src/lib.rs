@@ -1,3 +1,5 @@
+#![allow(warnings)]
+
 //! USB peripheral driver for Synopsys USB OTG peripherals.
 
 #![no_std]
