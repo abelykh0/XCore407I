@@ -50,6 +50,12 @@ pub fn iso_incomplete_snapshot(index: usize) -> (u32, u32, u32, u32) {
     )
 }
 
+/// Non-DMA builds do not collect endpoint register snapshots.
+#[cfg(not(feature = "internal-dma"))]
+pub fn iso_incomplete_snapshot(_index: usize) -> (u32, u32, u32, u32) {
+    (0, 0, 0, 0)
+}
+
 pub fn set_stalled(usb: UsbRegisters, address: EndpointAddress, stalled: bool) {
     critical_section::with(|_| match address.direction() {
         UsbDirection::Out => {
