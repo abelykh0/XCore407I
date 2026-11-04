@@ -136,10 +136,16 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
 
 impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     fn get_configuration_descriptors(&self, writer: &mut DescriptorWriter) -> Result<()> {
-        // UAC1 groups its AudioControl and AudioStreaming interfaces using
-        // the AudioControl header's baInterfaceNr list. Avoid an additional
-        // IAD here so the complete configuration descriptor fits the
-        // usb-device 256-byte control-transfer buffer.
+        // Associate both AudioControl and AudioStreaming interfaces as one
+        // function for Windows composite-device driver binding.
+        writer.iad(
+            self.control_interface,
+            2,
+            AUDIO_CLASS,
+            0,
+            0,
+            Some(self.function_string),
+        )?;
         self.write_audio_control_descriptors(writer)?;
         self.write_audio_streaming_descriptors(writer)
     }
