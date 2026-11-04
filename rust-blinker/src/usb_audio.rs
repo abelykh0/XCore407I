@@ -1,8 +1,7 @@
-//! USB Audio Class 1.0 capture function for BK-0010 sound output.
+//! USB Audio Class 1.0 capture transport test.
 //!
-//! The BK emulator writes the speaker level to bit 6 of port 0177714.
-//! Transitions are timestamped by the STM32 DWT counter and converted to
-//! 48 kHz mono, 16-bit PCM for the USB isochronous IN endpoint.
+//! Sends a fixed, nonzero 48 kHz mono, 16-bit PCM pattern over the
+//! isochronous IN endpoint, independently of the BK emulator audio source.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus, UsbBusAllocator};
@@ -76,7 +75,6 @@ pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32, u32, u32, u32, u32,
 }
 
 unsafe extern "C" {
-    fn bk_audio_stop();
     fn bk_audio_edge_count() -> u32;
     fn bk_audio_port_write_count() -> u32;
 }
@@ -185,7 +183,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             &[2, 1, 0x03, 0x06, 0, 1, 0x01, 0x00, 0, 0],
         )?;
 
-        // Output Terminal: USB Streaming, fed by the BK audio source.
+        // Output Terminal: USB Streaming, fed by the fixed PCM test source.
         writer.write(0x24, &[3, 3, 0x01, 0x01, 0, 1, 0])?;
         Ok(())
     }
@@ -260,10 +258,8 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
     }
 
     fn reset(&mut self) {
-        unsafe { bk_audio_stop(); }
         AUDIO_ALT1_ACTIVE.store(false, Ordering::Release);
         self.streaming_alt = 0;
-        
         self.packet_queued = false;
     }
 
@@ -302,7 +298,6 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
             // from endpoint_in_complete once per HS microframe.
             self.submit_packet();
         } else {
-            unsafe { bk_audio_stop(); }
         }
 
         true
