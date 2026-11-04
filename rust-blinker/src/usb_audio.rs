@@ -73,6 +73,7 @@ pub struct AudioUsbClass<'a, B: UsbBus> {
     packet_queued: bool,
     packet_buffer: [u8; AUDIO_PACKET_BYTES as usize],
     incomplete_count: u8,
+    halted_after_incomplete: bool,
 }
 
 impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
@@ -104,6 +105,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
             packet_queued: false,
             packet_buffer: [0; AUDIO_PACKET_BYTES as usize],
             incomplete_count: 0,
+            halted_after_incomplete: false,
         }
     }
 
@@ -174,12 +176,7 @@ impl<'a, B: UsbBus> AudioUsbClass<'a, B> {
     }
 
     fn submit_packet(&mut self) {
-        // Diagnostic isolation: leave UAC descriptors and stream activation intact,
-        // but do not generate or submit any audio isochronous IN packets.
-        return;
-
-        #[allow(unreachable_code)]
-        if self.streaming_alt != 1 || self.packet_queued {
+        if self.streaming_alt != 1 || self.packet_queued || self.halted_after_incomplete {
             return;
         }
         self.make_packet();
@@ -322,6 +319,7 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         self.pending_edge = None;
         self.packet_queued = false;
         self.incomplete_count = 0;
+        self.halted_after_incomplete = false;
 
         if alternative == 1 {
             self.sample_level = unsafe { bk_audio_start() != 0 };
@@ -361,16 +359,9 @@ impl<B: UsbBus> UsbClass<B> for AudioUsbClass<'_, B> {
         self.packet_queued = false;
         self.incomplete_count = self.incomplete_count.saturating_add(1);
 
-        if self.incomplete_count < 3 {
-            // Match the camera path: retry the exact same DMA packet. Do not
-            // regenerate it, because that would advance the audio sample clock.
-            self.queue_current_packet();
-            return;
-        }
-
-        // Match UVC recovery after three consecutive incomplete frames.
-        self.incomplete_count = 0;
-        self.endpoint.recover_iso_endpoint();
-        self.queue_current_packet();
+        // Diagnostic isolation: stop the audio retry/recovery loop after the
+        // first missed isochronous frame. A successful completion can still
+        // keep the stream running; an incomplete callback halts submissions.
+        self.halted_after_incomplete = true;
     }
 }
