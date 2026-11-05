@@ -282,7 +282,7 @@ fn main() -> ! {
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
     // Start the independent USB service timers only after all USB objects
-    // are initialized and published. TIM2 services the HS USB device at 10 kHz.
+    // are initialized and published. TIM2 services the HS USB device at 16 kHz.
     configure_usb_poll_timer(
         &device.RCC,
         &device.TIM2,
@@ -307,10 +307,100 @@ fn main() -> ! {
     let mut last_audio_diagnostic = 0u32;
 
     loop {
-        // Fill free video buffers outside interrupt context. If both are
-        // occupied, sleep until a USB completion releases one.
+        // Service the USB FS host in thread context. TIM3 only schedules this
+        // work; the host task must never run from the timer ISR.
+        if USB_HOST_TASK_PENDING.swap(false, Ordering::AcqRel) {
+            unsafe { tusb::tuh_task_ext(0, false); }
+        }
+
+        let browser_action = FILE_BROWSER_ACTION.swap(0, Ordering::AcqRel);
+
+        if browser_action == FILE_BROWSER_OPEN && !browser_open {
+            KEYBOARD_INPUT_LEN.store(0, Ordering::Release);
+            match list_root_files(&mut *browser_paths, &mut *browser_path_lengths) {
+                Ok(count) => {
+                    browser_count = count;
+                    browser_selected = 0;
+                    browser_open = true;
+                    FILE_BROWSER_ACTIVE.store(true, Ordering::Release);
+                    draw_file_browser(
+                        &*browser_paths,
+                        &*browser_path_lengths,
+                        browser_count,
+                        browser_selected,
+                    );
+                }
+                Err(()) => {
+                    browser_open = false;
+                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
+                    show_usb_status(b"NAND FILE LIST FAILED");
+                }
+            }
+        }
+
+        if browser_open {
+            let mut redraw = false;
+            match browser_action {
+                FILE_BROWSER_UP if browser_count != 0 && browser_selected > 0 => {
+                    browser_selected -= 1;
+                    redraw = true;
+                }
+                FILE_BROWSER_DOWN if browser_count != 0 && browser_selected + 1 < browser_count => {
+                    browser_selected += 1;
+                    redraw = true;
+                }
+                FILE_BROWSER_ENTER if browser_count != 0 => {
+                    let path_len = browser_path_lengths[browser_selected] as usize;
+                    let result = load_tetris_from_path(&browser_paths[browser_selected][..path_len]);
+                    browser_open = false;
+                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
+                    clear_demo_canvas(0x10);
+                    if result.is_ok() {
+                        show_usb_status(b"PROGRAM LOADED");
+                    } else {
+                        show_usb_status(b"LOAD FAILED - CHECK FILE FORMAT");
+                    }
+                }
+                FILE_BROWSER_ESCAPE => {
+                    browser_open = false;
+                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
+                    clear_demo_canvas(0x10);
+                    show_usb_status(b"FILE BROWSER CANCELLED");
+                }
+                _ => {}
+            }
+            if redraw {
+                draw_file_browser(
+                    &*browser_paths,
+                    &*browser_path_lengths,
+                    browser_count,
+                    browser_selected,
+                );
+            }
+        }
+
+        // Run one emulator iteration in thread context. Video batches are
+        // rendered from the canvas below, never from the USB timer ISR.
+        if !browser_open {
+            unsafe { bk_loop(); }
+
+            let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
+            if input_len > 0 {
+                let mut buffer = [0u8; 32];
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
+                        buffer.as_mut_ptr(),
+                        input_len as usize,
+                    );
+                    sendInput(buffer.as_mut_ptr(), input_len);
+                }
+            }
+        }
+
+        // Keep the two video buffers replenished outside interrupt context.
+        // Do not sleep here: the emulator and USB FS host task need servicing.
         while prepare_next_video_batch(&mut video_renderer) {}
-        cortex_m::asm::wfi();
     }
 }
 
