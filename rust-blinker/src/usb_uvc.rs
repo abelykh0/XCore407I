@@ -103,6 +103,7 @@ pub struct UvcUsbClass<'a, B: UsbBus> {
     endpoint: EndpointIn<'a, B>,
     incomplete_count: u8,
     video_payloads_enabled: bool,
+    repeat_video_batch: bool,
 }
 
 impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
@@ -134,6 +135,7 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
             endpoint,
             incomplete_count: 0,
             video_payloads_enabled: true,
+            repeat_video_batch: false,
         })
     }
 
@@ -141,6 +143,11 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
     /// the UVC interface registered and its control requests serviced.
     pub fn set_video_payloads_enabled(&mut self, enabled: bool) {
         self.video_payloads_enabled = enabled;
+    }
+
+    /// Re-submit the first generated batch instead of generating new video.
+    pub fn set_repeat_video_batch(&mut self, enabled: bool) {
+        self.repeat_video_batch = enabled;
     }
 
     pub fn set_cpu_metrics(&mut self, available: u8, generate: u8, submit: u8) {
@@ -370,6 +377,18 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
                 return;
             }
             UVC_DEBUG_IN_COMPLETIONS.fetch_add(1, Ordering::Relaxed);
+            if self.repeat_video_batch {
+                if let Some((packet, packet_count)) = self.function.current_in_batch() {
+                    let start = cycle_counter();
+                    if Self::submit_video_batch(&self.endpoint, packet, packet_count) {
+                        UVC_DEBUG_SUBMITTED_BATCHES.fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        UVC_DEBUG_SUBMIT_ERRORS.fetch_add(1, Ordering::Relaxed);
+                    }
+                    record_uvc_cycles(start, &UVC_SUBMIT_CYCLES);
+                }
+                return;
+            }
             let start = cycle_counter();
             let packet = self.function.next_in_batch();
             record_uvc_cycles(start, &UVC_GENERATE_CYCLES);
