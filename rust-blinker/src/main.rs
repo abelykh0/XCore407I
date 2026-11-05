@@ -264,10 +264,10 @@ fn main() -> ! {
         );
     }
 
-    // Send a uniform grey test frame. The UVC packetizer advances through
-    // the complete frame and toggles FID normally; camera rendering is bypassed.
+    // Experiment: keep UVC registered and polled, but suppress all video payload
+    // submissions to isolate video endpoint traffic from audio scheduling.
     unsafe {
-        (&mut *camera_ptr).set_video_payloads_enabled(true);
+        (&mut *camera_ptr).set_video_payloads_enabled(false);
         (&mut *camera_ptr).set_repeat_video_batch(false);
     }
 
