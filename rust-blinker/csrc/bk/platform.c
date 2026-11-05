@@ -72,7 +72,7 @@ uint8_t bk_audio_start(void)
     bk_audio_edge_tail = bk_audio_edge_head;
     bk_audio_edges = 0;
     bk_audio_port_writes = 0;
-    bk_audio_level = (port0177714 & 0x0040u) ? 1u : 0u;
+    bk_audio_level = (port0177716 & 0x0040u) ? 1u : 0u;
     __asm volatile("dmb" ::: "memory");
     bk_audio_enabled = 1u;
     return bk_audio_level;
@@ -288,12 +288,18 @@ int sl_byte(pdp_regs *p, c_addr addr, d_byte value)
             bk_video_shift_changed((uint8_t)port0177664);
             break;
         case 0177714:
-            bk_audio_port_writes++;
             port0177714 = (uint16_t)((port0177714 & 0xFF00u) | value);
-            bk_audio_record_level((uint8_t)(port0177714 & 0x0040u));
             break;
         case 0177715:
             port0177714 = (uint16_t)((port0177714 & 0x00FFu) | ((uint16_t)value << 8));
+            break;
+        case 0177716:
+            bk_audio_port_writes++;
+            port0177716 = (uint16_t)((port0177716 & 0xFF00u) | value);
+            bk_audio_record_level((uint8_t)(port0177716 & 0x0040u));
+            break;
+        case 0177717:
+            port0177716 = (uint16_t)((port0177716 & 0x00FFu) | ((uint16_t)value << 8));
             break;
         default: break;
         }
@@ -328,9 +334,12 @@ int sl_word(pdp_regs *p, c_addr addr, d_word value)
             bk_video_shift_changed((uint8_t)port0177664);
             break;
         case 0177714:
-            bk_audio_port_writes++;
             port0177714 = value;
-            bk_audio_record_level((uint8_t)(port0177714 & 0x0040u));
+            break;
+        case 0177716:
+            bk_audio_port_writes++;
+            port0177716 = value;
+            bk_audio_record_level((uint8_t)(port0177716 & 0x0040u));
             break;
         default: break;
         }
