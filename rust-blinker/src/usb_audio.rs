@@ -24,7 +24,7 @@ const PACKET_BYTES: usize = SAMPLES_PER_MICROFRAME * 2;
 // DC test signal: a constant PCM value should produce silence after
 // any start-up transient. This isolates transport/format artifacts from
 // waveform generation and sample sequencing.
-const TEST_TONE: [i16; 48] = [8000; 48];
+const TEST_TONE: [i16; 48] = [0; 48];
 
 static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
 static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
