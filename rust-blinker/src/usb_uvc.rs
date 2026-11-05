@@ -7,6 +7,7 @@ use crate::uvc::{
 };
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
+use stm32f4::stm32f407::RCC;
 use synopsys_usb_otg::{PhyType, UsbPeripheral};
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus, UsbBusAllocator};
 use usb_device::class::{ControlIn, ControlOut, UsbClass};
@@ -33,11 +34,11 @@ unsafe impl UsbPeripheral for F407UsbHs {
     const ENDPOINT_COUNT: usize = 6;
 
     fn enable() {
-        let rcc_ahb1enr = 0x4002_3830 as *mut u32;
-        unsafe {
-            rcc_ahb1enr.write_volatile(rcc_ahb1enr.read_volatile() | (1 << 29) | (1 << 30));
-            let _ = rcc_ahb1enr.read_volatile();
-        }
+        let rcc = unsafe { &*RCC::ptr() };
+        rcc.ahb1enr().modify(|_, w| {
+            w.otghsen().set_bit().otghsulpi().set_bit()
+        });
+        let _ = rcc.ahb1enr().read().bits();
     }
 
     fn ahb_frequency_hz(&self) -> u32 {
