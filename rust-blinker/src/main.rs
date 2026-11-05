@@ -264,6 +264,10 @@ fn main() -> ! {
         );
     }
 
+    // Keep UVC enumerated and polled, but disable video packet generation
+    // and endpoint resubmission for the audio isolation test.
+    unsafe { (&mut *camera_ptr).set_video_payloads_enabled(false); }
+
     CAMERA_PTR.store(camera_ptr, Ordering::Release);
     AUDIO_PTR.store(audio_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
@@ -294,17 +298,18 @@ fn main() -> ! {
     let mut last_audio_diagnostic = 0u32;
 
     loop {
-        // Audio-only isolation test: do not poll the UVC class, so it stops
-        // generating/submitting video payloads. Keep the USB device and UAC2
-        // class polling so the static audio stream remains active.
+        // Isolation test: poll both classes, but suppress UVC video payload
+        // generation/submission. UVC control requests remain serviced.
         let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
+        let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
         let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
-        if !usb_ptr.is_null() && !audio_ptr.is_null() {
+        if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
             // SAFETY: main is the sole owner of these USB objects; TIM2 only
             // acknowledges its timer interrupt.
             let usb = unsafe { &mut *usb_ptr };
+            let camera = unsafe { &mut *camera_ptr };
             let audio = unsafe { &mut *audio_ptr };
-            let _ = usb.poll(&mut [audio]);
+            let _ = usb.poll(&mut [camera, audio]);
         }
     }
 }
