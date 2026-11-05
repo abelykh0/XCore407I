@@ -518,7 +518,7 @@ pub struct Packet {
 }
 
 /// Emits the same compact demo image repeatedly as UVC payloads.
-pub(crate) struct Nv12DemoImage {
+pub struct Nv12DemoImage {
     offset: usize,
     frame_id: bool,
     cpu_available_percent: u8,
@@ -532,7 +532,7 @@ pub(crate) struct Nv12DemoImage {
 impl Nv12DemoImage {
     /// Claim the shared row buffers for the single live camera instance.
     /// Returns `None` while another camera instance owns them.
-    pub(crate) fn try_new() -> Option<Self> {
+    pub fn try_new() -> Option<Self> {
         CAMERA_IN_USE
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .ok()?;
