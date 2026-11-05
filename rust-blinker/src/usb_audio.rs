@@ -20,11 +20,16 @@ const PACKET_BYTES: usize = SAMPLES_PER_MICROFRAME * 2;
 // Persistent, word-aligned source buffer in normal SRAM (not CCM).
 // OTG_HS DMA reads this buffer until the transfer-complete callback.
 
-// One 1 ms cycle: 48 samples at 48 kHz, producing a 1 kHz sine wave.
-// DC test signal: a constant PCM value should produce silence after
-// any start-up transient. This isolates transport/format artifacts from
-// waveform generation and sample sequencing.
-const TEST_TONE: [i16; 48] = [0; 48];
+// One 1 ms cycle: 48 samples at 48 kHz, producing a 1 kHz sine wave
+// at a conservative amplitude of +/-8000 PCM16.
+const TEST_TONE: [i16; 48] = [
+    0, 1044, 2071, 3061, 4000, 4870, 5657, 6347,
+    6928, 7391, 7727, 7932, 8000, 7932, 7727, 7391,
+    6928, 6347, 5657, 4870, 4000, 3061, 2071, 1044,
+    0, -1044, -2071, -3061, -4000, -4870, -5657, -6347,
+    -6928, -7391, -7727, -7932, -8000, -7932, -7727, -7391,
+    -6928, -6347, -5657, -4870, -4000, -3061, -2071, -1044,
+];
 
 static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
 static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
