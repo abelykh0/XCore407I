@@ -548,8 +548,10 @@ pub extern "C" fn tuh_hid_mount_cb(dev_addr: u8, instance: u8, _desc: *const u8,
     KEYBOARD_DEVICE.store(dev_addr, Ordering::Release);
     KEYBOARD_INSTANCE.store(instance, Ordering::Release);
     KEYBOARD_LOCKS.store(0, Ordering::Release);
+    KEYBOARD_INPUT_LEN.store(0, Ordering::Release);
     unsafe {
         PREVIOUS_KEYS = [0; 6];
+        PREVIOUS_MODIFIERS = 0;
         KEYBOARD_LED_REPORT = 0;
     }
     USB_FS_STATUS.store(4, Ordering::Release);
@@ -575,18 +577,27 @@ pub extern "C" fn tuh_hid_umount_cb(dev_addr: u8, instance: u8) {
         KEYBOARD_DEVICE.store(0, Ordering::Release);
         KEYBOARD_INSTANCE.store(0, Ordering::Release);
         KEYBOARD_LOCKS.store(0, Ordering::Release);
-        unsafe { PREVIOUS_KEYS = [0; 6]; }
+        KEYBOARD_INPUT_LEN.store(0, Ordering::Release);
+        unsafe {
+            PREVIOUS_KEYS = [0; 6];
+            PREVIOUS_MODIFIERS = 0;
+        }
     }
     USB_FS_STATUS.store(5, Ordering::Release);
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn tuh_hid_set_protocol_complete_cb(_dev_addr: u8, _instance: u8, protocol: u8) {
+pub extern "C" fn tuh_hid_set_protocol_complete_cb(dev_addr: u8, instance: u8, protocol: u8) {
+    // Ignore late control-transfer completions from a keyboard that has
+    // already disconnected or been replaced by another HID interface.
+    if KEYBOARD_DEVICE.load(Ordering::Acquire) != dev_addr
+        || KEYBOARD_INSTANCE.load(Ordering::Acquire) != instance
+    {
+        return;
+    }
+
     if protocol == 0 {
-        unsafe { tusb::tuh_hid_receive_report(
-            KEYBOARD_DEVICE.load(Ordering::Acquire),
-            KEYBOARD_INSTANCE.load(Ordering::Acquire),
-        ); }
+        unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
     } else {
         USB_FS_STATUS.store(9, Ordering::Release);
     }
@@ -599,12 +610,23 @@ pub extern "C" fn tuh_hid_report_received_cb(
     report: *const u8,
     len: u16,
 ) {
+    if KEYBOARD_DEVICE.load(Ordering::Acquire) != dev_addr
+        || KEYBOARD_INSTANCE.load(Ordering::Acquire) != instance
+    {
+        return;
+    }
+
     if len >= 8 && !report.is_null() {
         let bytes = unsafe { core::slice::from_raw_parts(report, len as usize) };
         process_boot_keyboard_report(dev_addr, instance, bytes);
     }
-    // Re-arm the interrupt-IN endpoint after every completed report.
-    unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
+    // Re-arm only the still-active keyboard. A disconnect/reconnect can
+    // reuse device addresses, so stale callbacks must not target a new HID.
+    if KEYBOARD_DEVICE.load(Ordering::Acquire) == dev_addr
+        && KEYBOARD_INSTANCE.load(Ordering::Acquire) == instance
+    {
+        unsafe { tusb::tuh_hid_receive_report(dev_addr, instance); }
+    }
 }
 
 /// Process an 8-byte USB HID boot-keyboard report:
