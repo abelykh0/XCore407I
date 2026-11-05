@@ -144,40 +144,8 @@ fn main() -> ! {
     core.SYST.enable_interrupt();
     core.SYST.enable_counter();
 
-    // Enable and reset OTG_FS before handing it to TinyUSB. OTG_HS remains
-    // owned by the USB audio/CDC device and is not reset here.
-    unsafe {
-        const RCC_AHB2ENR: *mut u32 = 0x4002_3834 as *mut u32;
-        const RCC_AHB2RSTR: *mut u32 = 0x4002_3814 as *mut u32;
-        RCC_AHB2ENR.write_volatile(RCC_AHB2ENR.read_volatile() | (1 << 7));
-        let _ = RCC_AHB2ENR.read_volatile(); // complete the clock-enable write
-
-        RCC_AHB2RSTR.write_volatile(RCC_AHB2RSTR.read_volatile() | (1 << 7));
-        for _ in 0..16 { core::arch::asm!("nop"); }
-        RCC_AHB2RSTR.write_volatile(RCC_AHB2RSTR.read_volatile() & !(1 << 7));
-        let _ = RCC_AHB2RSTR.read_volatile();
-    }
-
-    // Prepare the OTG_FS interrupt while keeping it masked until TinyUSB has
-    // initialized the host controller and installed its interrupt sources.
-    unsafe {
-        core.NVIC.set_priority(interrupt::OTG_FS, 0x3 << 4);
-        NVIC::unpend(interrupt::OTG_FS);
-        NVIC::mask(interrupt::OTG_FS);
-    }
-
-    // Initialize TinyUSB host on root-hub port 0 (OTG_FS).
-    show_usb_status(b"USB FS: HOST INIT");
-    let rh_init = tusb::tusb_rhport_init_t {
-        role: tusb::tusb_role_t::TUSB_ROLE_HOST,
-        speed: tusb::tusb_speed_t::TUSB_SPEED_FULL,
-    };
-    if unsafe { tusb::tuh_rhport_init(0, &rh_init) } {
-        USB_FS_STATUS.store(1, Ordering::Release);
-        unsafe { NVIC::unmask(interrupt::OTG_FS); }
-    } else {
-        USB_FS_STATUS.store(2, Ordering::Release);
-    }
+    // Audio isolation test: USB FS/TinyUSB host is completely disabled.
+    // OTG_FS is left uninitialized and its interrupt is never enabled.
 
     let bus = usb_bus().expect("USB bus initialization failed");
 
@@ -251,13 +219,7 @@ fn main() -> ! {
         &mut core.NVIC,
     );
 
-    // TIM3 schedules the TinyUSB FS host task at 1 kHz. The ISR only sets a
-    // flag; tuh_task_ext() itself must run in thread context, never in an ISR.
-    configure_usb_host_task_timer(
-        &device.RCC,
-        &device.TIM3,
-        &mut core.NVIC,
-    );
+    // TIM3/TinyUSB host scheduling is disabled for this isolation test.
 
     // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
 
@@ -348,9 +310,7 @@ fn main() -> ! {
         //     update_clock_from_rtc();
         // } // Temporarily disable the RTC clock overlay.
 
-        if USB_HOST_TASK_PENDING.swap(false, Ordering::AcqRel) {
-            unsafe { tusb::tuh_task_ext(0, false); }
-        }
+        // TinyUSB host task dispatch is disabled for this isolation test.
 /*
         let status = USB_FS_STATUS.swap(0, Ordering::AcqRel);
         let message: &[u8] = match status {
