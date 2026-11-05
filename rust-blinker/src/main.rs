@@ -27,8 +27,8 @@ use xcore407i_blinker::usb_audio::{
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
-// Two timer interrupts per USB HS microframe (62.5 us, 16 kHz).
-const USB_POLL_TIMER_HZ: u32 = 16_000;
+// Three timer interrupts per USB HS microframe (about 41.7 us, 24 kHz).
+const USB_POLL_TIMER_HZ: u32 = 24_000;
 const TIM2_PRIORITY: u8 = 0;
 const TIM3_PRIORITY: u8 = 3;
 const SYSTICK_PRIORITY: u8 = 1;
