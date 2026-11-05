@@ -333,23 +333,9 @@ fn main() -> ! {
             }
         }
 
-        // Pause emulator execution while the file browser owns the canvas.
-        if !browser_open {
-            unsafe { bk_loop(); }
-            let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
-            if input_len > 0 {
-                let mut buffer = [0u8; 32];
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
-                        buffer.as_mut_ptr(),
-                        input_len as usize,
-                    );
-                    sendInput(buffer.as_mut_ptr(), input_len);
-                }
-            }
-        }
-
+        // Audio isolation test: emulator execution and keyboard input
+        // delivery are disabled. USB audio polling remains on TIM2.
+        
         // Canvas clearing is deferred to thread context; TIM2 emits black
         // frames until the new mode's canvas has been cleared.
 
