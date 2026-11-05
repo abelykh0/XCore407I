@@ -21,14 +21,10 @@ const PACKET_BYTES: usize = SAMPLES_PER_MICROFRAME * 2;
 // OTG_HS DMA reads this buffer until the transfer-complete callback.
 
 // One 1 ms cycle: 48 samples at 48 kHz, producing a 1 kHz sine wave.
-const TEST_TONE: [i16; 48] = [
-    0, 1305, 2588, 3827, 5000, 6088, 7071, 7934,
-    8660, 9239, 9659, 9914, 10000, 9914, 9659, 9239,
-    8660, 7934, 7071, 6088, 5000, 3827, 2588, 1305,
-    0, -1305, -2588, -3827, -5000, -6088, -7071, -7934,
-    -8660, -9239, -9659, -9914, -10000, -9914, -9659, -9239,
-    -8660, -7934, -7071, -6088, -5000, -3827, -2588, -1305,
-];
+// DC test signal: a constant PCM value should produce silence after
+// any start-up transient. This isolates transport/format artifacts from
+// waveform generation and sample sequencing.
+const TEST_TONE: [i16; 48] = [8000; 48];
 
 static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
 static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
