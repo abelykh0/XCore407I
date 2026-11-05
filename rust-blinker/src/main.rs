@@ -211,20 +211,134 @@ fn main() -> ! {
     AUDIO_PTR.store(audio_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
-    // Poll USB continuously from the main context for this isolation test.
-    // This removes TIM2's fixed 8 kHz interrupt cadence from the audio path.
-    // Endpoint completion/incomplete events still pace packet submissions.
-    // TIM2 is deliberately left disabled.
+    // TIM2 services USB HS audio independently of the application loop.
+    configure_usb_poll_timer(
+        &device.RCC,
+        &device.TIM2,
+        &mut core.NVIC,
+    );
+
+    let browser_paths = unsafe { &mut *ptr::addr_of_mut!(BROWSER_PATHS) };
+    let browser_path_lengths = unsafe { &mut *ptr::addr_of_mut!(BROWSER_PATH_LENGTHS) };
+    let mut browser_count = 0usize;
+    let mut browser_selected = 0usize;
+    let mut browser_open = false;
 
     loop {
-        let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
-        let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
-        if !usb_ptr.is_null() && !audio_ptr.is_null() {
-            let usb = unsafe { &mut *usb_ptr };
-            let audio = unsafe { &mut *audio_ptr };
-            let _ = usb.poll(&mut [audio]);
+        let browser_action = FILE_BROWSER_ACTION.swap(0, Ordering::AcqRel);
+
+        if browser_action == FILE_BROWSER_OPEN && !browser_open {
+            KEYBOARD_INPUT_LEN.store(0, Ordering::Release);
+            match list_root_files(&mut *browser_paths, &mut *browser_path_lengths) {
+                Ok(count) => {
+                    browser_count = count;
+                    browser_selected = 0;
+                    browser_open = true;
+                    FILE_BROWSER_ACTIVE.store(true, Ordering::Release);
+                    draw_file_browser(
+                        &*browser_paths,
+                        &*browser_path_lengths,
+                        browser_count,
+                        browser_selected,
+                    );
+                }
+                Err(()) => {
+                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
+                    show_usb_status(b"NAND FILE LIST FAILED");
+                }
+            }
         }
+
+        if browser_open {
+            let mut redraw = false;
+            match browser_action {
+                FILE_BROWSER_UP if browser_count != 0 && browser_selected > 0 => {
+                    browser_selected -= 1;
+                    redraw = true;
+                }
+                FILE_BROWSER_DOWN if browser_count != 0 && browser_selected + 1 < browser_count => {
+                    browser_selected += 1;
+                    redraw = true;
+                }
+                FILE_BROWSER_ENTER if browser_count != 0 => {
+                    let path_len = browser_path_lengths[browser_selected] as usize;
+                    let result = load_tetris_from_path(&browser_paths[browser_selected][..path_len]);
+                    browser_open = false;
+                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
+                    clear_demo_canvas(0x10);
+                    if result.is_ok() {
+                        show_usb_status(b"PROGRAM LOADED");
+                    } else {
+                        show_usb_status(b"LOAD FAILED - CHECK FILE FORMAT");
+                    }
+                }
+                FILE_BROWSER_ESCAPE => {
+                    browser_open = false;
+                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
+                    clear_demo_canvas(0x10);
+                    show_usb_status(b"FILE BROWSER CANCELLED");
+                }
+                _ => {}
+            }
+            if redraw {
+                draw_file_browser(
+                    &*browser_paths,
+                    &*browser_path_lengths,
+                    browser_count,
+                    browser_selected,
+                );
+            }
+        }
+
+        // Run the emulator in thread context; pause it while the file browser
+        // owns the display. Audio USB polling remains in the TIM2 ISR.
+        if !browser_open {
+            unsafe { bk_loop(); }
+            let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
+            if input_len > 0 {
+                let mut buffer = [0u8; 32];
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
+                        buffer.as_mut_ptr(),
+                        input_len as usize,
+                    );
+                    sendInput(buffer.as_mut_ptr(), input_len);
+                }
+            }
+        }
+
+        // Canvas clearing is deferred to thread context; TIM2 emits black
+        // frames until the new mode's canvas has been cleared.
+
+        // USB polling remains in TIM2. No on-screen audio diagnostics are
+        // drawn, so the camera canvas is not overwritten by test status.
+
+        // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
+        //     last_rtc_sample = now;
+        //     rtc::refresh_display_time();
+        //     update_clock_from_rtc();
+        // } // Temporarily disable the RTC clock overlay.
+
+/*
+        let status = USB_FS_STATUS.swap(0, Ordering::AcqRel);
+        let message: &[u8] = match status {
+            1 => b"USB FS: WAITING FOR DEVICE",
+            2 => b"USB FS: HOST INIT FAILED",
+            3 => b"USB FS: DEVICE ENUMERATED",
+            4 => b"USB FS: KEYBOARD MOUNTED",
+            5 => b"USB FS: KEYBOARD REMOVED",
+            6 => b"USB FS: KEYBOARD INPUT",
+            7 => b"USB FS: DEVICE DESCRIPTOR",
+            8 => b"USB FS: CONFIG DESCRIPTOR",
+            9 => b"USB FS: BOOT PROTOCOL FAILED",
+            _ => b"",
+        };
+        if !message.is_empty() { show_usb_status(message); }
+*/
+        // rotozoom.render_next();
     }
+}
 }
 
 
