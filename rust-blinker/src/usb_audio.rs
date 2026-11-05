@@ -1,8 +1,8 @@
-//! Deterministic UAC2 capture test source: a precomputed 1 kHz PCM16 sine wave.
+//! UAC2 capture source connected to the BK-0010 emulator speaker output.
 //!
-//! This deliberately removes the BK emulator edge queue, DWT timing, and
-//! runtime sample conversion from the audio path. Each HS microframe submits
-//! exactly six mono samples (12 bytes) at 48 kHz.
+//! The emulator timestamps transitions on port 0177714 bit 6 with the DWT
+//! cycle counter. This handler resamples that edge stream to 48 kHz mono PCM16
+//! and submits six samples per USB high-speed microframe.
 
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use usb_device::bus::UsbBus;
@@ -16,20 +16,18 @@ use usbd_uac2::{
 const AUDIO_SAMPLE_RATE: u32 = 48_000;
 const SAMPLES_PER_MICROFRAME: usize = 6;
 const PACKET_BYTES: usize = SAMPLES_PER_MICROFRAME * 2;
+const AUDIO_SAMPLE_PERIOD_CYCLES: u32 = 3_500; // 168 MHz / 48 kHz
+const AUDIO_STARTUP_LATENCY_CYCLES: u32 = 168_000; // 1 ms edge-queue lead
+const AUDIO_AMPLITUDE: i16 = 12_000;
 
 // Persistent, word-aligned source buffer in normal SRAM (not CCM).
 // OTG_HS DMA reads this buffer until the transfer-complete callback.
 
-// One 1 ms cycle: 48 samples at 48 kHz, producing a 1 kHz sine wave
-// at a conservative amplitude of +/-8000 PCM16.
-const TEST_TONE: [i16; 48] = [
-    0, 1044, 2071, 3061, 4000, 4870, 5657, 6347,
-    6928, 7391, 7727, 7932, 8000, 7932, 7727, 7391,
-    6928, 6347, 5657, 4870, 4000, 3061, 2071, 1044,
-    0, -1044, -2071, -3061, -4000, -4870, -5657, -6347,
-    -6928, -7391, -7727, -7932, -8000, -7932, -7727, -7391,
-    -6928, -6347, -5657, -4870, -4000, -3061, -2071, -1044,
-];
+unsafe extern "C" {
+    fn bk_audio_start() -> u8;
+    fn bk_audio_stop();
+    fn bk_audio_pop_edge(cycles: *mut u32, level: *mut u8) -> u8;
+}
 
 static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
 static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
@@ -55,22 +53,52 @@ pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32) {
 #[repr(align(4))]
 struct DmaPacket([u32; PACKET_BYTES / 4]);
 
-pub struct TestToneAudio {
-    sample_index: usize,
+pub struct BkEmulatorAudio {
+    next_sample_cycle: u32,
+    sample_level: bool,
+    pending_edge: Option<(u32, bool)>,
     active: bool,
     dma_in_flight: bool,
     dma_packet: DmaPacket,
 }
 
-impl TestToneAudio {
+impl BkEmulatorAudio {
     const RATES: [RangeEntry<u32>; 1] = [RangeEntry::new_fixed(AUDIO_SAMPLE_RATE)];
 
     pub const fn new() -> Self {
         Self {
-            sample_index: 0,
+            next_sample_cycle: 0,
+            sample_level: false,
+            pending_edge: None,
             active: false,
             dma_in_flight: false,
             dma_packet: DmaPacket([0; PACKET_BYTES / 4]),
+        }
+    }
+
+    #[inline(always)]
+    fn cycle_counter() -> u32 {
+        cortex_m::peripheral::DWT::cycle_count()
+    }
+
+    fn apply_edges_through(&mut self, sample_cycle: u32) {
+        loop {
+            if self.pending_edge.is_none() {
+                let mut cycles = 0u32;
+                let mut level = 0u8;
+                if unsafe { bk_audio_pop_edge(&mut cycles, &mut level) } == 0 {
+                    break;
+                }
+                self.pending_edge = Some((cycles, level != 0));
+            }
+
+            let (edge_cycle, edge_level) = self.pending_edge.unwrap();
+            if sample_cycle.wrapping_sub(edge_cycle) as i32 >= 0 {
+                self.sample_level = edge_level;
+                self.pending_edge = None;
+            } else {
+                break;
+            }
         }
     }
 
@@ -84,11 +112,11 @@ impl TestToneAudio {
     }
 }
 
-impl Default for TestToneAudio {
+impl Default for BkEmulatorAudio {
     fn default() -> Self { Self::new() }
 }
 
-impl ClockSource for TestToneAudio {
+impl ClockSource for BkEmulatorAudio {
     const CLOCK_TYPE: ClockType = ClockType::InternalFixed;
     const SOF_SYNC: bool = false;
 
@@ -103,7 +131,7 @@ impl ClockSource for TestToneAudio {
     }
 }
 
-impl<'a, B: UsbBus> AudioHandler<'a, B> for TestToneAudio {
+impl<'a, B: UsbBus> AudioHandler<'a, B> for BkEmulatorAudio {
     fn audio_data_rx(&mut self, _ep: &Endpoint<'a, B, Out>) {
         // Capture-only test: there is no USB playback stream.
     }
@@ -123,9 +151,13 @@ impl<'a, B: UsbBus> AudioHandler<'a, B> for TestToneAudio {
             )
         };
         for sample_offset in 0..SAMPLES_PER_MICROFRAME {
-            let sample = TEST_TONE[(self.sample_index + sample_offset) % TEST_TONE.len()];
+            let sample_cycle = self.next_sample_cycle;
+            self.apply_edges_through(sample_cycle);
+            let sample = if self.sample_level { AUDIO_AMPLITUDE } else { -AUDIO_AMPLITUDE };
             let offset = sample_offset * 2;
             packet[offset..offset + 2].copy_from_slice(&sample.to_le_bytes());
+            self.next_sample_cycle = self.next_sample_cycle
+                .wrapping_add(AUDIO_SAMPLE_PERIOD_CYCLES);
         }
 
         // The source is persistent, 4-byte aligned SRAM and is not modified
@@ -139,7 +171,6 @@ impl<'a, B: UsbBus> AudioHandler<'a, B> for TestToneAudio {
         match unsafe { ep.write_iso_batch_dma(dma_bytes, 1, 1) } {
             Ok(_) => {
                 self.dma_in_flight = true;
-                self.sample_index = (self.sample_index + SAMPLES_PER_MICROFRAME) % TEST_TONE.len();
                 AUDIO_SUBMIT_COUNT.fetch_add(1, Ordering::Relaxed);
             }
             Err(_) => {
@@ -168,7 +199,10 @@ impl<'a, B: UsbBus> AudioHandler<'a, B> for TestToneAudio {
         if terminal != UsbDirection::In { return; }
 
         if alt_setting == 1 {
-            self.sample_index = 0;
+            self.sample_level = unsafe { bk_audio_start() != 0 };
+            self.pending_edge = None;
+            self.next_sample_cycle = Self::cycle_counter()
+                .wrapping_sub(AUDIO_STARTUP_LATENCY_CYCLES);
             self.dma_in_flight = false;
             self.active = true;
             AUDIO_ALT1_ACTIVE.store(true, Ordering::Release);
@@ -176,6 +210,8 @@ impl<'a, B: UsbBus> AudioHandler<'a, B> for TestToneAudio {
         } else {
             self.active = false;
             self.dma_in_flight = false;
+            self.pending_edge = None;
+            unsafe { bk_audio_stop(); }
             AUDIO_ALT1_ACTIVE.store(false, Ordering::Release);
         }
     }
