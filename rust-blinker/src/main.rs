@@ -204,7 +204,7 @@ fn main() -> ! {
     static mut SERIAL: MaybeUninit<BoardSerialClass> = MaybeUninit::uninit();
     let serial_ptr = unsafe { (*ptr::addr_of_mut!(SERIAL)).as_mut_ptr() };
     unsafe {
-        serial_ptr.write(SerialPort::new(bus));
+        serial_ptr.write(SerialPort::new_with_max_packet_size(bus, 512));
     }
 
     let usb_ptr = unsafe {
