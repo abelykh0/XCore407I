@@ -180,9 +180,9 @@ impl UvcClass {
                 self.alternate_setting = 0;
                 self.state = StreamState::Stopped;
                 self.start_marker_pending = false;
-                if let Some(index) = self.in_flight.take() {
-                    VIDEO_BUFFER_STATE[index].store(0, Ordering::Release);
-                }
+                // Do not release an in-flight DMA buffer here: SET_INTERFACE
+                // may be processed before the controller has fully quiesced it.
+                // A later stream batch will replace it and release it safely.
                 Ok(())
             }
             1 => {
