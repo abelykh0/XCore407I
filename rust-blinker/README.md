@@ -7,7 +7,7 @@ A **БК-0010 (Elektronika BK) emulator** running on the [XCore407I](https://www
 The project uses an unusual approach to multimedia I/O:
 
 - **Video:** Streamed directly to the PC as a USB Video Class (UVC) camera at **25 FPS**, using uncompressed NV12 video.
-- **Audio:** Analogue audio output connected to the PC's Line In input.
+- **Audio:** Transmitted to the PC through a USB Line In audio device.
 - **Input:** A physical USB keyboard connected to a separate USB port, using the STM32's USB Host functionality.
 - **Storage:** Reads files from a LittleFS filesystem stored on the onboard K9F1G08U0E 1-Gbit (128 MB) NAND Flash. Files can be launched directly from the filesystem. Adding files to LittleFS is outside the scope of this project.
 
@@ -16,15 +16,15 @@ The project uses an unusual approach to multimedia I/O:
 The XCore407I board provides the hardware required for the emulator:
 
 - **STM32F407IGT6:** ARM Cortex-M4 microcontroller running at 168 MHz, with 192 KB SRAM and 1 MB Flash.
-- **USB3300:** External USB High-Speed PHY used for UVC video connectivity.
+- **USB3300:** External USB High-Speed PHY, providing the physical interface for USB video and audio.
 - **K9F1G08U0E:** 1-Gbit NAND Flash (128 MB) for LittleFS storage.
-- **Separate USB interfaces:** USB High-Speed device connectivity for video streaming and a separate USB Full-Speed Host connection for the keyboard.
+- **USB interfaces:** USB High-Speed device connection for UVC video and USB Line In audio, and a separate USB Full-Speed Host connection for the keyboard.
 
 ## Technical Challenges
 
 - **RAM constraints:** The STM32F407 has only 192 KB of SRAM, insufficient to store a complete 512×512 NV12 video frame. Video must therefore be generated and streamed on the fly, without a full-frame buffer.
-- **USB complexity:** Coordinating UVC video streaming over USB High-Speed with USB Host keyboard input over a separate Full-Speed interface requires careful management of USB peripherals, endpoints, and timing.
-- **Real-time performance:** Maintaining stable 25 FPS video alongside continuous audio requires careful interrupt prioritization, synchronization, and CPU-load management.
+- **USB complexity:** Coordinating UVC video streaming and USB Line In audio over the High-Speed USB device connection, while handling keyboard input through a separate Full-Speed USB Host connection.
+- **Performance:** Maintaining stable 25 FPS video alongside continuous audio requires careful interrupt prioritization, synchronization, and CPU-load management.
 - **NAND Flash integration:** Implementing reliable LittleFS access on raw NAND Flash, including handling its block-oriented storage characteristics.
 
 The project explores how far a resource-constrained microcontroller can be pushed to emulate a vintage computer while interfacing with a modern PC through standard multimedia and USB interfaces.
@@ -34,10 +34,11 @@ The project explores how far a resource-constrained microcontroller can be pushe
 ```powershell
 cargo build --release --target thumbv7em-none-eabihf
 probe-rs download --chip STM32F407IGTx target/thumbv7em-none-eabihf/release/xcore407i_blinker
+```
 
 ## Not implemented / TODO
 
-- Incorrect timing
+- Improve emulation timing accuracy
 - Full keyboard support (СУ, АР2)
 - БК-0011 support
 - Ability to save and delete files
