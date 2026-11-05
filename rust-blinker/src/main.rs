@@ -1049,7 +1049,7 @@ fn SysTick() {
 fn system_clock_168mhz(rcc: &pac::RCC, pwr: &pac::PWR, flash: &pac::FLASH) {
     // The board has the 8 MHz HSE crystal used by the original firmware.
     rcc.apb1enr().modify(|_, w| w.pwren().set_bit());
-    pwr.cr().modify(|_, w| unsafe { w.vos().bits(3) }); // scale 1
+    pwr.cr().modify(|_, w| w.vos().set_bit()); // scale 1
 
     // Enable instruction/data caches, prefetch, and five wait states.
     flash.acr().write(|w| unsafe { w.bits((1 << 10) | (1 << 9) | (1 << 8) | 5) });
