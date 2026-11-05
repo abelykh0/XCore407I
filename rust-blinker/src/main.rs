@@ -383,7 +383,7 @@ fn main() -> ! {
         if now.wrapping_sub(last_audio_diagnostic) >= 250 {
             last_audio_diagnostic = now;
             let mut line = [b' '; 64];
-            line[..16].copy_from_slice(b"BK PORT WRITES:");
+            line[..15].copy_from_slice(b"BK PORT WRITES:");
             let writes = unsafe { bk_audio_port_write_count() };
             write_hex32(&mut line[17..25], writes);
             show_file_browser_line(22, &line, false);
