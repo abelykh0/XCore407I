@@ -126,8 +126,9 @@ fn program_physical_page(page: u32, data: &[u8]) -> bool {
 
 fn configure_fsmc() {
     unsafe {
-        let rcc_ahb3enr = 0x4002_3838 as *mut u32;
-        write_volatile(rcc_ahb3enr, read_volatile(rcc_ahb3enr) | 1);
+        let rcc = &*pac::RCC::ptr();
+        rcc.ahb3enr().modify(|_, w| w.fsmcen().set_bit());
+        let _ = rcc.ahb3enr().read().bits();
         let pcr2 = (FSMC_BASE + 0x60) as *mut u32;
         let timing = 4 | (8 << 8) | (4 << 16) | (2 << 24);
         write_volatile(pcr2, 0);
