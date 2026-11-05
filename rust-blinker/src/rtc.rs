@@ -11,11 +11,7 @@ static DISPLAY_HHMMSS: AtomicU32 = AtomicU32::new(0);
 
 /// Start the LSE-backed RTC and initialize it to 00:00:00 only if its calendar
 /// has never been initialized. Existing backup-domain time is preserved.
-pub fn initialize() -> bool {
-    // PAC peripheral register access.
-    let rcc = unsafe { &*RCC::ptr() };
-    let pwr = unsafe { &*PWR::ptr() };
-    let rtc = unsafe { &*RTC::ptr() };
+pub fn initialize(rcc: &RCC, pwr: &PWR, rtc: &RTC) -> bool {
 
     // Enable the PWR peripheral clock.
     rcc.apb1enr().modify(|_, w| w.pwren().set_bit());
@@ -112,7 +108,7 @@ pub fn initialize() -> bool {
         return false;
     }
 
-    refresh_display_time();
+    refresh_display_time(rtc);
     true
 }
 
@@ -129,8 +125,7 @@ fn write_protection_key(
 }
 
 /// Refresh the overlay's cached time. Call this about once per second.
-pub fn refresh_display_time() {
-    let rtc = unsafe { &*RTC::ptr() };
+pub fn refresh_display_time(rtc: &RTC) {
 
     let time = rtc.tr().read().bits();
 
