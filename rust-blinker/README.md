@@ -2,7 +2,7 @@
 
 ## Project Description
 
-A **БК-0010 (Elektronika BK) emulator** running on the [XCore407I](https://www.waveshare.com/wiki/XCore407I) development board, based on the STM32F407IGT6 microcontroller.
+A **БК-0010 (Elektronika BK) emulator** running on the [XCore407I](https://www.waveshare.com/wiki/XCore407I) development board, based on the STM32F407IGT6 microcontroller. The project explores how far a resource-constrained microcontroller can be pushed to emulate a vintage computer while interfacing with a modern PC through standard multimedia and USB interfaces.
 
 The project uses an unusual approach to multimedia I/O:
 
@@ -26,8 +26,6 @@ The XCore407I board provides the hardware required for the emulator:
 - **USB complexity:** Coordinating UVC video streaming and USB Line In audio over the High-Speed USB device connection, while handling keyboard input through a separate Full-Speed USB Host connection.
 - **Performance:** Maintaining stable 25 FPS video alongside continuous audio requires careful interrupt prioritization, synchronization, and CPU-load management.
 - **NAND Flash integration:** Implementing reliable LittleFS access on raw NAND Flash, including handling its block-oriented storage characteristics.
-
-The project explores how far a resource-constrained microcontroller can be pushed to emulate a vintage computer while interfacing with a modern PC through standard multimedia and USB interfaces.
 
 ## Commands to Build and Flash
 
