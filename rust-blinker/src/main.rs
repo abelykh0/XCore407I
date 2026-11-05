@@ -215,7 +215,6 @@ fn main() -> ! {
         usb_ptr.write(
             // Composite UAC2 + CDC-ACM device; CDC is diagnostics only.
             usbd_uac2::builder(bus, UsbVidPid(0x1209, 0x4071))
-            .composite_with_iads()
             .max_packet_size_0(64)
             .unwrap()
             .build(),
