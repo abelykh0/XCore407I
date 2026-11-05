@@ -23,7 +23,7 @@ use xcore407i_blinker::usb_uvc::{
 };
 use xcore407i_blinker::usb_audio::{
     diagnostics as audio_diagnostics,
-    TestToneAudio,
+    BkEmulatorAudio,
 };
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
@@ -89,7 +89,7 @@ unsafe extern "C" {
 type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
 type BoardUvcClass = UvcUsbClass<'static, BoardUsbBus>;
-type BoardAudioHandler = TestToneAudio;
+type BoardAudioHandler = BkEmulatorAudio;
 type BoardAudioClass = usbd_uac2::UsbAudioClass<'static, BoardUsbBus, BoardAudioHandler>;
 
 // These pointers are published once, before TIM2 is enabled. After that,
@@ -223,7 +223,7 @@ fn main() -> ! {
         (*ptr::addr_of_mut!(AUDIO_IMPL)).as_mut_ptr()
     };
     unsafe {
-        audio_impl_ptr.write(TestToneAudio::new());
+        audio_impl_ptr.write(BkEmulatorAudio::new());
     }
     let audio_impl: &'static mut BoardAudioHandler = unsafe { &mut *audio_impl_ptr };
 
