@@ -1123,7 +1123,7 @@ fn configure_board_pins(
     unsafe {
         // Use the PAC's GPIOC peripheral pointer instead of duplicating its
         // STM32F407 peripheral base address.
-        let gpioc = pac::GPIOC::ptr().cast::<u8>();
+        let gpioc = pac::GPIOC::ptr().cast::<u8>() as *mut u8;
         let bsrr = gpioc.add(0x18).cast::<u32>();
         let moder = gpioc.cast::<u32>();
         let otyper = gpioc.add(0x04).cast::<u32>();
