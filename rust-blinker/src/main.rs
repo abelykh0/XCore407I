@@ -21,10 +21,7 @@ use xcore407i_blinker::rtc;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
-use xcore407i_blinker::usb_audio::{
-    diagnostics as audio_diagnostics,
-    BkEmulatorAudio,
-};
+use xcore407i_blinker::usb_audio::BkEmulatorAudio;
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
@@ -83,6 +80,8 @@ unsafe extern "C" {
     fn sendInput(buffer: *mut u8, size: u8);
     fn bk_set_pc(start: u16);
     fn bk_request_stop_irq();
+    fn bk_audio_edge_count() -> u32;
+    fn bk_audio_port_write_count() -> u32;
     static mut RamBuffer: [u8; 0x4000];
 }
 
@@ -375,6 +374,25 @@ fn main() -> ! {
                     browser_selected,
                 );
             }
+        }
+
+        // Refresh BK speaker diagnostics at 4 Hz. Port writes show whether
+        // the emulator is addressing the speaker register; bit edges show
+        // whether speaker bit 6 actually changes while USB Audio is active.
+        let now = TICKS.load(Ordering::Relaxed);
+        if now.wrapping_sub(last_audio_diagnostic) >= 250 {
+            last_audio_diagnostic = now;
+            let mut line = [b' '; 64];
+            line[..16].copy_from_slice(b"BK PORT WRITES:");
+            let writes = unsafe { bk_audio_port_write_count() };
+            write_hex32(&mut line[17..25], writes);
+            show_file_browser_line(22, &line, false);
+
+            let mut line = [b' '; 64];
+            line[..15].copy_from_slice(b"BK BIT 6 EDGES:");
+            let edges = unsafe { bk_audio_edge_count() };
+            write_hex32(&mut line[17..25], edges);
+            show_file_browser_line(23, &line, false);
         }
 
         // Run one emulator iteration in thread context. Video batches are
