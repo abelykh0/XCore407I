@@ -264,9 +264,12 @@ fn main() -> ! {
         );
     }
 
-    // Keep UVC enumerated and polled, but disable video packet generation
-    // and endpoint resubmission for the audio isolation test.
-    unsafe { (&mut *camera_ptr).set_video_payloads_enabled(false); }
+    // Audio isolation test: generate one UVC batch, then repeat it so USB
+    // video traffic continues without continuous camera packet generation.
+    unsafe {
+        (&mut *camera_ptr).set_video_payloads_enabled(true);
+        (&mut *camera_ptr).set_repeat_video_batch(true);
+    }
 
     CAMERA_PTR.store(camera_ptr, Ordering::Release);
     AUDIO_PTR.store(audio_ptr, Ordering::Release);
