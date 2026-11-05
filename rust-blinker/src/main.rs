@@ -63,6 +63,8 @@ static FILE_BROWSER_ACTION: AtomicU8 = AtomicU8::new(0);
 static USB_FS_STATUS: AtomicU32 = AtomicU32::new(0);
 // TIM3 schedules TinyUSB host work; the actual task runs in thread context.
 static USB_HOST_TASK_PENDING: AtomicBool = AtomicBool::new(false);
+// TIM2 only schedules USB work; usb.poll() and UVC rendering run in thread context.
+static USB_POLL_PENDING: AtomicBool = AtomicBool::new(false);
 
 // HID boot-keyboard state. TinyUSB invokes HID callbacks from tuh_task_ext(),
 // so these non-atomic key snapshots are only accessed serially there.
@@ -301,8 +303,19 @@ fn main() -> ! {
     let mut last_audio_diagnostic = 0u32;
 
     loop {
-        // Application work and image generation run here at background priority.
-        // TIM2 preempts this loop to service the USB HS device every 125 us.
+        // TIM2 only sets a pending flag. Polling the USB stack here keeps UVC
+        // rendering out of interrupt context while preserving the 24 kHz wakeup.
+        if USB_POLL_PENDING.swap(false, Ordering::AcqRel) {
+            let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
+            let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
+            let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
+            if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
+                let usb = unsafe { &mut *usb_ptr };
+                let camera = unsafe { &mut *camera_ptr };
+                let audio = unsafe { &mut *audio_ptr };
+                let _ = usb.poll(&mut [camera, audio]);
+            }
+        }
         cortex_m::asm::wfi();
     }
 }
@@ -810,47 +823,14 @@ fn special_key_label(key: u8, num: bool) -> Option<&'static [u8]> {
     }
 }
 
-/// TIM2 services the USB HS device at 16 kHz (two polls per 125 us).
+/// TIM2 schedules USB HS device servicing at 24 kHz (three ticks per 125 us).
+/// The actual poll runs in main context so UVC image generation cannot extend
+/// the high-priority interrupt and delay the audio/DMA timing.
 #[interrupt]
 fn TIM2() {
-    // Clear the update interrupt flag first.
     let tim2 = unsafe { &*pac::TIM2::ptr() };
     tim2.sr().write(|w| w.uif().clear_bit());
-
-    // Poll both registered classes while video payload submission remains
-    // disabled, isolating UVC class servicing from video endpoint traffic.
-    let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
-    let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
-    let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
-    if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
-        let usb = unsafe { &mut *usb_ptr };
-        let camera = unsafe { &mut *camera_ptr };
-        let audio = unsafe { &mut *audio_ptr };
-        let _ = usb.poll(&mut [camera, audio]);
-    }
-
-    /*
-    // CPU load reporting
-    let now = TICKS.load(Ordering::Relaxed);
-    let last = LAST_CPU_SAMPLE.load(Ordering::Relaxed);
-
-    if now.wrapping_sub(last) >= CPU_SAMPLE_INTERVAL_MS {
-        LAST_CPU_SAMPLE.store(now, Ordering::Relaxed);
-
-        let (busy, generate, submit) = take_uvc_cycle_metrics();
-
-        let busy_cycles = busy as u64;
-        let busy_percent = ((busy_cycles * 100) / CORE_CLOCK_HZ).min(100) as u8;
-        let generate_percent = (((generate as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
-        let submit_percent = (((submit as u64) * 100) / CORE_CLOCK_HZ).min(100) as u8;
-
-        camera.set_cpu_metrics(
-            100 - busy_percent,
-            generate_percent,
-            submit_percent,
-        );
-    }
-    */
+    USB_POLL_PENDING.store(true, Ordering::Release);
 }
 
 /// Configure TIM3 as a 1 kHz scheduler tick for the TinyUSB FS host task.
