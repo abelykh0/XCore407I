@@ -189,9 +189,9 @@ impl UvcClass {
                 self.alternate_setting = 1;
                 self.state = StreamState::Ready;
                 self.start_marker_pending = true;
-                self.camera.reset();
-                self.packet_len = 0;
-                self.packet_count = 0;
+                // Frame progression belongs to the main-loop producer.
+                // Keep the current DMA buffer owned until a replacement batch
+                // is submitted or the device is reset.
                 Ok(())
             }
             _ => Err(ControlError::Unsupported),
