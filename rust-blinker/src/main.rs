@@ -294,183 +294,19 @@ fn main() -> ! {
     let mut last_audio_diagnostic = 0u32;
 
     loop {
-        let browser_action = FILE_BROWSER_ACTION.swap(0, Ordering::AcqRel);
-
-        if browser_action == FILE_BROWSER_OPEN && !browser_open {
-            KEYBOARD_INPUT_LEN.store(0, Ordering::Release);
-            match list_root_files(&mut *browser_paths, &mut *browser_path_lengths) {
-                Ok(count) => {
-                    browser_count = count;
-                    browser_selected = 0;
-                    browser_open = true;
-                    FILE_BROWSER_ACTIVE.store(true, Ordering::Release);
-                    draw_file_browser(
-                        &*browser_paths,
-                        &*browser_path_lengths,
-                        browser_count,
-                        browser_selected,
-                    );
-                }
-                Err(()) => {
-                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
-                    show_usb_status(b"NAND FILE LIST FAILED");
-                }
-            }
-        }
-
-        if browser_open {
-            let mut redraw = false;
-            match browser_action {
-                FILE_BROWSER_UP if browser_count != 0 && browser_selected > 0 => {
-                    browser_selected -= 1;
-                    redraw = true;
-                }
-                FILE_BROWSER_DOWN if browser_count != 0 && browser_selected + 1 < browser_count => {
-                    browser_selected += 1;
-                    redraw = true;
-                }
-                FILE_BROWSER_ENTER if browser_count != 0 => {
-                    let path_len = browser_path_lengths[browser_selected] as usize;
-                    let result = load_tetris_from_path(&browser_paths[browser_selected][..path_len]);
-                    browser_open = false;
-                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
-                    clear_demo_canvas(0x10);
-                    if result.is_ok() {
-                        show_usb_status(b"PROGRAM LOADED");
-                    } else {
-                        show_usb_status(b"LOAD FAILED - CHECK FILE FORMAT");
-                    }
-                }
-                FILE_BROWSER_ESCAPE => {
-                    browser_open = false;
-                    FILE_BROWSER_ACTIVE.store(false, Ordering::Release);
-                    clear_demo_canvas(0x10);
-                    show_usb_status(b"FILE BROWSER CANCELLED");
-                }
-                _ => {}
-            }
-            if redraw {
-                draw_file_browser(
-                    &*browser_paths,
-                    &*browser_path_lengths,
-                    browser_count,
-                    browser_selected,
-                );
-            }
-        }
-
-        // Pause emulator execution while the file browser owns the canvas.
-        if !browser_open {
-            unsafe { bk_loop(); }
-            let input_len = KEYBOARD_INPUT_LEN.swap(0, Ordering::AcqRel);
-            if input_len > 0 {
-                let mut buffer = [0u8; 32];
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        core::ptr::addr_of!(KEYBOARD_INPUT_BUFFER).cast::<u8>(),
-                        buffer.as_mut_ptr(),
-                        input_len as usize,
-                    );
-                    sendInput(buffer.as_mut_ptr(), input_len);
-                }
-            }
-        }
-
-        // Canvas clearing is deferred to thread context; TIM2 emits black
-        // frames until the new mode's canvas has been cleared.
-
-        // Test configuration: service the USB HS device continuously from
-        // thread context. TIM2 remains enabled as an 8 kHz timing interrupt,
-        // but no longer calls usb.poll().
+        // Isolation test: all application work is disabled. Keep only USB HS
+        // polling so UVC video and UAC2 audio continue running.
         let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
         let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
         let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
         if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
-            // SAFETY: after publication, main is now the sole owner of these
-            // mutable USB objects; TIM2 only acknowledges its timer interrupt.
+            // SAFETY: main is the sole owner of these USB objects; TIM2 only
+            // acknowledges its timer interrupt.
             let usb = unsafe { &mut *usb_ptr };
             let camera = unsafe { &mut *camera_ptr };
             let audio = unsafe { &mut *audio_ptr };
             let _ = usb.poll(&mut [camera, audio]);
         }
-
-        let now = TICKS.load(Ordering::Relaxed);
-
-        // Keep only the audio stream state and transfer counters needed to
-        // determine whether Windows activates the stream and EP2 transfers run.
-        if !browser_open && now.wrapping_sub(last_audio_diagnostic) >= 1000 {
-            last_audio_diagnostic = now;
-
-            let (active, attempts, submits, write_fails, completes, incompletes, retry_streak) =
-                audio_diagnostics();
-
-            let mut line = [b' '; 32];
-            line[0..4].copy_from_slice(b"ALT:");
-            line[4] = if active { b'1' } else { b'0' };
-            line[6] = b'A';
-            write_hex32(&mut line[7..11], attempts & 0xFFFF);
-            line[12] = b'S';
-            write_hex32(&mut line[13..17], submits & 0xFFFF);
-            show_file_browser_line(22, &line, false);
-
-            let mut line = [b' '; 32];
-            line[0] = b'W';
-            write_hex32(&mut line[1..5], write_fails & 0xFFFF);
-            line[6] = b'C';
-            write_hex32(&mut line[7..11], completes & 0xFFFF);
-            line[12] = b'I';
-            write_hex32(&mut line[13..17], incompletes & 0xFFFF);
-            line[18] = b'R';
-            write_hex32(&mut line[19..23], retry_streak as u32);
-            line[24] = b'E';
-            // Only EP2 (0x82, audio IN); ignore the camera's EP1 incomplete events.
-            write_hex32(&mut line[25..29], iso_incomplete_event_snapshot() & (1 << 2));
-            show_file_browser_line(23, &line, false);
-
-            // Minimal DWC2 snapshot from the most recent isochronous-IN
-            // incomplete event, for EP2 (audio).
-            let (diepctl, dieptsiz, diepint, fnsof) = iso_incomplete_snapshot(2);
-            let mut line = [b' '; 32];
-            line[0..4].copy_from_slice(b"CTL:");
-            write_hex32(&mut line[4..12], diepctl);
-            line[13..18].copy_from_slice(b"SIZE:");
-            write_hex32(&mut line[18..26], dieptsiz);
-            show_file_browser_line(24, &line, false);
-
-            let mut line = [b' '; 32];
-            line[0..4].copy_from_slice(b"INT:");
-            write_hex32(&mut line[4..12], diepint);
-            line[13..16].copy_from_slice(b"FN:");
-            write_hex32(&mut line[16..24], fnsof);
-            show_file_browser_line(25, &line, false);
-        }
-
-        // if rtc_ready && now.wrapping_sub(last_rtc_sample) >= 1000 {
-        //     last_rtc_sample = now;
-        //     rtc::refresh_display_time();
-        //     update_clock_from_rtc();
-        // } // Temporarily disable the RTC clock overlay.
-
-        if USB_HOST_TASK_PENDING.swap(false, Ordering::AcqRel) {
-            unsafe { tusb::tuh_task_ext(0, false); }
-        }
-/*
-        let status = USB_FS_STATUS.swap(0, Ordering::AcqRel);
-        let message: &[u8] = match status {
-            1 => b"USB FS: WAITING FOR DEVICE",
-            2 => b"USB FS: HOST INIT FAILED",
-            3 => b"USB FS: DEVICE ENUMERATED",
-            4 => b"USB FS: KEYBOARD MOUNTED",
-            5 => b"USB FS: KEYBOARD REMOVED",
-            6 => b"USB FS: KEYBOARD INPUT",
-            7 => b"USB FS: DEVICE DESCRIPTOR",
-            8 => b"USB FS: CONFIG DESCRIPTOR",
-            9 => b"USB FS: BOOT PROTOCOL FAILED",
-            _ => b"",
-        };
-        if !message.is_empty() { show_usb_status(message); }
-*/
-        // rotozoom.render_next();
     }
 }
 
