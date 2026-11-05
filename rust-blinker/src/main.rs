@@ -29,7 +29,7 @@ const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
 // One timer interrupt per USB HS microframe (125 us, 8 kHz).
 const USB_POLL_TIMER_HZ: u32 = 8_000;
-const TIM2_PRIORITY: u8 = 2;
+const TIM2_PRIORITY: u8 = 0;
 const TIM3_PRIORITY: u8 = 3;
 const SYSTICK_PRIORITY: u8 = 1;
 
@@ -904,7 +904,9 @@ fn configure_exception_priorities(scb: &mut SCB) {
         let aircr = SCB_AIRCR.read_volatile();
         SCB_AIRCR.write_volatile((aircr & !(7 << 8)) | (0x5FA << 16));
 
-        // Cortex-M API handles the system-handler priority register layout.
+        // TIM2 is priority 0 (highest): USB HS polling must not be delayed
+        // by the 1 ms timebase. SysTick remains enabled at priority 1 so it
+        // can preempt lower-priority work and continue advancing TinyUSB time.
         scb.set_priority(SystemHandler::SysTick, SYSTICK_PRIORITY << 4);
 
         // This Synopsys driver is polled; it does not provide an OTG_HS NVIC
