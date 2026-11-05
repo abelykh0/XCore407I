@@ -21,8 +21,6 @@ use xcore407i_blinker::usb_uvc::{
 };
 use xcore407i_blinker::usb_audio::BkEmulatorAudio;
 
-const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
-
 // USB polling timer runs at 16 kHz (62.5 us between polls).
 const USB_POLL_TIMER_HZ: u32 = 16_000;
 const TIM2_PRIORITY: u8 = 0;
@@ -95,12 +93,11 @@ static AUDIO_PTR: AtomicPtr<BoardAudioClass> = AtomicPtr::new(ptr::null_mut());
 
 #[entry]
 fn main() -> ! {
-    system_clock_168mhz();
+    let mut device = pac::Peripherals::take().unwrap();
+    system_clock_168mhz(&device.RCC, &device.PWR, &device.FLASH);
 
     let mut core = cortex_m::Peripherals::take().unwrap();
     core.SCB.enable_fpu();
-
-    let mut device = pac::Peripherals::take().unwrap();
 
     rtc::initialize(&device.RCC, &device.PWR, &device.RTC);
     // update_clock_from_rtc(); // Temporarily disable the RTC clock overlay.
@@ -149,17 +146,15 @@ fn main() -> ! {
 
     // Enable and reset OTG_FS before handing it to TinyUSB. OTG_HS remains
     // owned by the UVC driver and is not reset here.
-    unsafe {
-        const RCC_AHB2ENR: *mut u32 = 0x4002_3834 as *mut u32;
-        const RCC_AHB2RSTR: *mut u32 = 0x4002_3814 as *mut u32;
-        RCC_AHB2ENR.write_volatile(RCC_AHB2ENR.read_volatile() | (1 << 7));
-        let _ = RCC_AHB2ENR.read_volatile(); // complete the clock-enable write
+    device.RCC.ahb2enr().modify(|_, w| w.otgfsen().set_bit());
+    let _ = device.RCC.ahb2enr().read().bits(); // complete the clock-enable write
 
-        RCC_AHB2RSTR.write_volatile(RCC_AHB2RSTR.read_volatile() | (1 << 7));
-        for _ in 0..16 { core::arch::asm!("nop"); }
-        RCC_AHB2RSTR.write_volatile(RCC_AHB2RSTR.read_volatile() & !(1 << 7));
-        let _ = RCC_AHB2RSTR.read_volatile();
+    device.RCC.ahb2rstr().modify(|_, w| w.otgfsrst().set_bit());
+    for _ in 0..16 {
+        unsafe { core::arch::asm!("nop"); }
     }
+    device.RCC.ahb2rstr().modify(|_, w| w.otgfsrst().clear_bit());
+    let _ = device.RCC.ahb2rstr().read().bits();
 
     // Prepare the OTG_FS interrupt while keeping it masked until TinyUSB has
     // initialized the host controller and installed its interrupt sources.
@@ -1051,42 +1046,34 @@ fn SysTick() {
     TICKS.fetch_add(1, Ordering::Relaxed);
 }
 
-fn system_clock_168mhz() {
-    const RCC_CR: *mut u32 = 0x4002_3800 as *mut u32;
-    const RCC_PLLCFGR: *mut u32 = 0x4002_3804 as *mut u32;
-    const RCC_CFGR: *mut u32 = 0x4002_3808 as *mut u32;
-    const PWR_CR: *mut u32 = 0x4000_7000 as *mut u32;
-    const FLASH_ACR: *mut u32 = 0x4002_3c00 as *mut u32;
+fn system_clock_168mhz(rcc: &pac::RCC, pwr: &pac::PWR, flash: &pac::FLASH) {
+    // The board has the 8 MHz HSE crystal used by the original firmware.
+    rcc.apb1enr().modify(|_, w| w.pwren().set_bit());
+    pwr.cr().modify(|_, w| unsafe { w.vos().bits(3) }); // scale 1
 
-    unsafe {
-        // The board has the 8 MHz HSE crystal used by the original firmware.
-        RCC_APB1ENR.write_volatile(RCC_APB1ENR.read_volatile() | (1 << 28));
-        PWR_CR.write_volatile(
-            (PWR_CR.read_volatile() & !(3 << 14)) | (3 << 14)
-        ); // scale 1
+    // Enable instruction/data caches, prefetch, and five wait states.
+    flash.acr().write(|w| unsafe { w.bits((1 << 10) | (1 << 9) | (1 << 8) | 5) });
 
-        FLASH_ACR.write_volatile((1 << 10) | (1 << 9) | (1 << 8) | 5);
-        // caches + 5 WS
+    rcc.cr().modify(|_, w| w.hseon().set_bit());
+    while !rcc.cr().read().hserdy().bit_is_set() {}
 
-        RCC_CR.write_volatile(RCC_CR.read_volatile() | (1 << 16)); // HSEON
-        while RCC_CR.read_volatile() & (1 << 17) == 0 {}
+    // PLLM=4, PLLN=168, PLLP=/2, PLL source=HSE, PLLQ=7.
+    rcc.pllcfgr().write(|w| unsafe {
+        w.bits(4 | (168 << 6) | (1 << 22) | (7 << 24))
+    });
 
-        // PLLM=4, PLLN=168, PLLP=/2, PLL source=HSE, PLLQ=7.
-        RCC_PLLCFGR.write_volatile(4 | (168 << 6) | (1 << 22) | (7 << 24));
+    rcc.cr().modify(|_, w| w.pllon().set_bit());
+    while !rcc.cr().read().pllrdy().bit_is_set() {}
 
-        RCC_CR.write_volatile(RCC_CR.read_volatile() | (1 << 24)); // PLLON
-        while RCC_CR.read_volatile() & (1 << 25) == 0 {}
+    // HCLK=/1, APB1=/4, APB2=/2, then switch SYSCLK to PLL.
+    rcc.cfgr().modify(|_, w| {
+        w.hpre().div1()
+            .ppre1().div4()
+            .ppre2().div2()
+            .sw().pll()
+    });
 
-        // HCLK=/1, APB1=/4, APB2=/2, then switch SYSCLK to PLL.
-        let cfgr = RCC_CFGR.read_volatile();
-        let cfgr = (cfgr & !((0xf << 4) | (7 << 10) | (7 << 13) | 3))
-            | (5 << 10)
-            | (4 << 13);
-
-        RCC_CFGR.write_volatile(cfgr | 2);
-
-        while RCC_CFGR.read_volatile() & (3 << 2) != (2 << 2) {}
-    }
+    while rcc.cfgr().read().sws().bits() != 2 {}
 }
 
 /// Configure the Ethernet MDIO/MDC and USB3300 ULPI pin muxes.
