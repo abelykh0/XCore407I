@@ -6,7 +6,7 @@ use crate::uvc::{
     ISO_PACKETS_PER_MICROFRAME, MAX_PACKET_SIZE,
 };
 use core::mem::MaybeUninit;
-use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicBool, Ordering};
 use synopsys_usb_otg::{PhyType, UsbPeripheral};
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus, UsbBusAllocator};
 use usb_device::class::{ControlIn, ControlOut, UsbClass};
