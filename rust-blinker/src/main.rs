@@ -301,19 +301,9 @@ fn main() -> ! {
     let mut last_audio_diagnostic = 0u32;
 
     loop {
-        // Isolation test: poll both classes, but suppress UVC video payload
-        // generation/submission. UVC control requests remain serviced.
-        let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
-        let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
-        let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
-        if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
-            // SAFETY: main is the sole owner of these USB objects; TIM2 only
-            // acknowledges its timer interrupt.
-            let usb = unsafe { &mut *usb_ptr };
-            let camera = unsafe { &mut *camera_ptr };
-            let audio = unsafe { &mut *audio_ptr };
-            let _ = usb.poll(&mut [camera, audio]);
-        }
+        // Application work and image generation run here at background priority.
+        // TIM2 preempts this loop to service the USB HS device every 125 us.
+        cortex_m::asm::wfi();
     }
 }
 
@@ -820,15 +810,24 @@ fn special_key_label(key: u8, num: bool) -> Option<&'static [u8]> {
     }
 }
 
-/// TIM2 continues firing at 8 kHz as a timing interrupt.
-/// USB HS polling is temporarily performed from the main loop instead.
+/// TIM2 services the USB HS device at 8 kHz (one poll per 125 us).
 #[interrupt]
 fn TIM2() {
-    // Obtain the TIM2 register block for interrupt-flag handling.
+    // Clear the update interrupt flag first.
     let tim2 = unsafe { &*pac::TIM2::ptr() };
-
-    // Clear the update interrupt flag. Do not access USB objects here.
     tim2.sr().write(|w| w.uif().clear_bit());
+
+    // TIM2 is the sole owner of the USB device and class objects after
+    // publication. Main-loop image generation cannot hold these references.
+    let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
+    let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
+    let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
+    if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
+        let usb = unsafe { &mut *usb_ptr };
+        let camera = unsafe { &mut *camera_ptr };
+        let audio = unsafe { &mut *audio_ptr };
+        let _ = usb.poll(&mut [camera, audio]);
+    }
 
     /*
     // CPU load reporting
