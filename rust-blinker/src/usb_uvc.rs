@@ -36,7 +36,7 @@ unsafe impl UsbPeripheral for F407UsbHs {
     fn enable() {
         let rcc = unsafe { &*RCC::ptr() };
         rcc.ahb1enr().modify(|_, w| {
-            w.otghsen().set_bit().otghsulpi().set_bit()
+            w.otghsen().set_bit().otghsulpien().set_bit()
         });
         let _ = rcc.ahb1enr().read().bits();
     }
