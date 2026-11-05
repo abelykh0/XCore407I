@@ -28,8 +28,8 @@ use xcore407i_blinker::usb_audio::{
 
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
-// USB polling timer runs at 10 kHz (100 us between polls).
-const USB_POLL_TIMER_HZ: u32 = 10_000;
+// USB polling timer runs at 16 kHz (62.5 us between polls).
+const USB_POLL_TIMER_HZ: u32 = 16_000;
 const TIM2_PRIORITY: u8 = 0;
 const TIM3_PRIORITY: u8 = 3;
 const SYSTICK_PRIORITY: u8 = 1;
