@@ -603,10 +603,10 @@ impl Nv12DemoImage {
         out[1] = 0x80 | u8::from(self.frame_id) | if complete { 0x02 } else { 0 };
         out[2] = 0; // PTS not present
         out[3] = 0; // SCR not present
-        self.fill_nv12(
-            self.offset,
-            &mut out[UVC_HEADER_BYTES..UVC_HEADER_BYTES + data_len],
-        );
+        // Temporary USB/audio isolation pattern: keep the normal frame
+        // packetization and FID/EOF handling, but do not render camera pixels.
+        // NV12 Y=0x80 and interleaved UV=0x80 produce a uniform grey frame.
+        out[UVC_HEADER_BYTES..UVC_HEADER_BYTES + data_len].fill(0x80);
         /* CPU diagnostics are retained here for later use, but hidden from
          * the demo image so its contents remain unobstructed.
         let stage_start = cycle_counter();
