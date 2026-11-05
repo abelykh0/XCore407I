@@ -29,7 +29,7 @@ use xcore407i_blinker::usb_audio::{
 const RCC_APB1ENR: *mut u32 = 0x4002_3840 as *mut u32;
 
 // Three timer interrupts per USB HS microframe (about 41.7 us, 24 kHz).
-const USB_POLL_TIMER_HZ: u32 = 24_000;
+const USB_POLL_TIMER_HZ: u32 = 20_000;
 const TIM2_PRIORITY: u8 = 0;
 const TIM3_PRIORITY: u8 = 3;
 const SYSTICK_PRIORITY: u8 = 1;
@@ -282,7 +282,7 @@ fn main() -> ! {
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
     // Start the independent USB service timers only after all USB objects
-    // are initialized and published. TIM2 services the HS USB device at 16 kHz.
+    // are initialized and published. TIM2 services the HS USB device at 20 kHz.
     configure_usb_poll_timer(
         &device.RCC,
         &device.TIM2,
@@ -817,7 +817,7 @@ fn special_key_label(key: u8, num: bool) -> Option<&'static [u8]> {
     }
 }
 
-/// TIM2 services the USB HS device at 24 kHz (three polls per 125 us).
+/// TIM2 services the USB HS device at 20 kHz (50 us between polls).
 /// Video rendering is performed by the main-loop producer, not by callbacks.
 #[interrupt]
 fn TIM2() {
@@ -899,13 +899,13 @@ fn configure_exception_priorities(scb: &mut SCB) {
     }
 }
 
-/// Configure TIM2 for a 62.5 us update period and enable its NVIC line.
+/// Configure TIM2 for a 50 us update period and enable its NVIC line.
 fn configure_usb_poll_timer(
     rcc: &pac::RCC,
     tim2: &pac::TIM2,
     nvic: &mut NVIC,
 ) {
-    // TIM2CLK = 84 MHz, PSC = 0, ARR = 5249 => 16,000 updates/second.
+    // TIM2CLK = 84 MHz, PSC = 0, ARR = 4199 => 20,000 updates/second.
     let timer_ticks = 84_000_000 / USB_POLL_TIMER_HZ;
 
     // Enable TIM2 on APB1.
@@ -920,7 +920,7 @@ fn configure_usb_poll_timer(
     tim2.dier().write(|w| w.uie().clear_bit());
 
     // PSC and CNT are zero after the peripheral reset.
-    // ARR = 5249 gives a 62.5 us update period at 84 MHz.
+    // ARR = 4199 gives a 50 us update period at 84 MHz.
     tim2.arr().write(|w| unsafe {
         w.arr().bits(timer_ticks - 1)
     });
