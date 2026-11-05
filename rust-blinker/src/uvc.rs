@@ -6,7 +6,8 @@
 //! The USB controller glue must expose interface 0/1 and a high-bandwidth HS
 //! ISO IN endpoint at `ENDPOINT_IN`.
 
-use crate::camera::{Nv12DemoImage, HEIGHT, WIDTH};
+use crate::camera::Nv12DemoImage;
+use core::sync::atomic::{AtomicU8, AtomicU16, Ordering};
 
 pub const CONTROL_INTERFACE: u8 = 0;
 pub const STREAMING_INTERFACE: u8 = 1;
@@ -28,11 +29,80 @@ pub const UVC_VERSION: u16 = 0x0110;
 pub const PROBE_LENGTH: usize = 34;
 pub const PROBE_LENGTH_UVC_10: usize = 26;
 
-// OTG_HS internal DMA reads payloads from SRAM in 32-bit words. Keep the
-// persistent packet buffer explicitly aligned even though the current driver
-// still writes packets through the FIFO.
+// Two SRAM-resident buffers decouple image generation from USB servicing.
+// State: 0=free, 1=producer writing, 2=ready, 3=owned by USB/DMA.
 #[repr(C, align(4))]
 struct UsbDmaBuffer([u8; ISO_BATCH_BYTES]);
+
+static mut VIDEO_BUFFERS: [UsbDmaBuffer; 2] = [
+    UsbDmaBuffer([0; ISO_BATCH_BYTES]),
+    UsbDmaBuffer([0; ISO_BATCH_BYTES]),
+];
+static VIDEO_BUFFER_STATE: [AtomicU8; 2] = [AtomicU8::new(0), AtomicU8::new(0)];
+static VIDEO_BUFFER_LENGTH: [AtomicU16; 2] = [AtomicU16::new(0), AtomicU16::new(0)];
+static VIDEO_BUFFER_PACKETS: [AtomicU8; 2] = [AtomicU8::new(0), AtomicU8::new(0)];
+
+/// Generate one batch in thread context. Only a FREE buffer can be claimed;
+/// publishing READY with Release makes its bytes and metadata visible to TIM2.
+pub fn prepare_next_video_batch(camera: &mut Nv12DemoImage) -> bool {
+    for index in 0..VIDEO_BUFFER_STATE.len() {
+        if VIDEO_BUFFER_STATE[index]
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            continue;
+        }
+        let buffer = unsafe {
+            core::ptr::addr_of_mut!(VIDEO_BUFFERS)
+                .cast::<UsbDmaBuffer>()
+                .add(index)
+                .as_mut()
+                .unwrap()
+        };
+        if let Some(payload) = camera.next_payload_transfer(&mut buffer.0, ISO_BATCH_BYTES) {
+            let packets = payload.len.div_ceil(MAX_PACKET_SIZE as usize) as u8;
+            VIDEO_BUFFER_LENGTH[index].store(payload.len as u16, Ordering::Relaxed);
+            VIDEO_BUFFER_PACKETS[index].store(packets, Ordering::Relaxed);
+            VIDEO_BUFFER_STATE[index].store(2, Ordering::Release);
+            return true;
+        }
+        VIDEO_BUFFER_STATE[index].store(0, Ordering::Release);
+        return false;
+    }
+    false
+}
+
+fn ready_video_batch() -> Option<(usize, &'static [u8], u8)> {
+    for index in 0..VIDEO_BUFFER_STATE.len() {
+        if VIDEO_BUFFER_STATE[index]
+            .compare_exchange(2, 3, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            let len = VIDEO_BUFFER_LENGTH[index].load(Ordering::Relaxed) as usize;
+            let packets = VIDEO_BUFFER_PACKETS[index].load(Ordering::Relaxed);
+            let ptr = unsafe {
+                core::ptr::addr_of!(VIDEO_BUFFERS)
+                    .cast::<UsbDmaBuffer>()
+                    .add(index)
+                    .cast::<u8>()
+            };
+            return Some((index, unsafe { core::slice::from_raw_parts(ptr, len) }, packets));
+        }
+    }
+    None
+}
+
+fn video_batch_for(index: usize) -> (&'static [u8], u8) {
+    let len = VIDEO_BUFFER_LENGTH[index].load(Ordering::Relaxed) as usize;
+    let packets = VIDEO_BUFFER_PACKETS[index].load(Ordering::Relaxed);
+    let ptr = unsafe {
+        core::ptr::addr_of!(VIDEO_BUFFERS)
+            .cast::<UsbDmaBuffer>()
+            .add(index)
+            .cast::<u8>()
+    };
+    (unsafe { core::slice::from_raw_parts(ptr, len) }, packets)
+}
 
 const PROBE: u8 = 1;
 const COMMIT: u8 = 2;
@@ -72,25 +142,18 @@ pub struct UvcClass {
     alternate_setting: u8,
     probe: [u8; PROBE_LENGTH],
     commit: [u8; PROBE_LENGTH],
-    camera: Nv12DemoImage,
-    packet: UsbDmaBuffer,
-    packet_len: usize,
-    packet_count: u8,
+    in_flight: Option<usize>,
     start_marker_pending: bool,
 }
 
 impl UvcClass {
     pub fn try_new() -> Option<Self> {
-        let camera = Nv12DemoImage::try_new()?;
         Some(Self {
             state: StreamState::Stopped,
             alternate_setting: 0,
             probe: make_stream_control(),
             commit: make_stream_control(),
-            camera,
-            packet: UsbDmaBuffer([0; ISO_BATCH_BYTES]),
-            packet_len: 0,
-            packet_count: 0,
+            in_flight: None,
             start_marker_pending: false,
         })
     }
@@ -104,7 +167,7 @@ impl UvcClass {
     }
 
     pub fn set_cpu_metrics(&mut self, available: u8, generate: u8, submit: u8) {
-        self.camera.set_cpu_metrics(available, generate, submit);
+        let _ = (available, generate, submit);
     }
 
     /// Handle standard SET_INTERFACE for the VideoStreaming interface.
@@ -117,9 +180,9 @@ impl UvcClass {
                 self.alternate_setting = 0;
                 self.state = StreamState::Stopped;
                 self.start_marker_pending = false;
-                self.camera.reset();
-                self.packet_len = 0;
-                self.packet_count = 0;
+                if let Some(index) = self.in_flight.take() {
+                    VIDEO_BUFFER_STATE[index].store(0, Ordering::Release);
+                }
                 Ok(())
             }
             1 => {
@@ -135,51 +198,46 @@ impl UvcClass {
         }
     }
 
-    /// Produces up to the configured number of complete UVC payloads when alternate setting 1
-    /// activates the stream. The USB driver queues them in one microframe.
-    pub fn start_stream_batch(&mut self) -> Option<(&[u8], u8)> {
-        if self.state == StreamState::Ready && self.start_marker_pending {
-            self.start_marker_pending = false;
-            self.state = StreamState::Streaming;
-            self.build_packet_batch()
+    /// Claim a prepared batch. Keep the previous batch in flight until a
+    /// replacement is ready; on underrun the endpoint repeats the old batch.
+    pub fn start_stream_batch(&mut self) -> Option<(&'static [u8], u8)> {
+        if self.state != StreamState::Ready || !self.start_marker_pending {
+            return None;
+        }
+        self.start_marker_pending = false;
+        self.state = StreamState::Streaming;
+        self.claim_next_video_batch()
+    }
+
+    pub fn next_in_batch(&mut self) -> Option<(&'static [u8], u8)> {
+        if self.state != StreamState::Streaming {
+            return None;
+        }
+        self.claim_next_video_batch()
+    }
+
+    pub fn current_in_batch(&self) -> Option<(&'static [u8], u8)> {
+        self.in_flight.map(video_batch_for)
+    }
+
+    pub fn restart_after_iso_recovery(&mut self) -> Option<(&'static [u8], u8)> {
+        if self.state != StreamState::Streaming {
+            return None;
+        }
+        self.claim_next_video_batch()
+    }
+
+    fn claim_next_video_batch(&mut self) -> Option<(&'static [u8], u8)> {
+        if let Some((index, bytes, packets)) = ready_video_batch() {
+            if let Some(previous) = self.in_flight.replace(index) {
+                if previous != index {
+                    VIDEO_BUFFER_STATE[previous].store(0, Ordering::Release);
+                }
+            }
+            Some((bytes, packets))
         } else {
-            None
+            self.current_in_batch()
         }
-    }
-
-    /// Return the next batch of UVC payloads after the previous IN
-    /// transfer completes.
-    /// The returned slice remains valid until this method is called again.
-    pub fn next_in_batch(&mut self) -> Option<(&[u8], u8)> {
-        if self.state != StreamState::Streaming {
-            return None;
-        }
-        self.build_packet_batch()
-    }
-
-    /// The last generated payload, retained for retry after an incomplete
-    /// isochronous IN event. It stays valid until another batch is generated.
-    pub fn current_in_batch(&self) -> Option<(&[u8], u8)> {
-        (self.packet_len != 0).then_some((&self.packet.0[..self.packet_len], self.packet_count))
-    }
-
-    /// Start a fresh frame after the endpoint has been recovered.
-    pub fn restart_after_iso_recovery(&mut self) -> Option<(&[u8], u8)> {
-        if self.state != StreamState::Streaming {
-            return None;
-        }
-        self.camera.reset();
-        self.build_packet_batch()
-    }
-
-    fn build_packet_batch(&mut self) -> Option<(&[u8], u8)> {
-        let payload = self
-            .camera
-            .next_payload_transfer(&mut self.packet.0, ISO_BATCH_BYTES)?;
-        let packet_count = payload.len.div_ceil(MAX_PACKET_SIZE as usize) as u8;
-        self.packet_len = payload.len;
-        self.packet_count = packet_count;
-        Some((&self.packet.0[..self.packet_len], self.packet_count))
     }
 
     /// Process UVC class-specific control requests. `out_data` is the EP0 OUT
