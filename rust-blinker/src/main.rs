@@ -892,6 +892,9 @@ fn append_diag_hex(buffer: &mut [u8], mut offset: usize, value: u32) -> usize {
 /// TIM2 fires at 8 kHz. This is the only place that calls UsbDevice::poll().
 #[interrupt]
 fn TIM2() {
+    // Read CYCCNT immediately to measure actual interrupt-entry spacing.
+    let entry_cycles = read_dwt_cycle_count();
+
     // Derive a 1 ms tick from every eight 125 us audio-service interrupts.
     if TIM2_MILLISECOND_DIVIDER.fetch_add(1, Ordering::Relaxed) == 7 {
         TIM2_MILLISECOND_DIVIDER.store(0, Ordering::Relaxed);
@@ -904,7 +907,6 @@ fn TIM2() {
     // Clear the update interrupt flag.
     tim2.sr().write(|w| w.uif().clear_bit());
 
-    let entry_cycles = read_dwt_cycle_count();
     let previous_entry = TIM2_LAST_ENTRY_CYCLES.swap(entry_cycles, Ordering::Relaxed);
     if previous_entry != 0 {
         let gap = entry_cycles.wrapping_sub(previous_entry);
@@ -950,7 +952,7 @@ fn TIM2() {
         len = append_diag_hex(&mut line, len, max_poll);
         len = append_diag_text(&mut line, len, b" late=");
         len = append_diag_hex(&mut line, len, late);
-        len = append_diag_text(&mut line, len, b"\\r\\n");
+        len = append_diag_text(&mut line, len, b"\r\n");
         let _ = serial.write(&line[..len]);
     }
 
