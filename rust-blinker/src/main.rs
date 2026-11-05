@@ -13,7 +13,6 @@ use stm32f4xx_hal::pac;
 use synopsys_usb_otg::{iso_incomplete_snapshot, UsbBus};
 use synopsys_usb_otg::bus::iso_incomplete_event_snapshot;
 use usb_device::device::{UsbDevice, UsbVidPid};
-use usbd_serial::SerialPort;
 use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
@@ -92,12 +91,10 @@ type BoardUsbBus = UsbBus<F407UsbHs>;
 type BoardUsbDevice = UsbDevice<'static, BoardUsbBus>;
 type BoardAudioHandler = TestToneAudio;
 type BoardAudioClass = usbd_uac2::UsbAudioClass<'static, BoardUsbBus, BoardAudioHandler>;
-type BoardSerialClass = SerialPort<'static, BoardUsbBus>;
 
 // TIM2 exclusively owns the USB device and all registered USB classes after initialization.
 static USB_DEVICE_PTR: AtomicPtr<BoardUsbDevice> = AtomicPtr::new(ptr::null_mut());
 static AUDIO_PTR: AtomicPtr<BoardAudioClass> = AtomicPtr::new(ptr::null_mut());
-static SERIAL_PTR: AtomicPtr<BoardSerialClass> = AtomicPtr::new(ptr::null_mut());
 
 #[entry]
 fn main() -> ! {
@@ -199,21 +196,12 @@ fn main() -> ! {
         audio_ptr.write(audio_class);
     }
 
-    // CDC-ACM is used only for low-rate timing diagnostics. It shares the HS
-    // device with UAC2; both classes are serviced by the TIM2 poll owner.
-    static mut SERIAL: MaybeUninit<BoardSerialClass> = MaybeUninit::uninit();
-    let serial_ptr = unsafe { (*ptr::addr_of_mut!(SERIAL)).as_mut_ptr() };
-    unsafe {
-        serial_ptr.write(SerialPort::new_with_max_packet_size(bus, 512));
-    }
-
     let usb_ptr = unsafe {
         (*ptr::addr_of_mut!(USB_DEVICE)).as_mut_ptr()
     };
 
     unsafe {
         usb_ptr.write(
-            // Composite UAC2 + CDC-ACM device; CDC is diagnostics only.
             usbd_uac2::builder(bus, UsbVidPid(0x1209, 0x4071))
             .max_packet_size_0(64)
             .unwrap()
@@ -222,7 +210,6 @@ fn main() -> ! {
     }
 
     AUDIO_PTR.store(audio_ptr, Ordering::Release);
-    SERIAL_PTR.store(serial_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
     // TIM2 services USB HS audio independently of the application loop.
@@ -917,43 +904,20 @@ fn TIM2() {
 
     let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
     let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
-    let serial_ptr = SERIAL_PTR.load(Ordering::Acquire);
-    if usb_ptr.is_null() || audio_ptr.is_null() || serial_ptr.is_null() {
+    if usb_ptr.is_null() || audio_ptr.is_null() {
         return;
     }
 
-    // TIM2 is the exclusive owner of the USB device and both USB classes.
+    // TIM2 exclusively owns the UAC2 device and class.
     let usb = unsafe { &mut *usb_ptr };
     let audio = unsafe { &mut *audio_ptr };
-    let serial = unsafe { &mut *serial_ptr };
 
     let poll_start = read_dwt_cycle_count();
     let classes: &mut [&mut dyn usb_device::class::UsbClass<BoardUsbBus>] =
-        &mut [audio, serial];
+        &mut [audio];
     let _ = usb.poll(classes);
     let poll_cycles = read_dwt_cycle_count().wrapping_sub(poll_start);
     update_atomic_max(&TIM2_MAX_POLL_CYCLES, poll_cycles);
-
-    // Emit one compact line per second, and only after a terminal opens CDC.
-    // This write is non-blocking and occurs after the USB poll measurement.
-    let now_ms = TICKS.load(Ordering::Relaxed);
-    let last_report = TIM2_LAST_REPORT_MS.load(Ordering::Relaxed);
-    if serial.dtr() && now_ms.wrapping_sub(last_report) >= 1_000 {
-        TIM2_LAST_REPORT_MS.store(now_ms, Ordering::Relaxed);
-        let max_gap = TIM2_MAX_GAP_CYCLES.swap(0, Ordering::Relaxed);
-        let max_poll = TIM2_MAX_POLL_CYCLES.swap(0, Ordering::Relaxed);
-        let late = TIM2_LATE_COUNT.swap(0, Ordering::Relaxed);
-        let mut line = [0u8; 64];
-        let mut len = 0usize;
-        len = append_diag_text(&mut line, len, b"TIM2 gap=");
-        len = append_diag_hex(&mut line, len, max_gap);
-        len = append_diag_text(&mut line, len, b" poll=");
-        len = append_diag_hex(&mut line, len, max_poll);
-        len = append_diag_text(&mut line, len, b" late=");
-        len = append_diag_hex(&mut line, len, late);
-        len = append_diag_text(&mut line, len, b"\r\n");
-        let _ = serial.write(&line[..len]);
-    }
 
     /*
     // CPU load reporting
