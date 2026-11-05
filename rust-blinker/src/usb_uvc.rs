@@ -6,7 +6,7 @@ use crate::uvc::{
     ISO_PACKETS_PER_MICROFRAME, MAX_PACKET_SIZE,
 };
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::AtomicBool;
 use synopsys_usb_otg::{PhyType, UsbPeripheral};
 use usb_device::bus::{InterfaceNumber, StringIndex, UsbBus, UsbBusAllocator};
 use usb_device::class::{ControlIn, ControlOut, UsbClass};
@@ -20,47 +20,6 @@ use usb_device::Result;
 const VIDEO_CLASS: u8 = 0x0e;
 const VIDEO_CONTROL_SUBCLASS: u8 = 0x01;
 const VIDEO_STREAMING_SUBCLASS: u8 = 0x02;
-
-static UVC_BUSY_CYCLES: AtomicU32 = AtomicU32::new(0);
-static UVC_GENERATE_CYCLES: AtomicU32 = AtomicU32::new(0);
-static UVC_SUBMIT_CYCLES: AtomicU32 = AtomicU32::new(0);
-
-// Keep these debugger-visible counters while investigating high-bandwidth
-// streaming. They separate packet generation, FIFO submission, and USB XFRC.
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_GENERATED_BATCHES: AtomicU32 = AtomicU32::new(0);
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_SUBMITTED_BATCHES: AtomicU32 = AtomicU32::new(0);
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_SUBMIT_ERRORS: AtomicU32 = AtomicU32::new(0);
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_IN_COMPLETIONS: AtomicU32 = AtomicU32::new(0);
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_INCOMPLETE_EVENTS: AtomicU32 = AtomicU32::new(0);
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_INCOMPLETE_RECOVERIES: AtomicU32 = AtomicU32::new(0);
-
-/// Return and clear the measured cycle count spent generating/submitting UVC
-/// packets since the previous sample.
-pub fn take_uvc_cycle_metrics() -> (u32, u32, u32) {
-    (
-        UVC_BUSY_CYCLES.swap(0, Ordering::Relaxed),
-        UVC_GENERATE_CYCLES.swap(0, Ordering::Relaxed),
-        UVC_SUBMIT_CYCLES.swap(0, Ordering::Relaxed),
-    )
-}
-
-#[inline(always)]
-fn cycle_counter() -> u32 {
-    cortex_m::peripheral::DWT::cycle_count()
-}
-
-#[inline(always)]
-fn record_uvc_cycles(start: u32, counter: &AtomicU32) {
-    let elapsed = cycle_counter().wrapping_sub(start);
-    counter.fetch_add(elapsed, Ordering::Relaxed);
-    UVC_BUSY_CYCLES.fetch_add(elapsed, Ordering::Relaxed);
-}
 
 /// F407's OTG_HS controller and external USB3300 PHY.
 pub struct F407UsbHs;
@@ -353,18 +312,11 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
         };
         self.incomplete_count = 0;
         if alternative == 1 && self.video_payloads_enabled {
-            let start = cycle_counter();
             let marker = self.function.start_stream_batch();
-            record_uvc_cycles(start, &UVC_GENERATE_CYCLES);
             if let Some((marker, packet_count)) = marker {
-                UVC_DEBUG_GENERATED_BATCHES.fetch_add(1, Ordering::Relaxed);
-                let start = cycle_counter();
                 if Self::submit_video_batch(&self.endpoint, marker, packet_count) {
-                    UVC_DEBUG_SUBMITTED_BATCHES.fetch_add(1, Ordering::Relaxed);
                 } else {
-                    UVC_DEBUG_SUBMIT_ERRORS.fetch_add(1, Ordering::Relaxed);
                 }
-                record_uvc_cycles(start, &UVC_SUBMIT_CYCLES);
             }
         }
         true
@@ -376,31 +328,19 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
             if !self.video_payloads_enabled {
                 return;
             }
-            UVC_DEBUG_IN_COMPLETIONS.fetch_add(1, Ordering::Relaxed);
             if self.repeat_video_batch {
                 if let Some((packet, packet_count)) = self.function.current_in_batch() {
-                    let start = cycle_counter();
                     if Self::submit_video_batch(&self.endpoint, packet, packet_count) {
-                        UVC_DEBUG_SUBMITTED_BATCHES.fetch_add(1, Ordering::Relaxed);
                     } else {
-                        UVC_DEBUG_SUBMIT_ERRORS.fetch_add(1, Ordering::Relaxed);
                     }
-                    record_uvc_cycles(start, &UVC_SUBMIT_CYCLES);
                 }
                 return;
             }
-            let start = cycle_counter();
             let packet = self.function.next_in_batch();
-            record_uvc_cycles(start, &UVC_GENERATE_CYCLES);
             if let Some((packet, packet_count)) = packet {
-                UVC_DEBUG_GENERATED_BATCHES.fetch_add(1, Ordering::Relaxed);
-                let start = cycle_counter();
                 if Self::submit_video_batch(&self.endpoint, packet, packet_count) {
-                    UVC_DEBUG_SUBMITTED_BATCHES.fetch_add(1, Ordering::Relaxed);
                 } else {
-                    UVC_DEBUG_SUBMIT_ERRORS.fetch_add(1, Ordering::Relaxed);
                 }
-                record_uvc_cycles(start, &UVC_SUBMIT_CYCLES);
             }
         }
     }
@@ -410,14 +350,11 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
             return;
         }
 
-        UVC_DEBUG_INCOMPLETE_EVENTS.fetch_add(1, Ordering::Relaxed);
         self.incomplete_count = self.incomplete_count.saturating_add(1);
         if self.incomplete_count < 3 {
             if let Some((packet, packet_count)) = self.function.current_in_batch() {
                 if Self::submit_video_batch(&self.endpoint, packet, packet_count) {
-                    UVC_DEBUG_SUBMITTED_BATCHES.fetch_add(1, Ordering::Relaxed);
                 } else {
-                    UVC_DEBUG_SUBMIT_ERRORS.fetch_add(1, Ordering::Relaxed);
                 }
             }
             return;
@@ -427,13 +364,9 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
         // restart image packetization from the start of a frame.
         self.incomplete_count = 0;
         self.endpoint.recover_iso_endpoint();
-        UVC_DEBUG_INCOMPLETE_RECOVERIES.fetch_add(1, Ordering::Relaxed);
         if let Some((packet, packet_count)) = self.function.restart_after_iso_recovery() {
-            UVC_DEBUG_GENERATED_BATCHES.fetch_add(1, Ordering::Relaxed);
             if Self::submit_video_batch(&self.endpoint, packet, packet_count) {
-                UVC_DEBUG_SUBMITTED_BATCHES.fetch_add(1, Ordering::Relaxed);
             } else {
-                UVC_DEBUG_SUBMIT_ERRORS.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
