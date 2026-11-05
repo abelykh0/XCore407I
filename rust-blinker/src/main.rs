@@ -1121,12 +1121,14 @@ fn configure_board_pins(
     // routed as Ethernet MDC on this board, so Ethernet MDIO management is
     // intentionally disabled while USB FS host VBUS is enabled.
     unsafe {
-        const GPIOC_BASE: usize = 0x4002_0800;
-        let bsrr = (GPIOC_BASE + 0x18) as *mut u32;
-        let moder = GPIOC_BASE as *mut u32;
-        let otyper = (GPIOC_BASE + 0x04) as *mut u32;
-        let ospeedr = (GPIOC_BASE + 0x08) as *mut u32;
-        let pupdr = (GPIOC_BASE + 0x0c) as *mut u32;
+        // Use the PAC's GPIOC peripheral pointer instead of duplicating its
+        // STM32F407 peripheral base address.
+        let gpioc = pac::GPIOC::ptr().cast::<u8>();
+        let bsrr = gpioc.add(0x18).cast::<u32>();
+        let moder = gpioc.cast::<u32>();
+        let otyper = gpioc.add(0x04).cast::<u32>();
+        let ospeedr = gpioc.add(0x08).cast::<u32>();
+        let pupdr = gpioc.add(0x0c).cast::<u32>();
 
         // Drive low before switching the pin from its reset input state.
         bsrr.write_volatile(1 << (1 + 16));
