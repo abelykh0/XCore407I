@@ -102,6 +102,7 @@ pub struct UvcUsbClass<'a, B: UsbBus> {
     interface_string: StringIndex,
     endpoint: EndpointIn<'a, B>,
     incomplete_count: u8,
+    video_payloads_enabled: bool,
 }
 
 impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
@@ -132,7 +133,14 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
             interface_string,
             endpoint,
             incomplete_count: 0,
+            video_payloads_enabled: true,
         })
+    }
+
+    /// Enable or suppress video payload generation/submission while keeping
+    /// the UVC interface registered and its control requests serviced.
+    pub fn set_video_payloads_enabled(&mut self, enabled: bool) {
+        self.video_payloads_enabled = enabled;
     }
 
     pub fn set_cpu_metrics(&mut self, available: u8, generate: u8, submit: u8) {
@@ -337,7 +345,7 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
             return false;
         };
         self.incomplete_count = 0;
-        if alternative == 1 {
+        if alternative == 1 && self.video_payloads_enabled {
             let start = cycle_counter();
             let marker = self.function.start_stream_batch();
             record_uvc_cycles(start, &UVC_GENERATE_CYCLES);
@@ -358,6 +366,9 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
     fn endpoint_in_complete(&mut self, address: EndpointAddress) {
         if address == self.endpoint.address() {
             self.incomplete_count = 0;
+            if !self.video_payloads_enabled {
+                return;
+            }
             UVC_DEBUG_IN_COMPLETIONS.fetch_add(1, Ordering::Relaxed);
             let start = cycle_counter();
             let packet = self.function.next_in_batch();
@@ -376,7 +387,7 @@ impl<B: UsbBus> UsbClass<B> for UvcUsbClass<'_, B> {
     }
 
     fn endpoint_in_incomplete(&mut self, address: EndpointAddress) {
-        if address != self.endpoint.address() {
+        if address != self.endpoint.address() || !self.video_payloads_enabled {
             return;
         }
 
