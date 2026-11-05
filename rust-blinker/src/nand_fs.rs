@@ -9,6 +9,7 @@
 //! implement ECC correction or grown-bad-block remapping.
 
 use core::ptr::{read_volatile, write_volatile};
+use stm32f4::stm32f407 as pac;
 
 use littlefs2::{
     consts::{U2048, U32},
@@ -19,7 +20,7 @@ use littlefs2::{
 
 const FSMC_BASE: usize = 0xA000_0000;
 const NAND_BASE: usize = 0x7000_0000;
-const GPIOD_IDR: *const u32 = 0x4002_0C10 as *const u32;
+
 const RB_MASK: u32 = 1 << 6;
 const CMD: *mut u8 = (NAND_BASE | (1 << 17)) as *mut u8;
 const ADDR: *mut u8 = (NAND_BASE | (1 << 16)) as *mut u8;
@@ -70,7 +71,7 @@ fn wait_ready_status() -> bool {
 fn wait_ready_rb() -> bool {
     let mut busy_seen = false;
     for _ in 0..TIMEOUT {
-        let ready = unsafe { read_volatile(GPIOD_IDR) } & RB_MASK != 0;
+        let ready = unsafe { read_volatile(pac::GPIOD::ptr().cast::<u8>().add(0x10).cast::<u32>()) } & RB_MASK != 0;
         if !ready {
             busy_seen = true;
         } else if busy_seen {
