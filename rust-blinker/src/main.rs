@@ -10,14 +10,12 @@ use panic_halt as _;
 use stm32f4xx_hal::gpio::{GpioExt, Speed};
 use stm32f4::stm32f407::interrupt;
 use stm32f4xx_hal::pac;
-use synopsys_usb_otg::{iso_incomplete_snapshot, UsbBus};
-use synopsys_usb_otg::bus::iso_incomplete_event_snapshot;
+use synopsys_usb_otg::{UsbBus};
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
 use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status, Nv12DemoImage};
 use xcore407i_blinker::uvc::prepare_next_video_batch;
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
-//use xcore407i_blinker::nand_device;
 use xcore407i_blinker::usb_uvc::{
     usb_bus, F407UsbHs, UvcUsbClass,
 };
