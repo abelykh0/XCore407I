@@ -334,7 +334,6 @@ fn main() -> ! {
         // rotozoom.render_next();
     }
 }
-}
 
 
 fn write_hex32(destination: &mut [u8], value: u32) {
