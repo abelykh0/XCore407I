@@ -89,25 +89,6 @@ pub const CANVAS_BYTES: usize = WIDTH * CANVAS_HEIGHT;
 pub const CANVAS_TAIL_BYTES: usize = 38_400;
 pub const CANVAS_MAIN_BYTES: usize = CANVAS_BYTES - CANVAS_TAIL_BYTES;
 
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_RENDER_Y_CYCLES: AtomicU32 = AtomicU32::new(0);
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_RENDER_UV_CYCLES: AtomicU32 = AtomicU32::new(0);
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_RENDER_COPY_CYCLES: AtomicU32 = AtomicU32::new(0);
-#[unsafe(no_mangle)]
-pub static UVC_DEBUG_RENDER_OVERLAY_CYCLES: AtomicU32 = AtomicU32::new(0);
-
-#[inline(always)]
-fn cycle_counter() -> u32 {
-    cortex_m::peripheral::DWT::cycle_count()
-}
-
-#[inline(always)]
-fn record_render_cycles(start: u32, counter: &AtomicU32) {
-    counter.fetch_add(cycle_counter().wrapping_sub(start), Ordering::Relaxed);
-}
-
 #[repr(C, align(4))]
 struct AlignedCanvas<const N: usize>([u8; N]);
 
@@ -608,18 +589,6 @@ impl Nv12DemoImage {
             self.offset,
             &mut out[UVC_HEADER_BYTES..UVC_HEADER_BYTES + data_len],
         );
-        /* CPU diagnostics are retained here for later use, but hidden from
-         * the demo image so its contents remain unobstructed.
-        let stage_start = cycle_counter();
-        overlay_cpu_text(
-            self.offset,
-            &mut out[UVC_HEADER_BYTES..UVC_HEADER_BYTES + data_len],
-            self.cpu_available_percent,
-            self.cpu_generate_percent,
-            self.cpu_submit_percent,
-        );
-        record_render_cycles(stage_start, &UVC_DEBUG_RENDER_OVERLAY_CYCLES);
-        */
 
         self.offset += data_len;
         if complete {
@@ -654,18 +623,14 @@ impl Nv12DemoImage {
                 let output_row = pos / WIDTH;
                 let x = pos % WIDTH;
                 let source_row = (output_row / 2) as u16;
-                let stage_start = cycle_counter();
                 self.prepare_y_row(source_row);
-                record_render_cycles(stage_start, &UVC_DEBUG_RENDER_Y_CYCLES);
                 let run = (WIDTH - x)
                     .min(Y_PLANE_BYTES - pos)
                     .min(out.len() - written);
                 unsafe {
-                    let stage_start = cycle_counter();
                     crate::copy_words::copy_words(
                         y_row_ptr().add(x), out.as_mut_ptr().add(written), run,
                     );
-                    record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
                 }
                 pos += run;
                 written += run;
@@ -675,19 +640,13 @@ impl Nv12DemoImage {
                 let run = (WIDTH - x).min(FRAME_BYTES - pos).min(out.len() - written);
                 if mode == CameraMode::Monochrome {
                     let source_row = (chroma_pos / WIDTH) as u16;
-                    let stage_start = cycle_counter();
                     self.prepare_uv_row(source_row);
-                    record_render_cycles(stage_start, &UVC_DEBUG_RENDER_UV_CYCLES);
                     unsafe {
-                        let stage_start = cycle_counter();
                         crate::copy_words::copy_words(uv_row_ptr().add(x), out.as_mut_ptr().add(written), run);
-                        record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
                     }
                 } else {
                     unsafe {
-                        let stage_start = cycle_counter();
                         copy_canvas_range(chroma_pos, out.as_mut_ptr().add(written), run);
-                        record_render_cycles(stage_start, &UVC_DEBUG_RENDER_COPY_CYCLES);
                     }
                 }
                 pos += run;
