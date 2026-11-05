@@ -127,7 +127,6 @@ fn main() -> ! {
     for row in 22..32 {
         show_file_browser_line(row, b"", false);
     }
-    show_usb_status(b"USB FS: INIT");
 
     configure_board_pins(
         &mut device.RCC,
@@ -176,7 +175,6 @@ fn main() -> ! {
     }
 
     // Initialize TinyUSB host on root-hub port 0 (OTG_FS).
-    show_usb_status(b"USB FS: HOST INIT");
     let rh_init = tusb::tusb_rhport_init_t {
         role: tusb::tusb_role_t::TUSB_ROLE_HOST,
         speed: tusb::tusb_speed_t::TUSB_SPEED_FULL,
