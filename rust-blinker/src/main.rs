@@ -379,7 +379,21 @@ fn main() -> ! {
         // Canvas clearing is deferred to thread context; TIM2 emits black
         // frames until the new mode's canvas has been cleared.
 
-        // USB polling and camera-class access now belong exclusively to TIM2.
+        // Test configuration: service the USB HS device continuously from
+        // thread context. TIM2 remains enabled as an 8 kHz timing interrupt,
+        // but no longer calls usb.poll().
+        let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
+        let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
+        let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
+        if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
+            // SAFETY: after publication, main is now the sole owner of these
+            // mutable USB objects; TIM2 only acknowledges its timer interrupt.
+            let usb = unsafe { &mut *usb_ptr };
+            let camera = unsafe { &mut *camera_ptr };
+            let audio = unsafe { &mut *audio_ptr };
+            let _ = usb.poll(&mut [camera, audio]);
+        }
+
         let now = TICKS.load(Ordering::Relaxed);
 
         // Keep only the audio stream state and transfer counters needed to
@@ -963,30 +977,15 @@ fn special_key_label(key: u8, num: bool) -> Option<&'static [u8]> {
     }
 }
 
-/// TIM2 fires at 8 kHz. This is the only place that calls UsbDevice::poll().
+/// TIM2 continues firing at 8 kHz as a timing interrupt.
+/// USB HS polling is temporarily performed from the main loop instead.
 #[interrupt]
 fn TIM2() {
     // Obtain the TIM2 register block for interrupt-flag handling.
     let tim2 = unsafe { &*pac::TIM2::ptr() };
 
-    // Clear the update interrupt flag.
+    // Clear the update interrupt flag. Do not access USB objects here.
     tim2.sr().write(|w| w.uif().clear_bit());
-
-    let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
-    let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
-    let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
-
-    if usb_ptr.is_null() || camera_ptr.is_null() || audio_ptr.is_null() {
-        return;
-    }
-
-    // SAFETY: pointers are initialized before TIM2 is enabled; this ISR is the
-    // exclusive owner. main() never dereferences either pointer after publish.
-    let usb = unsafe { &mut *usb_ptr };
-    let camera = unsafe { &mut *camera_ptr };
-    let audio = unsafe { &mut *audio_ptr };
-
-    let _ = usb.poll(&mut [camera, audio]);
 
     /*
     // CPU load reporting
