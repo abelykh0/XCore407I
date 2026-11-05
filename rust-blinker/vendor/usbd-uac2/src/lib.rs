@@ -642,17 +642,12 @@ impl<'a, B: UsbBus, AU: AudioHandler<'a, B> + ClockSource> UsbAudioClassConfig<'
 
         if let Some(config) = self.output_config {
             let interface = alloc.interface();
-            // Match the known-working XCore407I composite endpoint layout:
-            // UVC camera IN = EP1 (0x81), UAC2 audio IN = EP2 (0x82).
-            let endpoint = alloc.alloc::<In>(
-                Some(EndpointAddress::from(0x82)),
-                EndpointType::Isochronous {
-                    synchronization: config.sync_type,
-                    usage: IsochronousUsageType::Data,
-                },
-                ((max_rate.div_ceil(audio_rate) + 1) * config.bytes_per_frame()) as u16,
+            let endpoint = alloc.isochronous(
+                config.sync_type,
+                IsochronousUsageType::Data,
+                ((max_rate.div_ceil(audio_rate) + 1) * config.bytes_per_frame()) as u16, // headroom of 1 sample for rate control
                 interval,
-            ).expect("UAC2 audio IN endpoint EP2 allocation failed");
+            );
             let feedback_ep = alloc.isochronous(
                 IsochronousSynchronizationType::NoSynchronization,
                 IsochronousUsageType::Feedback,
@@ -674,12 +669,17 @@ impl<'a, B: UsbBus, AU: AudioHandler<'a, B> + ClockSource> UsbAudioClassConfig<'
 
         if let Some(config) = self.input_config {
             let interface = alloc.interface();
-            let endpoint = alloc.isochronous(
-                config.sync_type,
-                IsochronousUsageType::Data,
-                ((max_rate.div_ceil(audio_rate) + 1) * config.bytes_per_frame()) as u16, // headroom of 1 sample for rate control
+            // Match the known-working XCore407I composite endpoint layout:
+            // UVC camera IN = EP1 (0x81), UAC2 audio IN = EP2 (0x82).
+            let endpoint = alloc.alloc::<In>(
+                Some(EndpointAddress::from(0x82)),
+                EndpointType::Isochronous {
+                    synchronization: config.sync_type,
+                    usage: IsochronousUsageType::Data,
+                },
+                ((max_rate.div_ceil(audio_rate) + 1) * config.bytes_per_frame()) as u16,
                 interval,
-            );
+            ).expect("UAC2 audio IN endpoint EP2 allocation failed");
             let alt_setting = DEFAULT_ALTERNATE_SETTING;
             ac.in_iface = interface.into();
             ac.in_ep = endpoint.address().index();
