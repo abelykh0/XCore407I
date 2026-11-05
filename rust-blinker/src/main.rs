@@ -80,8 +80,6 @@ unsafe extern "C" {
     fn sendInput(buffer: *mut u8, size: u8);
     fn bk_set_pc(start: u16);
     fn bk_request_stop_irq();
-    fn bk_audio_edge_count() -> u32;
-    fn bk_audio_port_write_count() -> u32;
     static mut RamBuffer: [u8; 0x4000];
 }
 
@@ -122,7 +120,7 @@ fn main() -> ! {
 
     // initialize_demo_canvas();
     clear_demo_canvas(0x10);
-    // Reserve rows 22-23 for the audio diagnostics still needed; clear the rest.
+    // Clear the status area.
     for row in 22..32 {
         show_file_browser_line(row, b"", false);
     }
@@ -301,7 +299,6 @@ fn main() -> ! {
     let mut browser_count = 0usize;
     let mut browser_selected = 0usize;
     let mut browser_open = false;
-    let mut last_audio_diagnostic = 0u32;
 
     loop {
         // Service the USB FS host in thread context. TIM3 only schedules this
@@ -376,25 +373,6 @@ fn main() -> ! {
             }
         }
 
-        // Refresh BK speaker diagnostics at 4 Hz. Port writes show whether
-        // the emulator is addressing the speaker register; bit edges show
-        // whether speaker bit 6 actually changes while USB Audio is active.
-        let now = TICKS.load(Ordering::Relaxed);
-        if now.wrapping_sub(last_audio_diagnostic) >= 250 {
-            last_audio_diagnostic = now;
-            let mut line = [b' '; 64];
-            line[..15].copy_from_slice(b"BK PORT WRITES:");
-            let writes = unsafe { bk_audio_port_write_count() };
-            write_hex32(&mut line[17..25], writes);
-            show_file_browser_line(22, &line, false);
-
-            let mut line = [b' '; 64];
-            line[..15].copy_from_slice(b"BK BIT 6 EDGES:");
-            let edges = unsafe { bk_audio_edge_count() };
-            write_hex32(&mut line[17..25], edges);
-            show_file_browser_line(23, &line, false);
-        }
-
         // Run one emulator iteration in thread context. Video batches are
         // rendered from the canvas below, never from the USB timer ISR.
         if !browser_open {
@@ -420,15 +398,6 @@ fn main() -> ! {
     }
 }
 
-
-fn write_hex32(destination: &mut [u8], value: u32) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let digits = destination.len().min(8);
-    for (index, byte) in destination.iter_mut().take(digits).enumerate() {
-        let shift = (digits - 1 - index) * 4;
-        *byte = HEX[((value >> shift) & 0x0F) as usize];
-    }
-}
 
 /// Read up to 25 regular files from the LittleFS root directory.
 /// Paths are retained as NUL-terminated ASCII strings for the later load.
