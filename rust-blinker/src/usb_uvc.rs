@@ -110,8 +110,8 @@ impl<'a, B: UsbBus> UvcUsbClass<'a, B> {
     pub fn new(
         allocator: &'a UsbBusAllocator<B>,
     ) -> core::result::Result<Self, UvcUsbClassInitError> {
-        // Claim the singleton camera before allocating any USB resources, so
-        // a second class instance is rejected without consuming bus endpoints.
+        // The main-loop producer owns the singleton NV12 renderer. This
+        // class owns only USB control state and the DMA batch handoff.
         let function = UvcClass::try_new().ok_or(UvcUsbClassInitError::CameraAlreadyInUse)?;
         let control_interface = allocator.interface();
         let streaming_interface = allocator.interface();
