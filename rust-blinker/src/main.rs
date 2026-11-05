@@ -817,14 +817,16 @@ fn TIM2() {
     let tim2 = unsafe { &*pac::TIM2::ptr() };
     tim2.sr().write(|w| w.uif().clear_bit());
 
-    // Audio-only isolation experiment: keep UVC registered, but exclude its
-    // class callbacks from polling to test whether UVC servicing affects audio.
+    // Poll both registered classes while video payload submission remains
+    // disabled, isolating UVC class servicing from video endpoint traffic.
     let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
+    let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
     let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
-    if !usb_ptr.is_null() && !audio_ptr.is_null() {
+    if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
         let usb = unsafe { &mut *usb_ptr };
+        let camera = unsafe { &mut *camera_ptr };
         let audio = unsafe { &mut *audio_ptr };
-        let _ = usb.poll(&mut [audio]);
+        let _ = usb.poll(&mut [camera, audio]);
     }
 
     /*
