@@ -57,12 +57,29 @@ where
         comm_if_name: Option<&'static str>,
         data_if_name: Option<&'static str>,
     ) -> SerialPort<'a, B, DefaultBufferStore, DefaultBufferStore> {
-        SerialPort::new_with_store_and_interface_names(
+        SerialPort::new_with_store_and_max_packet_size_and_interface_names(
             alloc,
             DefaultBufferStore::default(),
             DefaultBufferStore::default(),
+            64,
             comm_if_name,
             data_if_name,
+        )
+    }
+
+    /// Creates a buffered CDC-ACM serial port with an explicitly selected
+    /// bulk endpoint packet size. Use 512 bytes for a high-speed USB device.
+    pub fn new_with_max_packet_size<'alloc: 'a>(
+        alloc: &'alloc UsbBusAllocator<B>,
+        max_packet_size: u16,
+    ) -> SerialPort<'a, B, DefaultBufferStore, DefaultBufferStore> {
+        SerialPort::new_with_store_and_max_packet_size_and_interface_names(
+            alloc,
+            DefaultBufferStore::default(),
+            DefaultBufferStore::default(),
+            max_packet_size,
+            None,
+            None,
         )
     }
 }
@@ -90,8 +107,24 @@ where
         comm_if_name: Option<&'static str>,
         data_if_name: Option<&'static str>,
     ) -> SerialPort<'a, B, RS, WS> {
+        Self::new_with_store_and_max_packet_size_and_interface_names(
+            alloc, read_store, write_store, 64, comm_if_name, data_if_name,
+        )
+    }
+
+    /// Creates a buffered CDC-ACM serial port with an explicit bulk packet size.
+    pub fn new_with_store_and_max_packet_size_and_interface_names<'alloc: 'a>(
+        alloc: &'alloc UsbBusAllocator<B>,
+        read_store: RS,
+        write_store: WS,
+        max_packet_size: u16,
+        comm_if_name: Option<&'static str>,
+        data_if_name: Option<&'static str>,
+    ) -> SerialPort<'a, B, RS, WS> {
         SerialPort {
-            inner: CdcAcmClass::new_with_interface_names(alloc, 64, comm_if_name, data_if_name),
+            inner: CdcAcmClass::new_with_interface_names(
+                alloc, max_packet_size, comm_if_name, data_if_name,
+            ),
             read_buf: Buffer::new(read_store),
             write_buf: Buffer::new(write_store),
             write_state: WriteState::Idle,
