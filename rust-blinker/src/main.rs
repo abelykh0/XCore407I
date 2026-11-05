@@ -13,7 +13,8 @@ use stm32f4xx_hal::pac;
 use synopsys_usb_otg::{iso_incomplete_snapshot, UsbBus};
 use synopsys_usb_otg::bus::iso_incomplete_event_snapshot;
 use usb_device::device::{UsbDevice, UsbDeviceBuilder, UsbVidPid};
-use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status};
+use xcore407i_blinker::camera::{clear_demo_canvas, request_camera_mode_toggle, show_file_browser_line, show_usb_status, Nv12DemoImage};
+use xcore407i_blinker::uvc::prepare_next_video_batch;
 use tinyusb_sys as tusb;
 use xcore407i_blinker::rtc;
 //use xcore407i_blinker::nand_device;
@@ -63,8 +64,6 @@ static FILE_BROWSER_ACTION: AtomicU8 = AtomicU8::new(0);
 static USB_FS_STATUS: AtomicU32 = AtomicU32::new(0);
 // TIM3 schedules TinyUSB host work; the actual task runs in thread context.
 static USB_HOST_TASK_PENDING: AtomicBool = AtomicBool::new(false);
-// TIM2 only schedules USB work; usb.poll() and UVC rendering run in thread context.
-static USB_POLL_PENDING: AtomicBool = AtomicBool::new(false);
 
 // HID boot-keyboard state. TinyUSB invokes HID callbacks from tuh_task_ext(),
 // so these non-atomic key snapshots are only accessed serially there.
@@ -200,6 +199,11 @@ fn main() -> ! {
     #[unsafe(link_section = ".ccmram.usb_device")]
     static mut USB_DEVICE: MaybeUninit<BoardUsbDevice> = MaybeUninit::uninit();
 
+    // Main owns the renderer; TIM2 callbacks only consume prepared batches.
+    let mut video_renderer = Nv12DemoImage::try_new()
+        .expect("NV12 renderer initialization failed");
+    while prepare_next_video_batch(&mut video_renderer) {}
+
     // Construct in place and publish raw pointers. No long-lived &mut reference
     // is kept in main; the TIM2 ISR creates the only mutable references.
     let camera_ptr = unsafe {
@@ -303,19 +307,9 @@ fn main() -> ! {
     let mut last_audio_diagnostic = 0u32;
 
     loop {
-        // TIM2 only sets a pending flag. Polling the USB stack here keeps UVC
-        // rendering out of interrupt context while preserving the 24 kHz wakeup.
-        if USB_POLL_PENDING.swap(false, Ordering::AcqRel) {
-            let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
-            let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
-            let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
-            if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
-                let usb = unsafe { &mut *usb_ptr };
-                let camera = unsafe { &mut *camera_ptr };
-                let audio = unsafe { &mut *audio_ptr };
-                let _ = usb.poll(&mut [camera, audio]);
-            }
-        }
+        // Fill free video buffers outside interrupt context. If both are
+        // occupied, sleep until a USB completion releases one.
+        while prepare_next_video_batch(&mut video_renderer) {}
         cortex_m::asm::wfi();
     }
 }
@@ -823,14 +817,22 @@ fn special_key_label(key: u8, num: bool) -> Option<&'static [u8]> {
     }
 }
 
-/// TIM2 schedules USB HS device servicing at 24 kHz (three ticks per 125 us).
-/// The actual poll runs in main context so UVC image generation cannot extend
-/// the high-priority interrupt and delay the audio/DMA timing.
+/// TIM2 services the USB HS device at 24 kHz (three polls per 125 us).
+/// Video rendering is performed by the main-loop producer, not by callbacks.
 #[interrupt]
 fn TIM2() {
     let tim2 = unsafe { &*pac::TIM2::ptr() };
     tim2.sr().write(|w| w.uif().clear_bit());
-    USB_POLL_PENDING.store(true, Ordering::Release);
+
+    let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
+    let camera_ptr = CAMERA_PTR.load(Ordering::Acquire);
+    let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
+    if !usb_ptr.is_null() && !camera_ptr.is_null() && !audio_ptr.is_null() {
+        let usb = unsafe { &mut *usb_ptr };
+        let camera = unsafe { &mut *camera_ptr };
+        let audio = unsafe { &mut *audio_ptr };
+        let _ = usb.poll(&mut [camera, audio]);
+    }
 }
 
 /// Configure TIM3 as a 1 kHz scheduler tick for the TinyUSB FS host task.
