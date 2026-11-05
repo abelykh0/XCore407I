@@ -4,7 +4,6 @@
 //! cycle counter. This handler resamples that edge stream to 48 kHz mono PCM16
 //! and submits six samples per USB high-speed microframe.
 
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use usb_device::bus::UsbBus;
 use usb_device::endpoint::{Endpoint, In, Out};
 use usb_device::UsbDirection;
@@ -27,27 +26,6 @@ unsafe extern "C" {
     fn bk_audio_start() -> u8;
     fn bk_audio_stop();
     fn bk_audio_pop_edge(cycles: *mut u32, level: *mut u8) -> u8;
-}
-
-static AUDIO_ALT1_ACTIVE: AtomicBool = AtomicBool::new(false);
-static AUDIO_ATTEMPT_COUNT: AtomicU32 = AtomicU32::new(0);
-static AUDIO_SUBMIT_COUNT: AtomicU32 = AtomicU32::new(0);
-static AUDIO_WRITE_FAIL_COUNT: AtomicU32 = AtomicU32::new(0);
-static AUDIO_COMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
-static AUDIO_INCOMPLETE_COUNT: AtomicU32 = AtomicU32::new(0);
-static AUDIO_RETRY_STREAK: AtomicU32 = AtomicU32::new(0);
-
-/// Snapshot of the UAC2 stream state and EP2 transfer counters.
-pub fn diagnostics() -> (bool, u32, u32, u32, u32, u32, u32) {
-    (
-        AUDIO_ALT1_ACTIVE.load(Ordering::Acquire),
-        AUDIO_ATTEMPT_COUNT.load(Ordering::Relaxed),
-        AUDIO_SUBMIT_COUNT.load(Ordering::Relaxed),
-        AUDIO_WRITE_FAIL_COUNT.load(Ordering::Relaxed),
-        AUDIO_COMPLETE_COUNT.load(Ordering::Relaxed),
-        AUDIO_INCOMPLETE_COUNT.load(Ordering::Relaxed),
-        AUDIO_RETRY_STREAK.load(Ordering::Relaxed),
-    )
 }
 
 #[repr(align(4))]
@@ -102,14 +80,6 @@ impl BkEmulatorAudio {
         }
     }
 
-    fn reset_diagnostics() {
-        AUDIO_ATTEMPT_COUNT.store(0, Ordering::Relaxed);
-        AUDIO_SUBMIT_COUNT.store(0, Ordering::Relaxed);
-        AUDIO_WRITE_FAIL_COUNT.store(0, Ordering::Relaxed);
-        AUDIO_COMPLETE_COUNT.store(0, Ordering::Relaxed);
-        AUDIO_INCOMPLETE_COUNT.store(0, Ordering::Relaxed);
-        AUDIO_RETRY_STREAK.store(0, Ordering::Relaxed);
-    }
 }
 
 impl Default for BkEmulatorAudio {
@@ -143,7 +113,6 @@ impl<'a, B: UsbBus> AudioHandler<'a, B> for BkEmulatorAudio {
             return;
         }
 
-        AUDIO_ATTEMPT_COUNT.fetch_add(1, Ordering::Relaxed);
         let packet = unsafe {
             core::slice::from_raw_parts_mut(
                 self.dma_packet.0.as_mut_ptr().cast::<u8>(),
@@ -171,24 +140,18 @@ impl<'a, B: UsbBus> AudioHandler<'a, B> for BkEmulatorAudio {
         match unsafe { ep.write_iso_batch_dma(dma_bytes, 1, 1) } {
             Ok(_) => {
                 self.dma_in_flight = true;
-                AUDIO_SUBMIT_COUNT.fetch_add(1, Ordering::Relaxed);
             }
             Err(_) => {
-                AUDIO_WRITE_FAIL_COUNT.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
 
     fn audio_data_tx_complete(&mut self) {
         self.dma_in_flight = false;
-        AUDIO_COMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
-        AUDIO_RETRY_STREAK.store(0, Ordering::Relaxed);
     }
 
     fn audio_data_tx_incomplete(&mut self) {
         self.dma_in_flight = false;
-        AUDIO_INCOMPLETE_COUNT.fetch_add(1, Ordering::Relaxed);
-        AUDIO_RETRY_STREAK.fetch_add(1, Ordering::Relaxed);
     }
 
     fn feedback(&mut self, _nominal: UsbIsochronousFeedback) -> Option<UsbIsochronousFeedback> {
@@ -205,14 +168,11 @@ impl<'a, B: UsbBus> AudioHandler<'a, B> for BkEmulatorAudio {
                 .wrapping_sub(AUDIO_STARTUP_LATENCY_CYCLES);
             self.dma_in_flight = false;
             self.active = true;
-            AUDIO_ALT1_ACTIVE.store(true, Ordering::Release);
-            Self::reset_diagnostics();
         } else {
             self.active = false;
             self.dma_in_flight = false;
             self.pending_edge = None;
             unsafe { bk_audio_stop(); }
-            AUDIO_ALT1_ACTIVE.store(false, Ordering::Release);
         }
     }
 }
