@@ -151,8 +151,6 @@ void bk_reset(void)
     bk_audio_level = 0;
     bk_audio_edge_head = 0;
     bk_audio_edge_tail = 0;
-    bk_audio_edges = 0;
-    bk_audio_port_writes = 0;
     stop_irq_pending = 0;
     io_stop_happened = 0;
     last_branch = 0;
