@@ -102,7 +102,7 @@ fn main() -> ! {
 
     let mut device = pac::Peripherals::take().unwrap();
 
-    rtc::initialize();
+    rtc::initialize(&device.RCC, &device.PWR, &device.RTC);
     // update_clock_from_rtc(); // Temporarily disable the RTC clock overlay.
 
     enable_cycle_counter(&mut core);
