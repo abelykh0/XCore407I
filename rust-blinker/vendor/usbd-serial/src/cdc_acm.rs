@@ -84,7 +84,7 @@ impl<'a, B: UsbBus> CdcAcmClass<'a, B> {
                     Some(EndpointAddress::from(0x83)),
                     EndpointType::Interrupt,
                     8,
-                    255,
+                    9, // Valid at high speed; 9 gives a low-rate notification interval.
                 )
                 .expect("CDC notification endpoint allocation failed"),
             data_if: alloc.interface(),
