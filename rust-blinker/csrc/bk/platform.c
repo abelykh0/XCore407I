@@ -36,8 +36,6 @@ static volatile uint16_t bk_audio_edge_head;
 static volatile uint16_t bk_audio_edge_tail;
 static volatile uint8_t bk_audio_enabled;
 static uint8_t bk_audio_level;
-static volatile uint32_t bk_audio_edges;
-static volatile uint32_t bk_audio_port_writes;
 static uint32_t bk_audio_edge_cycles[BK_AUDIO_EDGE_CAPACITY];
 static uint8_t bk_audio_edge_levels[BK_AUDIO_EDGE_CAPACITY];
 
@@ -50,7 +48,6 @@ static void bk_audio_record_level(uint8_t level)
     bk_audio_level = level;
 
     if (!bk_audio_enabled) return;
-    bk_audio_edges++;
 
     uint16_t head = bk_audio_edge_head;
     uint16_t tail = bk_audio_edge_tail;
@@ -70,8 +67,6 @@ uint8_t bk_audio_start(void)
 {
     // Called from the USB ISR; the emulator producer is paused while this runs.
     bk_audio_edge_tail = bk_audio_edge_head;
-    bk_audio_edges = 0;
-    bk_audio_port_writes = 0;
     bk_audio_level = (port0177716 & 0x0040u) ? 1u : 0u;
     __asm volatile("dmb" ::: "memory");
     bk_audio_enabled = 1u;
@@ -82,16 +77,6 @@ void bk_audio_stop(void)
 {
     bk_audio_enabled = 0u;
     __asm volatile("dmb" ::: "memory");
-}
-
-uint32_t bk_audio_edge_count(void)
-{
-    return bk_audio_edges;
-}
-
-uint32_t bk_audio_port_write_count(void)
-{
-    return bk_audio_port_writes;
 }
 
 uint8_t bk_audio_pop_edge(uint32_t *cycles, uint8_t *level)
@@ -294,7 +279,6 @@ int sl_byte(pdp_regs *p, c_addr addr, d_byte value)
             port0177714 = (uint16_t)((port0177714 & 0x00FFu) | ((uint16_t)value << 8));
             break;
         case 0177716:
-            bk_audio_port_writes++;
             port0177716 = (uint16_t)((port0177716 & 0xFF00u) | value);
             bk_audio_record_level((uint8_t)(port0177716 & 0x0040u));
             break;
@@ -337,7 +321,6 @@ int sl_word(pdp_regs *p, c_addr addr, d_word value)
             port0177714 = value;
             break;
         case 0177716:
-            bk_audio_port_writes++;
             port0177716 = value;
             bk_audio_record_level((uint8_t)(port0177716 & 0x0040u));
             break;
