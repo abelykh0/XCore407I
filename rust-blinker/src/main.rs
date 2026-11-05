@@ -264,11 +264,11 @@ fn main() -> ! {
         );
     }
 
-    // Audio isolation test: generate one UVC batch, then repeat it so USB
-    // video traffic continues without continuous camera packet generation.
+    // Send a uniform grey test frame. The UVC packetizer advances through
+    // the complete frame and toggles FID normally; camera rendering is bypassed.
     unsafe {
         (&mut *camera_ptr).set_video_payloads_enabled(true);
-        (&mut *camera_ptr).set_repeat_video_batch(true);
+        (&mut *camera_ptr).set_repeat_video_batch(false);
     }
 
     CAMERA_PTR.store(camera_ptr, Ordering::Release);
