@@ -211,25 +211,20 @@ fn main() -> ! {
     AUDIO_PTR.store(audio_ptr, Ordering::Release);
     USB_DEVICE_PTR.store(usb_ptr, Ordering::Release);
 
-    // Start the independent USB service timers only after all USB objects
-    // are initialized and published. TIM2 services the HS audio device at 8 kHz.
-    configure_usb_poll_timer(
-        &device.RCC,
-        &device.TIM2,
-        &mut core.NVIC,
-    );
+    // Poll USB continuously from the main context for this isolation test.
+    // This removes TIM2's fixed 8 kHz interrupt cadence from the audio path.
+    // Endpoint completion/incomplete events still pace packet submissions.
+    // TIM2 is deliberately left disabled.
 
-    // TIM3/TinyUSB host scheduling is disabled for this isolation test.
-
-    // let mut last_rtc_sample = 0; // RTC clock overlay temporarily disabled.
-
-    let browser_paths = unsafe { &mut *ptr::addr_of_mut!(BROWSER_PATHS) };
-    let browser_path_lengths = unsafe { &mut *ptr::addr_of_mut!(BROWSER_PATH_LENGTHS) };
-    let mut browser_count = 0usize;
-    let mut browser_selected = 0usize;
-    let mut browser_open = false;
-
-    loop {}
+    loop {
+        let usb_ptr = USB_DEVICE_PTR.load(Ordering::Acquire);
+        let audio_ptr = AUDIO_PTR.load(Ordering::Acquire);
+        if !usb_ptr.is_null() && !audio_ptr.is_null() {
+            let usb = unsafe { &mut *usb_ptr };
+            let audio = unsafe { &mut *audio_ptr };
+            let _ = usb.poll(&mut [audio]);
+        }
+    }
 }
 
 
