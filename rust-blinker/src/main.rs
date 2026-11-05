@@ -826,7 +826,8 @@ fn TIM2() {
         let usb = unsafe { &mut *usb_ptr };
         let camera = unsafe { &mut *camera_ptr };
         let audio = unsafe { &mut *audio_ptr };
-        let _ = usb.poll(&mut [camera, audio]);
+        // Service the isochronous audio class before video on every USB poll.
+        let _ = usb.poll(&mut [audio, camera]);
     }
 
     /*
